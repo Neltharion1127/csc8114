@@ -1,0 +1,85 @@
+\documentclass[conference]{IEEEtran}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}       % UTF-8 encoding
+\usepackage{cite}                 % Sorted & compressed numeric citations [1]-[3]
+\usepackage{amsmath}              % Math environments
+\usepackage{graphicx}             % Include images: \includegraphics{}
+\usepackage{url}                  % Line-breakable URLs
+\usepackage{lipsum}               % Lorem Ipsum text generation
+\usepackage[colorlinks=true,
+            allcolors=black]{hyperref}  % Clickable links, but black text
+
+% ---- Title & Authors ----
+\title{Your Generic Paper Title}
+
+\author{\IEEEauthorblockN{Student Name 1, Student Name 2, Student Name 3, Student Name 4, 
+Student Name 5, Student Name 6, and Student Name 7}
+\IEEEauthorblockA{School of Computer Science, Software Engineering Major\\
+Newcastle University, Newcastle upon Tyne, United Kingdom\\
+Email: \{student1, student2, ...\}@newcastle.ac.uk}}
+
+% ==================================================================
+\begin{document}
+\maketitle
+
+% ---- Abstract ----
+\begin{abstract}
+  Write your abstract here. It should briefly state the problem,
+  the approach, key results, and the conclusion (typically 150--250 words).
+\end{abstract}
+
+% ---- Keywords (optional) ----
+\begin{IEEEkeywords}
+  keyword one, keyword two, keyword three
+\end{IEEEkeywords}
+
+% ==================================================================
+% SECTIONS — each teammate can edit their own section
+% ==================================================================
+
+\section{Introduction}
+\label{sec:intro}
+% Introduce the problem, motivation, and contributions.
+\lipsum[1]
+This is an example citation~\cite{ref1, ref2}.
+\lipsum[2]
+
+\section{Related Work}
+\label{sec:related}
+% Survey existing literature and position your work.
+\lipsum[3]
+Recent work~\cite{ref3} shows that...
+\lipsum[4]
+
+\section{Methodology}
+\label{sec:method}
+% Describe your approach / system design.
+\lipsum[5-6]
+
+\section{Implementation}
+\label{sec:impl}
+% Implementation details, tools, frameworks used.
+\lipsum[7]
+
+\section{Evaluation}
+\label{sec:eval}
+% Experiments, metrics, results.
+\lipsum[8]
+
+\section{Discussion}
+\label{sec:discussion}
+% Interpret results, limitations, future work.
+\lipsum[9]
+
+\section{Conclusion}
+\label{sec:conclusion}
+% Summarize findings and contributions.
+\lipsum[10]
+
+% ---- References ----
+% Compile order: pdflatex -> bibtex -> pdflatex -> pdflatex
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

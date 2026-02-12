@@ -1,0 +1,32 @@
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
+*.dvi
+*.ps
+*.xdv
+*.synctex
+*.synctex(busy)
+*.pdf
+
+# Editor temp files
+*.swp
+*~
+*.backup
+.DS_Store
+
+# Compiled PDF — uncomment the next line if you want to track the PDF in git
+# *.pdf
