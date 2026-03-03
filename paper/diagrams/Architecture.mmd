@@ -1,0 +1,41 @@
+---
+config:
+  theme: neutral
+  themeVariables:
+    fontFamily: arial
+    fontSize: 14px
+    primaryColor: '#ffffff'
+    primaryTextColor: '#000000'
+    primaryBorderColor: '#000000'
+    lineColor: '#000000'
+    secondaryColor: '#f2f2f2'
+    tertiaryColor: '#ffffff'
+    clusterBkg: none
+    clusterBorder: '#000000'
+  layout: fixed
+---
+flowchart LR
+ subgraph C["<br>"]
+        CC["Computation Controller"]
+        M["Client-side Model (L1..Lk)"]
+        AC["Activation Compression"]
+        P["Client Profiler"]
+  end
+ subgraph S["Server / Coordinator"]
+        SM["Server-side Model (Lk+1..Lend)"]
+        SCH["Scheduler"]
+        COOR@{ label: "<p class=\"p1\">Training Coordinator</p>" }
+        MET["Metrics Collector"]
+  end
+    CC --> M
+    M --> AC
+    SM -- "<span style=color:>Cut-layer Gradient</span>" --> M
+    SCH --> COOR
+    COOR --> SM
+    P -. "<span style=color:>Runtime Metrics</span>" .-> SCH
+    AC -- "<span style=color:>Compressed Activation</span>" --> SM
+    MET --> COOR
+    n1@{ label: "<span style=\"color:\">Edge Clients (N heterogeneous devices)</span>" }
+
+    COOR@{ shape: rect}
+    n1@{ shape: text}

@@ -9,7 +9,6 @@
 \usepackage{lipsum}               % Lorem Ipsum text generation
 \usepackage[colorlinks=true,
             allcolors=black]{hyperref}  % Clickable links, but black text
-\usepackage{graphicx}
 \usepackage{caption}
 \usepackage{subcaption}
 % ---- Title & Authors ----
@@ -60,24 +59,92 @@ This gap suggests that beyond structural or architectural modifications, there i
 Recent work~\cite{ref3} shows that...
 \lipsum[4]
 
-\section{Methodology}
-\label{sec:method}
+
+\section{High-level design}
+\label{sec:design}
+
+\subsection{System Overview}
+
+The proposed system implements a communication-efficient Federated Split Learning (FSL) framework for rainfall prediction in resource-constrained edge environments. The system consists of multiple client nodes and one central server. Each client holds its own local rainfall dataset and performs partial model training locally. The deep neural network is divided into two parts: a client-side sub-model and a server-side sub-model.
+
+Instead of transmitting raw data, clients only send intermediate activations (also referred to as smashed data) to the server during forward propagation. The server completes the remaining forward and backward computations. This design preserves data privacy while reducing client-side computational burden.
+
+The primary objective of the system is to investigate the trade-off between communication overhead and model performance by controlling activation representation and synchronization frequency.
+
+\subsection{Overall Architecture}
+
+As illustrated in Fig.~\ref{fig:arch}, the architecture consists of a client layer and a server layer.
+
+\subsubsection{Client Layer}
+
+The client layer contains four independent client nodes. Each client includes:
+
+\begin{itemize}
+    \item A local rainfall dataset
+    \item A client-side neural network (early layers)
+    \item A local optimizer
+    \item A communication module
+\end{itemize}
+
+During training, each client performs forward propagation through its local layers and generates intermediate activations. These activations are transmitted to the server. After receiving gradients from the server, the client performs backward propagation and updates its local parameters.
+
+No raw data or full model parameters are shared among clients.
+
+\subsubsection{Server Layer}
+
+The server is responsible for completing the remaining part of the neural network and coordinating the training process. Specifically, the server:
+
+\begin{itemize}
+    \item Receives intermediate activations from clients
+    \item Completes forward propagation
+    \item Computes the loss function
+    \item Performs backward propagation on server-side layers
+    \item Sends gradients of the cut layer back to the corresponding client
+\end{itemize}
+
+The server does not access any raw client data. It only processes intermediate representations.
+
+\subsection{Training and Communication Workflow}
+
+The interaction sequence shown in Fig.~\ref{fig:seq} describes one training iteration.
+
+\subsubsection{Step 1: Local Forward Propagation}
+
+Each client loads a batch of local rainfall data and performs forward propagation through the client-side model. The output of the cut layer is treated as intermediate activation.
+
+\subsubsection{Step 2: Activation Transmission}
+
+The intermediate activations are transmitted to the server. To reduce communication volume, optional activation compression techniques may be applied, such as reduced precision representation (e.g., float32 to float16) or sparsification.
+
+\subsubsection{Step 3: Server-Side Computation}
+
+Upon receiving activations, the server completes forward propagation, computes the prediction loss, and performs backward propagation. The gradients at the cut layer are extracted.
+
+\subsubsection{Step 4: Gradient Transmission}
+
+The server sends the cut-layer gradients back to the corresponding client. The client then performs backward propagation on its local layers and updates model parameters.
+
+\subsubsection{Step 5: Synchronization Strategy}
+
+To further reduce communication cost, synchronization does not necessarily occur after every mini-batch. Instead, clients may perform multiple local updates before communicating with the server. The synchronization interval $H$ controls how frequently communication occurs.
+
+By adjusting activation representation and synchronization frequency, the framework enables systematic evaluation of communication--accuracy trade-offs in Split Federated Learning systems.
 
 
 \begin{figure*}[t]
     \centering
-    % 第一张图：Architecture
-    \begin{subfigure}{\textwidth} % 宽度设为 \textwidth 就会占据整行，自动换行
+    % Architecture
+    \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=0.9\textwidth]{diagrams/Architecture.pdf} % 这里的 0.8 是控制单张图的缩放
+        \includegraphics[width=0.7\textwidth]{diagrams/Architecture.png} 
         \caption{System Architecture}
         \label{fig:arch}
     \end{subfigure}
 
-    % 第二张图：Sequence
+    % Sequence
     \begin{subfigure}{\textwidth}
         \centering
-        \includegraphics[width=0.9\textwidth]{diagrams/Sequence.pdf}
+        \includegraphics[width=0.7\textwidth]{diagrams/Sequence.png} 
         \caption{Operation Sequence}
         \label{fig:seq}
     \end{subfigure}
