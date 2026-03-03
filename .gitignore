@@ -28,5 +28,6 @@
 *.backup
 .DS_Store
 
+
 # Compiled PDF — uncomment the next line if you want to track the PDF in git
 # *.pdf
