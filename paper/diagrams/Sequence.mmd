@@ -1,0 +1,47 @@
+%%{init: {
+  'theme': 'neutral',
+  'themeVariables': {
+    'fontFamily': 'Arial',
+    'fontSize': '14px',
+
+    /* Base colors */
+    'background': '#ffffff',
+    'primaryColor': '#ffffff',
+    'secondaryColor': '#ffffff',
+    'tertiaryColor': '#ffffff',
+
+    /* Text + lines */
+    'primaryTextColor': '#000000',
+    'lineColor': '#000000',
+
+    /* Participant (actor) boxes */
+    'actorBkg': '#ffffff',
+    'actorBorder': '#000000',
+    'actorTextColor': '#000000',
+
+    /* Messages */
+    'signalColor': '#000000',
+    'signalTextColor': '#000000',
+
+    /* Activations */
+    'activationBkgColor': '#ffffff',
+    'activationBorderColor': '#000000',
+
+    /* Notes (if used later) */
+    'noteBkgColor': '#ffffff',
+    'noteTextColor': '#000000',
+    'noteBorderColor': '#000000'
+  }
+} }%%
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+
+  C->>C: forward to cut layer (L1..Lk)
+  C->>C: compress activation
+  C->>S: send compressed activation
+  S->>S: decompress + forward/backward (Lk+1..Lend)
+  S->>C: send cut-layer gradient
+  C->>C: update local layers
+  C->>S: send profiler metrics (time/bytes/bw)
+  S->>S: scheduler decides next-round params

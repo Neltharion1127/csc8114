@@ -1,0 +1,39 @@
+digraph G {
+  rankdir=LR;
+  graph [fontsize=14, fontname="Arial", labelloc="t"];
+  node  [shape=box, fontsize=14, fontname="Arial", style="rounded"];
+  edge  [fontsize=12, fontname="Arial"];
+
+  subgraph cluster_client {
+    label="Edge Clients (N heterogeneous devices)";
+    style="rounded";
+    color="black";
+
+    CC [label="Computation Controller"];
+    M  [label="Client-side Model\n(L1..Lk)"];
+    AC [label="Activation Compression"];
+    P  [label="Client Profiler"];
+
+    CC -> M;
+    M  -> AC;
+  }
+
+  subgraph cluster_server {
+    label="Server / Coordinator";
+    style="rounded";
+    color="black";
+
+    SCH  [label="Scheduler"];
+    COOR [label="Training Coordinator"];
+    SM   [label="Server-side Model\n(Lk+1..Lend)"];
+    MET  [label="Metrics Collector"];
+
+    SCH -> COOR;
+    COOR -> SM;
+    MET -> COOR;
+  }
+
+  AC -> SM  [label="Compressed Activation"];
+  SM -> M   [label="Cut-layer Gradient"];
+  P  -> SCH [label="Runtime Metrics", style=dashed];
+}
