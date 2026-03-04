@@ -16,7 +16,6 @@ config:
 ---
 flowchart LR
  subgraph C["<br>"]
-        CC["Computation Controller"]
         M["Client-side Model (L1..Lk)"]
         AC["Activation Compression"]
         P["Client Profiler"]
@@ -27,15 +26,16 @@ flowchart LR
         COOR@{ label: "<p class=\"p1\">Training Coordinator</p>" }
         MET["Metrics Collector"]
   end
-    CC --> M
     M --> AC
     SM -- "<span style=color:>Cut-layer Gradient</span>" --> M
     SCH --> COOR
     COOR --> SM
     P -. "<span style=color:>Runtime Metrics</span>" .-> SCH
-    AC -- "<span style=color:>Compressed Activation</span>" --> SM
     MET --> COOR
+    AC L_AC_SM_0@-- Compressed Activation --> SM
     n1@{ label: "<span style=\"color:\">Edge Clients (N heterogeneous devices)</span>" }
 
     COOR@{ shape: rect}
     n1@{ shape: text}
+
+    L_AC_SM_0@{ curve: linear }
