@@ -74,7 +74,7 @@ We reduce transmission volume by lowering the representation precision of smashe
   \item \textbf{Quantization}: float32 $\rightarrow$ float16 or int8
   \item \textbf{Top-$k$ Sparsification}: transmitting only the $k$ most significant activation values, discarding near-zero entries
 \end{itemize}
-This component evaluates the trade-off between communication cost and predictive accuracy under different precision levels.
+This component will evaluate the trade-off between communication cost and predictive accuracy under different precision levels.
 
 \subsubsection{Reduced Synchronization Frequency (Temporal Optimization)}
 
