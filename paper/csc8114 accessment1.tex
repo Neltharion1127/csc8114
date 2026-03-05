@@ -160,6 +160,12 @@ The Metrics Collector will aggregate system-wide performance indicators for moni
 These measurements will form the basis for evaluating the communication--accuracy trade-offs investigated in this work.
 
 \subsection{Training and Communication Workflow}
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.75\textwidth]{diagrams/Sequence.png}
+    \caption{Training and communication workflow for one round of the FSL protocol.}
+    \label{fig:seq}
+\end{figure*}
 
 As illustrated in Fig.~\ref{fig:seq}, the complete training workflow for each communication round proceeds as follows:
 
@@ -175,12 +181,7 @@ As illustrated in Fig.~\ref{fig:seq}, the complete training workflow for each co
 
 The synchronization interval $\rho$ would be either fixed globally or assigned per-client by the Scheduler. Setting $\rho = 1$ will correspond to synchronizing after every batch, while increasing $\rho$ aims to reduce the number of communication rounds to saves bandwidth, although this may affect convergence.
 
-\begin{figure*}[t]
-    \centering
-    \includegraphics[width=0.75\textwidth]{diagrams/Sequence.png}
-    \caption{Training and communication workflow for one round of the FSL protocol.}
-    \label{fig:seq}
-\end{figure*}
+
 
 \subsection{Design Rationale}
 
