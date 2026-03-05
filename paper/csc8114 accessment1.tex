@@ -50,7 +50,7 @@ Third, FSL was introduced to distribute computation between clients and servers,
 
 Across all three research categories, a common limitation becomes clear: existing approaches typically optimize only one dimension—whether compression \cite{10078005}, pruning \cite{10050151}, split architecture design \cite{2023arXiv230205599M,2026ITWC...25.1981L}, or domain-specific modelling and rainfall projection studies \cite{CHAN2023100375,10.3389/frwa.2024.1378598}—without addressing the interdependencies between data representation precision, activation size, and synchronisation frequency. Moreover, despite the rapid deployment of IoT environmental sensing platforms, few studies evaluate their methods under real-world constraints such as those present in Newcastle’s Urban Observatory (UO), where heterogeneous sensors and unstable connectivity dominate system behaviour. 
 
-In summary, prior research has made useful progress in either communication efficiency or computation efficiency, but it still lacks a unified, lightweight, and tunable mechanism designed specifically for Federated Split Learning in resource‑constrained IoT environments. Motivated by these gaps, this study aims to design a communication‑oriented optimization framework that focuses on two key domains: communication efficiency and computation/representation efficiency.
+In summary, prior research has made useful progress in either communication efficiency or computation efficiency, but it still lacks a unified, lightweight, and tunable mechanism designed specifically for FSL in resource‑constrained IoT environments. Motivated by these gaps, this study aims to design a communication‑oriented optimization framework that focuses on two key domains: communication efficiency and computation/representation efficiency.
 The main contribution of this work is to enhance communication efficiency, achieved through two complementary strategies:
 (1) spatial reduction by compressing activations, and
 (2) temporal reduction by adjusting synchronization frequency.
@@ -61,11 +61,11 @@ By jointly considering activation precision and synchronization intervals, the p
 \section{Proposed System}
 \label{sec:system}
 
-While existing literature extensively explores gradient compression in traditional FL, the communication overhead of ``smashed activations'' in Federated Split Learning (FSL) remains under-investigated. Furthermore, synchronization frequency ($\rho$) is often treated as a fixed or coupled parameter rather than an independent controllable variable. This project aims to bridge this gap by proposing a lightweight system that optimizes communication in both precision and frequency dimensions.
+While existing literature extensively explores gradient compression in traditional FL, the communication overhead of ``smashed activations'' in FSL remains under-investigated. Furthermore, synchronization frequency ($\rho$) is often treated as a fixed or coupled parameter rather than an independent controllable variable. This project aims to bridge this gap by proposing a lightweight system that optimizes communication in both precision and frequency dimensions.
 
 \subsection{System Design}
 
-This project proposes a lightweight communication optimization system for Federated Split Learning (FSL) that systematically investigates the synergy between activation compression and reduced synchronization frequency, with the goal of improving communication efficiency while preserving convergence stability and inherent privacy guarantees.
+This project proposes a lightweight communication optimization system for FSL that systematically investigates the synergy between activation compression and reduced synchronization frequency, with the goal of improving communication efficiency while preserving convergence stability and inherent privacy guarantees.
 
 \subsubsection{Activation Compression (Spatial Optimization)}
 
@@ -99,7 +99,7 @@ We introduce a tunable parameter $\rho$ to control synchronization intervals bet
 
 \subsection{System Overview}
 
-The project aims to design a communication-efficient for Federated Split Learning (FSL) architecture for distributed rainfall prediction, using environmental data from the Newcastle Urban Observatory (UO). The proposed system consists of multiple client nodes (edge devices) and one central server, as illustrated in Fig.~\ref{fig:arch}. In this design, each client holds a local portion of the rainfall dataset and performs partial model training.
+The project aims to design a communication-efficient FSL architecture for distributed rainfall prediction, using environmental data from the Newcastle Urban Observatory (UO). The proposed system consists of multiple client nodes (edge devices) and one central server, as illustrated in Fig.~\ref{fig:arch}. In this design, each client holds a local portion of the rainfall dataset and performs partial model training.
 
 The neural network is planned to be split at a predefined cut layer into a client-side sub-network and a server-side sub-network. Edge devices are intended to handle the earlier layers to reduce their computational burden, while the server is intended to manage the remaining layers. In the planned training workflow, clients would perform a forward pass up to the cut layer, would transmit the intermediate activation to the server, and would subsequently receive the corresponding gradient to update their local parameters.
 
