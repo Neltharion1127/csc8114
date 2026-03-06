@@ -6,6 +6,7 @@
 \usepackage{amsmath}              % Math environments
 \usepackage{graphicx}             % Include images: \includegraphics{}
 \usepackage{url}                  % Line-breakable URLs
+\usepackage{lipsum}               % Lorem Ipsum text generation
 \usepackage[colorlinks=true,
             allcolors=black]{hyperref}  % Clickable links, but black text
 \usepackage{caption}
@@ -23,8 +24,7 @@ Email: \{c5016854, c5003419, c5053016, C5011444, c5053577, c4032640, c5036432\}@
 
 % ---- Abstract ----
 \begin{abstract}
-  Federated Split Learning (FSL) has emerged as a promising paradigm for privacy‑preserving distributed model training on resource‑constrained IoT devices. However, the frequent transmission of intermediate activations between clients and the central server introduces substantial communication overhead that existing methods do not adequately address. In particular, the size of each transmitted activation and the synchronization frequency—two major contributors to communication cost—are rarely treated as independent, tunable variables within a unified design.
-This project proposes a lightweight, communication‑oriented system design for FSL‑based rainfall prediction using data from the Newcastle Urban Observatory (UO). The framework is planned to reduce per‑transmission payload size through activation quantization and Top-$k$  sparsification, while also regulating communication frequency by controlling the global aggregation interval $\rho$. A lightweight Client Profiler is intended to record per‑round latency and upload volume, and a rule‑based Scheduler would use this information to adjust compression levels and synchronization intervals for each client. Planned experiments will evaluate how different activation precision levels and synchronization frequencies influence the trade‑off between communication cost and model accuracy, with the goal of providing practical guidelines for deploying communication‑efficient FSL in real‑world IoT sensing environments.
+  Federated Split Learning (FSL) has emerged as a promising paradigm for privacy-preserving distributed model training on resource-constrained IoT devices. However, the frequent transmission of intermediate activations between clients and the central server introduces substantial communication overhead that existing methods do not adequately address. In particular, both the size of each transmitted activation and the synchronization frequency are rarely treated as independent, controllable variables within a unified system. In this paper, we propose a lightweight communication optimization system for FSL-based rainfall prediction using data from the Newcastle Urban Observatory. The system incorporates two complementary mechanisms: (i) an Activation Compression Module that applies quantization (float32 to float16 or int8) and Top-$k$ sparsification to reduce per-transmission payload size, and (ii) a Synchronization Manager that controls the global aggregation interval $\rho$ to limit the total number of communication rounds. A lightweight Client Profiler records per-round latency and upload volume, which a rule-based Scheduler uses to adapt compression and synchronization configurations per client. Experiments evaluate the trade-off between communication cost and model accuracy across varying compression levels and synchronization intervals, providing practical guidelines for deploying FSL in real-world IoT sensing environments.
 \end{abstract}
 
 % ---- Keywords (optional) ----
@@ -38,34 +38,28 @@ This project proposes a lightweight, communication‑oriented system design for 
 
 \section{Introduction}
 \label{sec:intro}
+Rainfall prediction in urban environments has increasingly relied on IoT-based sensing networks, making communication efficiency and model deployability as critical as predictive accuracy. While numerous studies demonstrate the effectiveness of machine learning and deep learning models for rainfall forecasting \cite{10.3389/frwa.2024.1378598}, recent literature reveals an imbalance: research overwhelmingly prioritizes accuracy while overlooking the system-level constraints in real urban drainage and climate resilience contexts \cite{CHAN2023100375}. To organise existing work and highlight gaps, current approaches can be broadly classified into three categories: (1) communication-efficient learning frameworks, (2) computation- or model-structure–oriented optimisation, and (3) Split or Federated-Split Learning architectures. 
 
+First, communication-efficient Federated Learning (FL) largely focuses on gradient or parameter compression to reduce transmission cost. Compressive sensing–based methods dynamically adjust compression ratios to reduce bidirectional communication \cite{10078005}, while gradient quantisation and sparsification frameworks address wireless bandwidth restrictions in edge learning scenarios \cite{2024ITWC...23.7362C}. These methods demonstrate substantial communication savings, yet they almost exclusively target weight or gradient updates in traditional FL. In Federated Split Learning (FSL), however, the majority of communication arises not from gradients but from the exchange of smashed activations between client and server. Consequently, compression strategies designed for FL become misaligned with the communication patterns of SL, where activation size grows with network depth. More critically, activation compression often relies on sparsity assumptions that degrade as training progresses, reducing reconstruction quality. This reveals a fundamental limitation: communication-efficient FL does not directly translate into communication-efficient FSL, leaving a key research gap unaddressed. 
 
-Rainfall prediction in urban environments has increasingly relied on IoT-based sensing networks, making communication efficiency and model deployability as critical as predictive accuracy. While numerous studies have demonstrated the effectiveness of machine learning and deep learning models for rainfall forecasting \cite{10.3389/frwa.2024.1378598}, recent literature reveals an imbalance: research overwhelmingly prioritizes accuracy while overlooking the system-level constraints in real urban drainage and climate resilience contexts \cite{CHAN2023100375}. To organize existing work and highlight gaps, current approaches can be broadly classified into three categories: (1) communication-efficient learning frameworks, (2) computation- or model-structure–oriented optimization, and (3) Split or Federated-Split Learning architectures. 
+Second, computation-oriented approaches—such as model pruning, adaptive layer reduction, or lightweight network design—aim to reduce computation on resource-constrained clients. Adaptive pruning strategies adjust model structure based on device capability \cite{10050151}, while lightweight rainfall prediction models balance accuracy and efficiency in urban contexts \cite{10.3389/frwa.2024.1378598}. However, these improvements remain primarily structural; they do not alter the temporal communication pattern of FL or FSL. Clients must still participate in every synchronisation round, meaning the cumulative communication volume remains high despite reductions in model size. In IoT-based rainfall monitoring, where devices are energy-limited and rely on unstable wireless networks, structural optimisations alone fail to address the crucial need to jointly optimise representation precision, activation size, and communication frequency. 
 
-First, communication-efficient FL approaches primarily target gradient or parameter compression to reduce transmission cost \cite{10078005,2024ITWC...23.7362C}. While these strategies achieve meaningful communication savings, they are designed for traditional FL settings where weight updates dominate transmission. In FSL, however, the majority of communication arises from the exchange of smashed activations between client and server—a fundamentally different pattern. Compression strategies designed for FL thus become misaligned with FSL, as activation size grows with network depth and sparsity-based assumptions tend to degrade as training progresses, reducing reconstruction quality. Critically, even when per-transmission payload is reduced, synchronization frequency is typically left unchanged, so communication events remain frequent. 
+Third, Split Learning (SL) and Federated-Split Learning (FSL) were introduced to distribute computation more flexibly between clients and servers. By training early layers locally and later layers centrally, FSL reduces client-side computational burden while preserving privacy \cite{2023arXiv230205599M}. Yet, communication cost and scalability remain persistent bottlenecks. The transmission of activations at every forward pass and gradients at every backward pass produces high communication loads, especially in multi-client IoT deployments. Although more recent works propose dynamic split point selection \cite{2023arXiv230205599M}, asynchronous training and relaxed synchronisation \cite{2021arXiv210709786C}, or architectural redesign to reduce server-state dependencies \cite{2026ITWC...25.1981L,10522472}, these strategies often introduce additional complexity or assume relatively stable connectivity—conditions rarely met in real-world environmental sensing systems. 
 
-Second, computation-oriented approaches—including model pruning, adaptive layer reduction, and lightweight network design—aim to reduce processing demands on resource-constrained clients \cite{10050151,10.3389/frwa.2024.1378598}. However, these improvements are largely structural and do not alter the temporal communication pattern of FSL. Clients must still participate in every synchronisation round, so cumulative communication volume remains high even when model size is reduced. In IoT-based rainfall monitoring, where devices are energy-limited and connectivity is often unstable, structural optimizations alone cannot meet the need to jointly control transmission size and communication frequency. 
+Across all three research categories, a common limitation becomes clear: existing approaches typically optimise only one dimension—whether compression \cite{10078005}, pruning \cite{10050151}, split architecture design \cite{2023arXiv230205599M,2026ITWC...25.1981L}, or domain-specific  modelling and rainfall projection studies \cite{CHAN2023100375,10.3389/frwa.2024.1378598}—without addressing the interdependencies between data representation precision, activation size, and synchronisation frequency. Moreover, despite the rapid deployment of IoT environmental sensing platforms, few studies evaluate their methods under real-world constraints such as those present in Newcastle’s Urban Observatory (UO), where heterogeneous sensors and unstable connectivity dominate system behaviour. 
 
-Third, FSL was introduced to distribute computation between clients and servers, reducing client-side burden by training only early layers locally while preserving data privacy \cite{2023arXiv230205599M}. Yet communication bottlenecks persist: activations are transmitted at every forward pass and gradients at every backward pass, producing high communication loads in multi-client IoT deployments. Proposed mitigations—including dynamic split point selection \cite{2023arXiv230205599M}, asynchronous training \cite{2021arXiv210709786C}, and architectural redesign \cite{2026ITWC...25.1981L,10522472,10478872}—reduce overhead to some extent but often introduce additional complexity or rely on stable network conditions that are seldom present in real-world environmental sensing deployments. 
-
-Across all three research categories, a common limitation becomes clear: existing approaches typically optimize only one dimension—whether compression \cite{10078005}, pruning \cite{10050151}, split architecture design \cite{2023arXiv230205599M,2026ITWC...25.1981L}, or domain-specific modelling and rainfall projection studies \cite{CHAN2023100375,10.3389/frwa.2024.1378598}—without addressing the interdependencies between data representation precision, activation size, and synchronisation frequency. Moreover, despite the rapid deployment of IoT environmental sensing platforms, few studies evaluate their methods under real-world constraints such as those present in Newcastle’s Urban Observatory (UO), where heterogeneous sensors and unstable connectivity dominate system behaviour. 
-
-In summary, prior research has made useful progress in either communication efficiency or computation efficiency, but it still lacks a unified, lightweight, and tunable mechanism designed specifically for FSL in resource‑constrained IoT environments. Motivated by these gaps, this study aims to design a communication‑oriented optimization framework that focuses on two key domains: communication efficiency and computation/representation efficiency.
-The main contribution of this work is to enhance communication efficiency, achieved through two complementary strategies:
-(1) spatial reduction by compressing activations, and
-(2) temporal reduction by adjusting synchronization frequency.
-By jointly considering activation precision and synchronization intervals, the proposed design seeks to make FSL more scalable and practical for real‑world rainfall prediction tasks, particularly in sensing networks such as the Newcastle Urban Observatory.
+In summary, prior research provides valuable advancements in either communication or computation efficiency but lacks a unified, lightweight, and tunable mechanism specifically tailored for Federated Split Learning in resource-constrained IoT environments. Motivated by these gaps, this study aims to develop a communication optimisation mechanism that jointly considers data representation precision and synchronisation frequency, enabling scalable and practical deployment of FSL for rainfall prediction in real-world sensing networks. 
 
 
 
 \section{Proposed System}
 \label{sec:system}
 
-While existing literature extensively explores gradient compression in traditional FL, the communication overhead of ``smashed activations'' in FSL remains under-investigated. Furthermore, synchronization frequency ($\rho$) is often treated as a fixed or coupled parameter rather than an independent controllable variable. This project aims to bridge this gap by proposing a lightweight system that optimizes communication in both precision and frequency dimensions.
+While existing literature extensively explores gradient compression in traditional FL, the communication overhead of ``smashed activations'' in Federated Split Learning (FSL) remains under-investigated. Furthermore, synchronization frequency ($\rho$) is often treated as a fixed or coupled parameter rather than an independent controllable variable. This project aims to bridge this gap by proposing a lightweight system that optimizes communication in both precision and frequency dimensions.
 
 \subsection{System Design}
 
-This project proposes a lightweight communication optimization system for FSL that systematically investigates the synergy between activation compression and reduced synchronization frequency, with the goal of improving communication efficiency while preserving convergence stability and inherent privacy guarantees.
+This project proposes a lightweight communication optimization system for Federated Split Learning (FSL) that systematically investigates the synergy between activation compression and reduced synchronization frequency, with the goal of improving communication efficiency while preserving convergence stability and inherent privacy guarantees.
 
 \subsubsection{Activation Compression (Spatial Optimization)}
 
@@ -74,7 +68,7 @@ We reduce transmission volume by lowering the representation precision of smashe
   \item \textbf{Quantization}: float32 $\rightarrow$ float16 or int8
   \item \textbf{Top-$k$ Sparsification}: transmitting only the $k$ most significant activation values, discarding near-zero entries
 \end{itemize}
-This component will evaluate the trade-off between communication cost and predictive accuracy under different precision levels.
+This component evaluates the trade-off between communication cost and predictive accuracy under different precision levels.
 
 \subsubsection{Reduced Synchronization Frequency (Temporal Optimization)}
 
@@ -99,9 +93,9 @@ We introduce a tunable parameter $\rho$ to control synchronization intervals bet
 
 \subsection{System Overview}
 
-The project aims to design a communication-efficient FSL architecture for distributed rainfall prediction, using environmental data from the Newcastle Urban Observatory (UO). The proposed system consists of multiple client nodes (edge devices) and one central server, as illustrated in Fig.~\ref{fig:arch}. In this design, each client holds a local portion of the rainfall dataset and performs partial model training.
+We design a communication-efficient Federated Split Learning (FSL) architecture for distributed rainfall prediction, specifically using environmental data from the Newcastle Urban Observatory (UO). The system consists of multiple client nodes (edge devices) and one central server, as illustrated in Fig.~\ref{fig:arch}. Each client holds a local portion of the rainfall dataset and performs partial model training.
 
-The neural network is planned to be split at a predefined cut layer into a client-side sub-network and a server-side sub-network. Edge devices are intended to handle the earlier layers to reduce their computational burden, while the server is intended to manage the remaining layers. In the planned training workflow, clients would perform a forward pass up to the cut layer, would transmit the intermediate activation to the server, and would subsequently receive the corresponding gradient to update their local parameters.
+The neural network is split at a predefined cut layer into a client-side sub-network and a server-side sub-network. Edge devices handle only the earlier layers, reducing their computational burden, while the server handles the rest. During training, clients perform a forward pass up to the cut layer, transmit the intermediate activation to the server, and later receive the corresponding gradient to update their local parameters.
 
 The main goal of this design is to reduce communication overhead by controlling two independent variables: (i) the size of each transmitted activation, via compression, and (ii) how often clients synchronize with the server, via a fixed synchronization interval $\rho$.
 
@@ -114,41 +108,41 @@ The main goal of this design is to reduce communication overhead by controlling 
 
 \subsection{Client-side Modules}
 
-Each client is intended to be composed of three main components: a local sub-model with its optimizer, an \textit{Activation Compression Module}, and a \textit{Client Profiler}.
+Each client has three main components: a local sub-model with its optimizer, an \textit{Activation Compression Module}, and a \textit{Client Profiler}.
 
 \subsubsection{Activation Compression Module}
 
-Before sending the intermediate activation to the server, this module is intended to reduce the data size to lower bandwidth usage. Two strategies will be supported:
+Before sending the intermediate activation to the server, this module reduces the data size to lower bandwidth usage. Two strategies are supported:
 \begin{itemize}
   \item \textbf{Quantization}: converting activations from float32 to float16 or int8, reducing payload size by $2\times$ to $4\times$.
   \item \textbf{Top-$k$ Sparsification}: transmitting only the $k$ most significant activation values and their indices, dropping near-zero entries.
 \end{itemize}
-The server is planned to decompress or reconstruct the received activation before continuing forward propagation. The compression strategy will be assigned by the server-side Scheduler at the start of each round.
+The server decompresses or reconstructs the received activation before continuing forward propagation. The compression strategy is assigned by the server-side Scheduler at the start of each round.
 
 \subsubsection{Client Profiler}
 
-The Client Profiler is intended to be a lightweight logging component that will record two key metrics at the end of each training round: the total round latency ($t_{\mathrm{round}}$) and the number of bytes uploaded. These values will be sent to the server along with the activation, adding negligible overhead. The server will use them as input to the Scheduler.
+The Client Profiler is a lightweight logging component that records two key metrics at the end of each training round: the total round latency ($t_{\mathrm{round}}$) and the number of bytes uploaded. These values are sent to the server along with the activation, adding negligible overhead. The server uses them as input to the Scheduler.
 
 \subsection{Server-side Modules}
 \label{sec:server_modules}
 
-The server will host four modules: a \textit{Coordinator}, a \textit{Scheduler}, a \textit{Synchronization Manager}, and a \textit{Metrics Collector}.
+The server hosts four modules: a \textit{Coordinator}, a \textit{Scheduler}, a \textit{Synchronization Manager}, and a \textit{Metrics Collector}.
 
 \subsubsection{Coordinator / Aggregator}
 
-The Coordinator is responsible for managing the distributed training loop. It is designed to receive compressed activations from clients, execute server-side forward and backward propagation, and return cut-layer gradients. Periodically, it will collect the local model weights from all clients and apply Federated Averaging (FedAvg) to update the global model. As the server will processes only compressed intermediate data, raw client data remains on the local device.
+The Coordinator manages the distributed training loop. It receives compressed activations from clients, performs server-side forward and backward propagation, and returns cut-layer gradients. Periodically, it collects the local model weights from all clients and applies Federated Averaging (FedAvg) to update the global model. The server only processes compressed intermediate data, so raw client data never leaves the client device.
 
 \subsubsection{Scheduler}
 
-The Scheduler will analyze the profiler data reported by each client and will adjust their configurations for the next round using a simple rule-based policy. For example, if a client's round latency exceeds a threshold (e.g., $t_{\mathrm{round}} > 1\,\mathrm{s}$), the Scheduler will assign it a more aggressive compression level (e.g., int8) or a larger synchronization interval $\rho$ to optimize both communication and computation overhead. Clients operating within normal latency bounds will maintain default settings. This approach aims to be straightforward to implement and easy to reason about.
+The Scheduler reads the profiler data reported by each client and adjusts their configurations for the next round using a simple rule-based policy. For example, if a client's round latency exceeds a threshold (e.g., $t_{\mathrm{round}} > 1\,\mathrm{s}$), the Scheduler assigns it a more aggressive compression level (e.g., int8) or a larger synchronization interval $\rho$ to reduce its communication load. Clients performing within normal latency bounds are kept at the default settings. This approach is straightforward to implement and easy to reason about.
 
 \subsubsection{Synchronization Manager}
 
-This module will control the frequency of the global model updates. The synchronization interval $\rho$ assigned by the Scheduler determines the number of local training steps a client performs prior to global aggregation. A larger $\rho$ is expected to lead to fewer communication rounds per epoch, thereby maximizing communication efficiency by reducing total data transfer although it may affect convergence stability.
+This module controls how often the global model is updated. The synchronization interval $\rho$ assigned by the Scheduler determines how many local training steps a client performs before the next global aggregation. A larger $\rho$ means fewer communication rounds per epoch, which reduces total data transferred but may affect convergence stability.
 
 \subsubsection{Metrics Collector}
 
-The Metrics Collector will aggregate system-wide performance indicators for monitoring and post-hoc evaluation. The following metrics are planned to be recorded throughout training:
+The Metrics Collector aggregates system-wide performance indicators for monitoring and post-hoc evaluation. The following metrics are recorded throughout training:
 
 \begin{itemize}
   \item Total transmitted bytes (uplink and downlink)
@@ -157,9 +151,24 @@ The Metrics Collector will aggregate system-wide performance indicators for moni
   \item Global model accuracy and loss at each aggregation step
 \end{itemize}
 
-These measurements will form the basis for evaluating the communication--accuracy trade-offs investigated in this work.
+These measurements form the basis for evaluating the communication--accuracy trade-offs investigated in this work.
 
 \subsection{Training and Communication Workflow}
+
+As illustrated in Fig.~\ref{fig:seq}, the complete training workflow for each communication round proceeds as follows:
+
+\begin{enumerate}
+  \item Each selected client performs forward propagation on its local sub-model up to the cut layer.
+  \item The Activation Compression Module compresses the resulting activation.
+  \item The client transmits the compressed activation to the server.
+  \item The server decompresses the activation, completes forward propagation, evaluates the loss, and performs backward propagation on the server-side sub-model.
+  \item The server sends cut-layer gradients back to the corresponding client.
+  \item The client completes local backpropagation and updates its parameters.
+  \item The server's Scheduler reads the profiler data, and if any client's latency exceeds the threshold, it adjusts that client's compression level or $\rho$ for the next round.
+\end{enumerate}
+
+The synchronization interval $\rho$ is either fixed globally or assigned per-client by the Scheduler. Setting $\rho = 1$ corresponds to synchronizing after every batch; increasing $\rho$ reduces the number of communication rounds, which saves bandwidth but may affect convergence.
+
 \begin{figure*}[t]
     \centering
     \includegraphics[width=0.75\textwidth]{diagrams/Sequence.png}
@@ -167,32 +176,55 @@ These measurements will form the basis for evaluating the communication--accurac
     \label{fig:seq}
 \end{figure*}
 
-As illustrated in Fig.~\ref{fig:seq}, the complete training workflow for each communication round proceeds as follows:
-
-\begin{enumerate}
-  \item Each selected client will perform forward propagation on its local sub-model up to the cut layer.
-  \item The Activation Compression Module will then compress the resulting activation.
-  \item The client will transmit the compressed activation to the server.
-  \item The server will decompress the activation, completes forward propagation, evaluates the loss, and performs backward propagation on the server-side sub-model.
-  \item The server will send cut-layer gradients back to the corresponding client.
-  \item The client will complete local backpropagation and updates its parameters.
-  \item The server's Scheduler would read the profiler data, and if any client's latency exceeds the threshold, it will adjust that client's compression level or $\rho$ for the next round.
-\end{enumerate}
-
-The synchronization interval $\rho$ would be either fixed globally or assigned per-client by the Scheduler. Setting $\rho = 1$ will correspond to synchronizing after every batch, while increasing $\rho$ aims to reduce the number of communication rounds to saves bandwidth, although this may affect convergence.
-
-
-
 \subsection{Design Rationale}
 
-The proposed design is intended to favour simplicity and transparency. The Scheduler is planned to utilise a rule-based threshold policy rather than a learned model, making the system easy to implement, test, and explain. Both the compression level and the synchronization interval are intended to serve as explicit, observable parameters, allowing us to conduct controlled experiments and directly measure the impact of each on accuracy and communication cost.
+The design favours simplicity and transparency. The Scheduler uses a rule-based threshold policy rather than a learned model, which makes the system easy to implement, test, and explain. Both the compression level and the synchronization interval are explicit, observable parameters, so we can run controlled experiments and directly measure the impact of each on accuracy and communication cost.
 
-Taken together, the Activation Compression Module (spatial) and the Synchronization Manager (temporal), guided by the Scheduler, aim to address our research questions: how much accuracy is lost from lower-precision activations (RQ1), how convergence is affected by less frequent synchronization (RQ2), and whether combining both yields an efficient overall system (RQ3).
+Together, the Activation Compression Module (spatial) and the Synchronization Manager (temporal), guided by the Scheduler, address our research questions: how much accuracy is lost from lower-precision activations (RQ1), how convergence is affected by less frequent synchronization (RQ2), and whether combining both yields an efficient overall system (RQ3).
 
 % ---- References ----
 % Compile order: pdflatex -> bibtex -> pdflatex -> pdflatex
 
 \bibliographystyle{IEEEtran}
 \bibliography{IEEEabrv,refs}
+\appendix
+\section{Team Contribution Table}
 
+\begin{table*}[t]
+\centering
+\begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
+\hline
+\textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
+\hline
+
+Guanghua Liu & Introduction Writing &
+Reviewed paper [9]. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
+\hline
+
+Baoyi Liu & Literature Review &
+Reviewed paper [10]. Read related papers and summarized the main ideas for the related work section. \\
+\hline
+
+Yi Sin Lin & System Design &
+Reviewed paper [3]. Helped design the overall system architecture and described the client--server structure. \\
+\hline
+
+Mingyuan Shao & Activation Compression &
+Reviewed paper [5]. Worked on the activation compression idea and explained quantization and sparsification. \\
+\hline
+
+Jiale Liu & Synchronization Strategy &
+Reviewed papers [4] and [7]. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
+\hline
+
+Zhuolun Li & Scheduler and Profiler &
+Reviewed papers [1] and [2]. Helped describe the scheduler and client profiler modules in the system. \\
+\hline
+
+Wenjie Ding & Workflow and Editing &
+Reviewed papers [6] and [8]. Helped organize the workflow diagram explanation and checked the final formatting of the report. \\
+\hline
+
+\end{tabular}
+\end{table*}
 \end{document}
