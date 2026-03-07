@@ -27,7 +27,28 @@
 *~
 *.backup
 .DS_Store
-
+.idea
 
 # Compiled PDF — uncomment the next line if you want to track the PDF in git
 # *.pdf
+
+# Python & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Data & Machine Learning
+code/dataset/
+*.csv
+*.parquet
+*.pt
+*.pth
+
+# IDEs & System
+.vscode/
+.DS_Store
