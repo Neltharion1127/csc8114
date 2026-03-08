@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # ---------------------------------------------
+  # 1. The Cloud Server running the Head Model
+  # ---------------------------------------------
+  fsl-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsl-server
+    # Run our hello world server script natively
+    command: uv run python src/nodes/server_node.py
+    # Expose the gRPC port so tests from our host machine could theoreticall hit it
+    ports:
+      - "50051:50051"
+    # Ensure stdout prints immediately to the compose logs 
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+  # ---------------------------------------------
+  # 2. The Edge Client running the ClientLSTM
+  # ---------------------------------------------
+  fsl-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsl-client
+    # Run the client script that establishes the ping
+    command: uv run python src/nodes/client_node.py
+    # Don't start the client until the server container is up
+    depends_on:
+      - fsl-server
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    # For Phase 5: Map the local dataset folder into the client container
+    # volumes:
+    #   - ./dataset:/app/dataset

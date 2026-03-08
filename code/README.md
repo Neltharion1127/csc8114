@@ -58,9 +58,39 @@ uv run python src/data/dataloader.py
 
 ---
 
-## 🚀 Next Steps (Phase 2 & Beyond)
+## 🧠 Split Architecture (Phase 2)
 
-With the data pipeline complete, the following phases will implement the models and the gRPC communication loop:
-1. **Model Architecture (`src/models/split_lstm.py`):** Define the `ClientLSTM` for local feature extraction (Smashed Activations) and the `ServerHead` for prediction and loss generation.
-2. **Communication (gRPC):** Use Protocol Buffers to serialize and transmit tensors between simulated devices.
-3. **FSL Loop:** Implement Spatial Compression and Adaptive Synchronization ($\rho$).
+The neural network is physically partitioned into two distinct components to protect raw edge data:
+1. **`ClientLSTM`:** An edge model (`src/models/split_lstm.py`) that compresses 24-hour time series into a dense 64-dimensional sequence (the "Smashed Activation").
+2. **`ServerHead`:** A centralized MLP regressor that takes the activation and predicts the next 1-hour rainfall.
+* Both models were tested locally in `test_split_forward.py` to verify that `loss.backward()` gradients successfully cross the detached computational split.
+
+---
+
+## 📡 Docker & gRPC Network (Phases 3 & 4)
+
+To simulate true Edge-to-Cloud communication without deploying physical hardware, the system is fully containerized using **Docker Compose** and connected via **gRPC Protocol Buffers**.
+
+* **Protocol Definition (`proto/fsl.proto`)**: Defines the strict `ForwardRequest` and `SyncRequest` byte packets.
+* **Serialization (`src/shared/serialization.py`)**: Safely converts 10MB PyTorch Tensors into 9KB binary streams.
+* **Virtual Subnet (`docker-compose.yml`)**: Isolates the `fsl-client` and `fsl-server` models into pseudo-distributed machines talking over TCP port `50051`.
+
+### 🛠 Makefile Commands (How to Run)
+We use a `Makefile` to simplify checking the complex Docker network status:
+
+```bash
+# 1. Compile the .proto file into auto-generated Python routing code (Needed if you edit fsl.proto)
+make compile-proto
+
+# 2. Boot up the Docker virtual environment and test the Server / Client Hello World connection
+make test-network
+
+# 3. Destroy all FSL containers and cleanup the network
+make clean
+```
+
+---
+
+## 🚀 Next Steps (Phase 5)
+1. **Connect the PyTorch Models to the gRPC Nodes:** Replace the dummy ping-pong strings with actual Smashed Activations and Gradients.
+2. **Implement the Distributed Training Loop:** Combine the `DataLoader`, the PyTorch `optimizers`, and the networking layer to start the first full Federated Split Learning epoch.

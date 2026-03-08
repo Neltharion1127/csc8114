@@ -52,3 +52,7 @@ code/dataset/
 # IDEs & System
 .vscode/
 .DS_Store
+
+# Auto-generated gRPC code
+code/proto/*_pb2.py
+code/proto/*_pb2_grpc.py
