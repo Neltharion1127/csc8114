@@ -36,5 +36,7 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
     # For Phase 5: Map the local dataset folder into the client container
-    # volumes:
-    #   - ./dataset:/app/dataset
+    volumes:
+      - .:/app
+      - ./dataset:/app/dataset
+    working_dir: /app

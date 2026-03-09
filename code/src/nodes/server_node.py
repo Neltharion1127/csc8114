@@ -5,9 +5,15 @@ import torch
 import numpy as np
 from proto import fsl_pb2
 from proto import fsl_pb2_grpc
-# Importing the server-side architecture
-from models.split_lstm import ServerHead
+from src.models.split_lstm import ServerHead
+import sys
+import os
 
+# Ensure the project root path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     """
@@ -29,7 +35,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # 1. Decode the byte data back into a Torch Tensor
             # Expected shape from client: (batch_size, hidden_size)
             activation_buffer = np.frombuffer(request.activation_data, dtype=np.float32)
-            smashed_activation = torch.tensor(activation_buffer, dtype=torch.float32).view(-1, 64)
+            # Reshape. Using .clone() ensures memory safety.
+            smashed_activation = torch.tensor(activation_buffer, dtype=torch.float32).view(-1, 64).detach().clone()
             smashed_activation.requires_grad_(True) # Enable gradient tracking for backprop
             
             target = torch.tensor([[request.true_target]], dtype=torch.float32)
@@ -46,12 +53,25 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             
             # 5. Extract gradients for the smashed activation to send back to the client
             # This allows the client to update the ClientLSTM parameters
-            activation_gradient = smashed_activation.grad.numpy().tobytes()
+            if smashed_activation.grad is not None:
+                activation_gradient = smashed_activation.grad.numpy().tobytes()
+            else:
+                raise ValueError("Gradient calculation failed on the smashed activation.")
             
-            # Optional: Update Server-side parameters
+            # Optional: Update Server-side parameters (ServerHead)
             self.optimizer.step()
+            print(f"[SERVER] Node # Client ID:{request.client_id} | Loss: {loss.item():.6f} | Target: {request.true_target}")
 
-            print(f"[SERVER] Node #{request.client_id} | Loss: {loss.item():.6f} | Target: {request.true_target}")
+            # --- 改動部分：強化日誌監控 ---
+            target_val = request.true_target
+            pred_val = prediction.item()
+            
+            if target_val > 0:
+                # rain
+                print(f"[RAIN EVENT] Client:{request.client_id} | Target:{target_val:.2f} | Pred:{pred_val:.4f} | Loss:{loss.item():.6f}")
+            else:
+                # no rain
+                print(f"[TRAIN] Client:{request.client_id} | Loss:{loss.item():.6f}")
 
             # 6. Construct the response containing the gradient feedback
             return fsl_pb2.ForwardResponse(
@@ -72,14 +92,12 @@ def serve():
     
     # Listen on all IP addresses on port 50051
     server.add_insecure_port('[::]:50051')
-    server.start()
-    
+    server.start()    
     print("[SERVER] Listening for incoming FSL connections on port 50051...")
-    
-    # Keep the server alive
+
     try:
-        while True:
-            time.sleep(86400)
+        # Keep the process alive
+        server.wait_for_termination()
     except KeyboardInterrupt:
         server.stop(0)
 
