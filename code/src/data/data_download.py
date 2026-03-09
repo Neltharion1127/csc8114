@@ -35,8 +35,7 @@ import time
 
 out_dir = Path("dataset")
 out_dir.mkdir(parents=True, exist_ok=True)
-now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-filename = out_dir / f"newcastle_rainfall_data_{now_str}.csv"
+filename = out_dir / f"newcastle_rainfall_data.csv"
 
 # Remove existing file if starting fresh
 if filename.exists():
