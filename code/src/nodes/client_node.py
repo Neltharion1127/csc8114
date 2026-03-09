@@ -8,7 +8,7 @@ from proto import fsl_pb2_grpc
 def run_client():
     print("⏳ [CLIENT] Waiting 3 seconds for Server to boot up...")
     time.sleep(3)
-    print("🚀 [CLIENT] Connecting to Server...")
+    print("🚀 [CLIENT] Connecting to Server....")
     
     # Establish connection with the Docker Compose hostname "fsl-server"
     with grpc.insecure_channel('fsl-server:50051') as channel:
