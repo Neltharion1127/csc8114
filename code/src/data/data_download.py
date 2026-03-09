@@ -24,8 +24,8 @@ target_variables = [
 
 # Set the historical data window (e.g., the last 30 days)
 end_date = datetime.now()
-last_days = 365
-start_date = end_date - timedelta(days=365)
+last_days = 7
+start_date = end_date - timedelta(days=last_days)
 
 # --- Data Acquisition in Chunks ---
 
@@ -35,7 +35,8 @@ import time
 
 out_dir = Path("dataset")
 out_dir.mkdir(parents=True, exist_ok=True)
-filename = out_dir / "newcastle_rainfall_data.csv"
+now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+filename = out_dir / f"newcastle_rainfall_data_{now_str}.csv"
 
 # Remove existing file if starting fresh
 if filename.exists():
@@ -45,7 +46,7 @@ print(f"Fetching meteorological data from {start_date.date()} to {end_date.date(
 
 # Generate a list of dates to iterate through (chunking by ~30 days)
 current_end_date = end_date
-chunk_days = 30
+chunk_days = 7
 
 total_rows = 0
 chunk_count = 1
@@ -87,4 +88,4 @@ while current_end_date > start_date:
     time.sleep(2)
 
 print(f"\nFinished fetching. Total rows saved: {total_rows}")
-print(f"Data has been successfully saved to: {filename}")
+print(f"Data has been successfully saved to: {out_dir}/{filename}")
