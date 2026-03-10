@@ -11,6 +11,7 @@ import os
 
 # Use shared common module (provides `cfg` and `project_root`)
 from src.shared.common import cfg, project_root
+from src.shared.compression import compress, decompress
 
 class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     """
@@ -34,9 +35,14 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         try:
             # 1. Decode the byte data back into a Torch Tensor
             # Expected shape from client: (batch_size, hidden_size)
-            activation_buffer = np.frombuffer(request.activation_data, dtype=np.float32)
-            # Reshape according to configured hidden size. Using .clone() ensures memory safety.
-            smashed_activation = torch.tensor(activation_buffer, dtype=torch.float32).view(-1, self.hidden_size).detach().clone()
+            compression_mode = request.compression_mode if hasattr(request, "compression_mode") and request.compression_mode else "float32"
+            
+            if compression_mode == "float16" or compression_mode == "int8" or compression_mode == "float32":
+                smashed_activation = decompress(request.activation_data, (-1, self.hidden_size), compression_mode)
+            else:
+                smashed_activation = decompress(request.activation_data, (-1, self.hidden_size), "float32")
+                
+            smashed_activation = smashed_activation.detach().clone()
             smashed_activation.requires_grad_(True) # Enable gradient tracking for backprop
             
             target = torch.tensor([[request.true_target]], dtype=torch.float32)
@@ -54,7 +60,16 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # 5. Extract gradients for the smashed activation to send back to the client
             # This allows the client to update the ClientLSTM parameters
             if smashed_activation.grad is not None:
-                activation_gradient = smashed_activation.grad.numpy().tobytes()
+                grad_arr = smashed_activation.grad.numpy()
+                if compression_mode == "float16":
+                    activation_gradient = grad_arr.astype(np.float16).tobytes()
+                elif compression_mode == "int8":
+                    max_abs = np.max(np.abs(grad_arr))
+                    scale = max_abs / 127.0 if max_abs > 0 else 1.0
+                    quantized = np.round(grad_arr / scale).astype(np.int8)
+                    activation_gradient = np.array([scale], dtype=np.float32).tobytes() + quantized.tobytes()
+                else:
+                    activation_gradient = grad_arr.tobytes()
             else:
                 raise ValueError("Gradient calculation failed on the smashed activation.")
             

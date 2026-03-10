@@ -14,6 +14,7 @@ import json
 
 # Use shared common module (provides `cfg` and `project_root`)
 from src.shared.common import cfg, project_root
+from src.shared.compression import compress, decompress
 
 # Feature columns (can be overridden in config.yaml under data.feature_cols)
 FEATURE_COLS = cfg.get("data", {}).get(
@@ -103,18 +104,25 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
 
                     # 4. Forward Pass
                     smashed_activation = client_model(input_tensor)
-                    activation_bytes = smashed_activation.detach().numpy().tobytes()
+                    
+                    # --- Compression ---
+                    compression_mode = cfg.get("compression", {}).get("mode", "float32")
+                    start_time = time.time()
+                    
+                    activation_bytes = compress(smashed_activation, compression_mode)
+                    payload_size = len(activation_bytes)
 
                     request = fsl_pb2.ForwardRequest(
                         client_id=1, 
                         activation_data=activation_bytes,
                         true_target=target_value,
-                        latency_ms=0.0  # Set to 0.0 for ideal network simulation
+                        latency_ms=0.0,  # Set to 0.0 for ideal network simulation
+                        compression_mode=compression_mode
                     )                  
+                    print(f"[CLIENT] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
                     print(f"[CLIENT] Transmitting activations for {sensor_id}...")
 
                     # 6. Send activations to Server and receive Gradient Feedback
-                    start_time = time.time()
                     response = stub.Forward(request)
                     latency_ms = (time.time() - start_time) * 1000.0
 
@@ -126,16 +134,15 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
                         current_loss = 0.0
 
                     # 終端機顯示日誌
-                    icon = "RAIN 🌧️" if target_value > 0 else "☁️"
+                    icon = "💧💧💧" if target_value > 0 else "☁️"
                     print(f"{icon} [{mode}] Sensor: {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
                     
                     # 7. Gradient Reconstruction & Backward Pass
-                    # Convert bytes back to tensor and match the activation shape
-                    grad_buffer = np.frombuffer(response.gradient_data, dtype=np.float32)
-                    received_grad = torch.from_numpy(grad_buffer).view(smashed_activation.shape)
+                    # expected shape: smashed_activation.shape -> (1, 64) etc.
+                    received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode)
                     smashed_activation.backward(received_grad)
 
-                    # 9. Optimizer Step
+                    # 8. Optimizer Step
                     # Update Client-side Model Weights
                     optimizer.step()
                     print(f"[SERVER] Feedback processed for {sensor_id} | {response.status_message} | Latency: {latency_ms:.2f} ms")
@@ -147,7 +154,8 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
                         "Target": target_value,
                         "RainFlag": 1 if target_value > 0 else 0,
                         "Loss": current_loss,
-                        "LatencyMs": float(latency_ms)
+                        "LatencyMs": float(latency_ms),
+                        "PayloadBytes": payload_size
                     })
 
                 except Exception as e:
