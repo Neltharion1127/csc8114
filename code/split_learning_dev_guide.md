@@ -55,18 +55,18 @@ make test-network
 
 ## （Optional）4-2 手動啟動 Server / Client
 
-## 啟動 Server（接收 smashed activations）
+### 啟動 Server（接收 smashed activations）
 ```bash
 uv run python src/server/server_node.py
 ```
 
-## 啟動 Client（進行 split learning 訓練）
+### 啟動 Client（進行 split learning 訓練）
 ```bash
 uv run python src/client/client_node.py
 ```
 
 **預期結果**：
-- 在訓練過程中應看到 **`[RAIN_EVENT]`** 字樣  
+- 在訓練過程中應看到 **`[RAIN_SAMPL]`** 字樣  
 - 代表模型正在針對「有雨片段」進行強化學習
 
 ---
