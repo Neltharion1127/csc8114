@@ -19,6 +19,7 @@ RUN uv sync
 # Copy the actual Python source code and generated proto files into the image
 COPY proto/ ./proto/
 COPY src/ ./src/
+COPY config.yaml /app/config.yaml
 
 # By default, do nothing (docker-compose will override this to start specific nodes)
 CMD ["python", "--version"]

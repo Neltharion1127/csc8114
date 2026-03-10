@@ -3,6 +3,7 @@ compression:
   topk_ratio: 0.5
 data:
   csv_path: /app/data/rainfall.csv
+  processed_dir: dataset/processed
   sensor_split:
     '0': []
     '1': []
@@ -14,13 +15,14 @@ federated:
   rho: 1
 grpc:
   max_message_mb: 50
-  server_host: server
+  server_host: fsl-server
+  #server_host: localhost
   server_port: 50051
 model:
   dropout: 0.1
   hidden_size: 64
   horizon: 1
-  input_size: 4
+  input_size: 5
   num_layers: 2
   seq_len: 24
 output:
@@ -35,3 +37,28 @@ training:
   local_steps: 10
   lr: 0.001
   num_rounds: 100
+  start_delay: 8
+
+server:
+  max_workers: 10
+
+data_download:
+  start_date: null       # ISO date or null to use last_days
+  end_date: "2026-03-01T00:00:00Z"         # ISO date or null to use now
+  sleep_seconds: 2       # pause between chunks
+  retries: 2             # number of retries per chunk on failure
+  timeout_seconds: 60    # per-request timeout (seconds)
+  # Feature columns used by the model/data pipeline
+  feature_cols:
+    - Temperature
+    - Humidity
+    - Pressure
+    - Wind Speed
+    - Rain
+  # Spatial bounding box for Newcastle: [min_lon, min_lat, max_lon, max_lat]
+  bbox: [-1.71, 54.95, -1.54, 55.03]
+  # Data download window settings
+  last_days: 91
+  chunk_days: 7
+  raw_out_dir: dataset
+  raw_filename: newcastle_rainfall_data.csv
