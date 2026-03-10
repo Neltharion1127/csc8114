@@ -9,11 +9,8 @@ from src.models.split_lstm import ServerHead
 import sys
 import os
 
-# Ensure the project root path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-if project_root not in sys.path:
-    sys.path.append(project_root)
+# Use shared common module (provides `cfg` and `project_root`)
+from src.shared.common import cfg, project_root
 
 class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     """
@@ -21,9 +18,12 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     Responsible for completing the forward pass and calculating loss/gradients.
     """
     def __init__(self):
-        # Initialize the server-side regressor (MLP)
-        self.server_model = ServerHead(hidden_size=64, output_size=1)
-        self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=0.001)
+        # Initialize server-side regressor using module-level cfg
+        self.hidden_size = cfg.get("model", {}).get("hidden_size", 64)
+        lr = cfg.get("training", {}).get("lr", 0.001)
+
+        self.server_model = ServerHead(hidden_size=self.hidden_size, output_size=1)
+        self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=lr)
         self.criterion = torch.nn.MSELoss()
         print("[SERVER] ServerHead model initialized and ready for training.")
     
@@ -35,8 +35,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # 1. Decode the byte data back into a Torch Tensor
             # Expected shape from client: (batch_size, hidden_size)
             activation_buffer = np.frombuffer(request.activation_data, dtype=np.float32)
-            # Reshape. Using .clone() ensures memory safety.
-            smashed_activation = torch.tensor(activation_buffer, dtype=torch.float32).view(-1, 64).detach().clone()
+            # Reshape according to configured hidden size. Using .clone() ensures memory safety.
+            smashed_activation = torch.tensor(activation_buffer, dtype=torch.float32).view(-1, self.hidden_size).detach().clone()
             smashed_activation.requires_grad_(True) # Enable gradient tracking for backprop
             
             target = torch.tensor([[request.true_target]], dtype=torch.float32)
@@ -84,16 +84,19 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             return fsl_pb2.ForwardResponse(status_message=f"Error: {str(e)}")
 
 def serve():
-    # Start a gRPC server with 10 worker threads
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+
+    # Start a gRPC server with configurable worker threads (cfg loaded at module scope)
+    max_workers = cfg.get("server", {}).get("max_workers", 10)
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     
     # Attach our custom logic to the server
     fsl_pb2_grpc.add_FSLServiceServicer_to_server(FSLServerServicer(), server)
     
-    # Listen on all IP addresses on port 50051
-    server.add_insecure_port('[::]:50051')
-    server.start()    
-    print("[SERVER] Listening for incoming FSL connections on port 50051...")
+    # Listen on configured gRPC port (cfg loaded at module scope)
+    server_port = cfg.get("grpc", {}).get("server_port", 50051)
+    server.add_insecure_port(f'[::]:{server_port}')
+    server.start()
+    print(f"[SERVER] Listening for incoming FSL connections on port {server_port}...")
 
     try:
         # Keep the process alive
