@@ -22,15 +22,26 @@ FEATURE_COLS = cfg.get("data", {}).get(
     ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"],
 )
 
-def run_all_client(data_dir="dataset/processed", epochs=10):
+def run_all_client(client_id=1, data_dir="dataset/processed", epochs=10):
     # Apply configurable defaults (config loaded at module scope)
     time.sleep(cfg.get("training", {}).get("start_delay", 8))
-    print("[CLIENT] Connecting to Server....")
+    print(f"[CLIENT {client_id}] Connecting to Server....")
 
     # Locate all sensor files
     search_path = os.path.join(project_root, data_dir, "*.parquet")
     parquet_files = glob.glob(search_path)
-    print(f"[CLIENT] Found {len(parquet_files)} sensors. Initializing distributed training...")
+    parquet_files.sort() # Ensure consistent ordering across clients
+    
+    # Split datasets among clients
+    num_clients = cfg.get("federated", {}).get("num_clients", 3)
+    # Simple chunking: client 1 gets first chunk, client 2 gets second chunk, etc. (1-indexed)
+    chunk_size = len(parquet_files) // num_clients
+    start_idx = (client_id - 1) * chunk_size
+    # The last client gets any remaining files
+    end_idx = start_idx + chunk_size if client_id < num_clients else len(parquet_files)
+    client_files = parquet_files[start_idx:end_idx]
+    
+    print(f"[CLIENT {client_id}] Found {len(client_files)} sensors allocated to this node (out of {len(parquet_files)}). Initializing distributed training...")
     
     # 1. Initialize the edge model
     client_input = cfg.get("model", {}).get("input_size", len(FEATURE_COLS))
@@ -58,10 +69,10 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
         stub = fsl_pb2_grpc.FSLServiceStub(channel)
         
         for epoch in range(epochs):  
-            print(f"[EPOCH {epoch+1}/{epochs}] Starting distributed training cycle...")
+            print(f"[EPOCH {epoch+1}/{epochs}] Starting distributed training cycle for Client {client_id}...")
             
             # Iterate through each sensor to simulate distributed edge devices
-            for file_path in parquet_files:
+            for file_path in client_files:
                 # # Clear gradients for the new sensor
                 optimizer.zero_grad()
                 sensor_id = Path(file_path).stem
@@ -93,7 +104,18 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
                         target_idx = np.random.choice(dry_pos)
                         mode = "DRY_SAMPLE"
                     else:
-                        continue # 資料不足則跳過此感測器
+                        # 不要直接 continue，先記錄「跳過」的狀態
+                        experimental_logs.append({
+                            "Epoch": epoch + 1,
+                            "Sensor": sensor_id,
+                            "Target": -1,         # 使用 -1 代表無效目標
+                            "RainFlag": -1,
+                            "Loss": 0.0,
+                            "LatencyMs": 0.0,
+                            "PayloadBytes": 0,
+                            "Status": "SKIPPED_NO_DATA" # 新增狀態欄位方便除錯
+                        })
+                        continue
 
                     # 提取特徵：過去 24 小時歷史 (24, 5)
                     raw_data = torch.tensor(df[FEATURE_COLS].iloc[target_idx-24:target_idx].values, dtype=torch.float32)
@@ -113,7 +135,7 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
                     payload_size = len(activation_bytes)
 
                     request = fsl_pb2.ForwardRequest(
-                        client_id=1, 
+                        client_id=client_id, 
                         activation_data=activation_bytes,
                         true_target=target_value,
                         latency_ms=0.0,  # Set to 0.0 for ideal network simulation
@@ -159,7 +181,36 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
                     })
 
                 except Exception as e:
-                    print(f"[CLIENT ERROR] Failed to process {sensor_id}: {str(e)}")
+                    print(f"[CLIENT {client_id} ERROR] Failed to process {sensor_id}: {str(e)}")
+                    
+            # --- END OF EPOCH SYNC (FedAvg) ---
+            print(f"[CLIENT {client_id}] Reached end of epoch {epoch+1}. Synchronizing with Server...")
+            try:
+                from src.shared.serialization import tensor_to_bytes, bytes_to_tensor
+                
+                # Use standard PyTorch method to serialize the entire state dictionary
+                buffer = io.BytesIO()
+                torch.save(client_model.state_dict(), buffer)
+                client_weights_bytes = buffer.getvalue()
+                
+                sync_req = fsl_pb2.SyncRequest(
+                    client_id=client_id,
+                    client_weights=client_weights_bytes
+                )
+                
+                print(f"[CLIENT {client_id}] Waiting for global aggregation...")
+                sync_res = stub.Synchronize(sync_req)
+                
+                if sync_res.global_weights:
+                    # Load the new aggregated global model
+                    global_buffer = io.BytesIO(sync_res.global_weights)
+                    global_state_dict = torch.load(global_buffer, weights_only=True, map_location='cpu')
+                    client_model.load_state_dict(global_state_dict)
+                    print(f"[CLIENT {client_id}] Successfully loaded Global Model Round {sync_res.round_number}")
+                else:
+                    print(f"[CLIENT {client_id}] Failed to get global weights.")
+            except Exception as e:
+                print(f"[CLIENT {client_id}] Global Synchronization Failed: {e}")
 
     # --- SAVE RESULTS ---
     output_dir = os.path.join(project_root, "results")
@@ -168,7 +219,7 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
     
     log_df = pd.DataFrame(experimental_logs)
     timestamp = time.strftime('%Y%m%d_%H%M%S')
-    filename = f"training_log_{timestamp}.csv"
+    filename = f"training_log_client{client_id}_{timestamp}.csv"
     filepath = os.path.join(output_dir, filename)
     log_df.to_csv(filepath, index=False)
     print(f"[CLIENT] Saved training log to {filepath}")
@@ -188,6 +239,17 @@ def run_all_client(data_dir="dataset/processed", epochs=10):
     except Exception as e:
         print(f"[CLIENT WARN] Failed to write metadata: {e}")
 
-    print("\n========== Training complete for all sensors.==========")
+    print(f"\n========== Training complete for Client {client_id}.==========")
 if __name__ == '__main__':
-    run_all_client()
+    # Parse client ID from command line, default to 1
+    # Example usage: python -m src.nodes.client_node 1
+    import sys
+    import io
+    cid = 1
+    if len(sys.argv) > 1:
+        try:
+            cid = int(sys.argv[1])
+        except ValueError:
+            print("Invalid client ID. Defaulting to 1.")
+            
+    run_all_client(client_id=cid)

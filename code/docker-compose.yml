@@ -18,6 +18,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
+    volumes:
+      - .:/app
+      - ./results:/app/results
 
   # ---------------------------------------------
   # 2. The Edge Client running the ClientLSTM
@@ -26,17 +29,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: fsl-client
+    # container_name: fsl-client #不寫，讓 docker 自動命名
     # Run the client script that establishes the ping
-    command: uv run python src/nodes/client_node.py
+    # command: uv run python src/nodes/client_node.py
+    command: uv run python src/nodes/client_node.py ${CLIENT_ID}
     # Don't start the client until the server container is up
     depends_on:
       - fsl-server
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
+      - CLIENT_ID=${CLIENT_ID}
     # For Phase 5: Map the local dataset folder into the client container
     volumes:
       - .:/app
       - ./dataset:/app/dataset
+      - ./results:/app/results
     working_dir: /app

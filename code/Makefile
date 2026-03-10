@@ -3,10 +3,12 @@
 
 .PHONY: help compile-proto test-network clean
 
+NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
+
 help:
 	@echo "Available commands:"
 	@echo "  make compile-proto   - Re-compiles the fsl.proto file into Python code"
-	@echo "  make test-network    - Boots up the Docker containers to test the Client/Server Ping"
+	@echo "  make test-network    - Builds and boots up Server and $(NUM_CLIENTS) Clients"
 	@echo "  make clean           - Removes all Docker containers and network caches"
 
 # Compiles the gRPC protocol definitions
@@ -16,8 +18,18 @@ compile-proto:
 
 # Tests the basic Hello World gRPC network connection using Docker Compose
 test-network:
+	@echo "Starting Split Learning with $(NUM_CLIENTS) clients..."
 	docker compose build
-	docker compose up --abort-on-container-exit
+# 	1. 先背景啟動 Server
+	docker compose up -d fsl-server
+
+# 	2. 根據 NUM_CLIENTS 啟動對應數量的 Client 並帶入不同的 ID
+	@for i in $$(seq 1 $(NUM_CLIENTS)); do \
+		CLIENT_ID=$$i docker compose up -d --no-recreate fsl-client; \
+	done
+
+# 	3. 顯示目前運行中的容器狀態
+	docker compose logs -f
 
 # Cleans up the Docker environment
 clean:
