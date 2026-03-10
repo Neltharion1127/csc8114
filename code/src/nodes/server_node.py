@@ -2,7 +2,6 @@ import grpc
 from concurrent import futures
 import time
 import torch
-import numpy as np
 from proto import fsl_pb2
 from proto import fsl_pb2_grpc
 from src.models.split_lstm import ServerHead
@@ -82,44 +81,28 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # --- 關鍵改動：使用 Lock 保護共享資源 ---
             with self.sync_lock:
                 start_comp_time = time.time()
-                # 2.Forward pass
                 prediction = self.server_model(smashed_activation)
-                # 3. Calculate Loss (Mean Squared Error) for rainfall prediction
                 loss = self.criterion(prediction, target)
                 
-                # 4. Execute backpropagation
                 self.optimizer.zero_grad()
                 loss.backward()
             
-                # 5. Extract gradients for the smashed activation to send back to the client
-                # This allows the client to update the ClientLSTM parameters
-                if smashed_activation.grad is not None:
-                    grad_mag = torch.norm(smashed_activation.grad).item()
-                    grad_arr = smashed_activation.grad.numpy()
-                    if compression_mode == "float16":
-                        activation_gradient = grad_arr.astype(np.float16).tobytes()
-                    elif compression_mode == "int8":
-                        max_abs = np.max(np.abs(grad_arr))
-                        scale = max_abs / 127.0 if max_abs > 0 else 1.0
-                        quantized = np.round(grad_arr / scale).astype(np.int8)
-                        activation_gradient = np.array([scale], dtype=np.float32).tobytes() + quantized.tobytes()
-                    else:
-                        activation_gradient = grad_arr.tobytes()
-                else:
-                    grad_mag = 0.0
+                if smashed_activation.grad is None:
                     raise ValueError("Gradient calculation failed on the smashed activation.")
-            
-                # Optional: Update Server-side parameters (ServerHead)
+                
+                grad_mag = torch.norm(smashed_activation.grad).item()
+                # Reuse shared compress() — symmetric with the client side
+                activation_gradient = compress(smashed_activation.grad, compression_mode)
+                
                 self.optimizer.step()
                 comp_time = (time.time() - start_comp_time) * 1000.0
 
-                # 準備日誌數值
-                target_val = request.true_target
-                pred_val = prediction.item()
-                loss_val = loss.item()
-                
-                # 6. 記錄日誌 (避免多線程同時寫入 list)
-                self.server_logs.append({
+            # Collect values for logging (outside lock)
+            target_val = request.true_target
+            pred_val   = prediction.item()
+            loss_val   = loss.item()
+            
+            self.server_logs.append({
                     "timestamp": datetime.now().isoformat(),
                     "client_id": request.client_id,
                     "compression_mode": compression_mode,
