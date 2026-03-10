@@ -39,6 +39,10 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.num_clients = cfg.get("federated", {}).get("num_clients", 3)
         self.sync_lock = threading.Lock() # 確保併發安全
         
+        # Client registration state
+        self._next_client_id = 1
+        self._reg_lock = threading.Lock()
+        
         # Diagnostics logging
         self.server_logs = []
         self.log_dir = os.path.join(project_root, "results")
@@ -46,6 +50,20 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.log_file = os.path.join(self.log_dir, f"server_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         print("[SERVER] ServerHead model initialized and ready for training.")
     
+    def Register(self, request, context):
+        """
+        Assigns a unique client ID to a connecting client.
+        Thread-safe via a dedicated lock.
+        """
+        with self._reg_lock:
+            assigned_id = self._next_client_id
+            self._next_client_id += 1
+        print(f"[SERVER] Client registered with ID: {assigned_id} (total expected: {self.num_clients})")
+        return fsl_pb2.RegisterResponse(
+            client_id=assigned_id,
+            total_clients=self.num_clients
+        )
+
     def Forward(self, request, context):
         """
         Handles incoming smashed activations from distributed clients.

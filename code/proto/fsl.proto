@@ -16,6 +16,14 @@ message ForwardRequest {
     string compression_mode = 5; // The compression mode used
 }
 
+// Used by a client to register with the server and get an assigned ID
+message RegisterRequest {}
+
+message RegisterResponse {
+    int32 client_id = 1;      // The ID assigned by the server (1-indexed)
+    int32 total_clients = 2;  // Total number of clients expected (from server config)
+}
+
 // Response sent from Server back to Client during the Backward Pass
 message ForwardResponse {
     bytes gradient_data = 1;    // The serialized PyTorch gradient tensor (to continue backprop locally)
@@ -42,6 +50,9 @@ message SyncResponse {
 // Defines the physical endpoints the Server will expose to the Clients
 service FSLService {
     
+    // Registration: Client registers and receives an assigned ID
+    rpc Register(RegisterRequest) returns (RegisterResponse);
+
     // The core function: Send activations, get gradients back
     rpc Forward(ForwardRequest) returns (ForwardResponse);
     

@@ -22,52 +22,54 @@ FEATURE_COLS = cfg.get("data", {}).get(
     ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"],
 )
 
-def run_all_client(client_id=1, data_dir="dataset/processed", epochs=10):
+def run_all_client(data_dir="dataset/processed", epochs=10):
     # Apply configurable defaults (config loaded at module scope)
-    time.sleep(cfg.get("training", {}).get("start_delay", 8))
-    print(f"[CLIENT {client_id}] Connecting to Server....")
-
-    # Locate all sensor files
-    search_path = os.path.join(project_root, data_dir, "*.parquet")
-    parquet_files = glob.glob(search_path)
-    parquet_files.sort() # Ensure consistent ordering across clients
-    
-    # Split datasets among clients
-    num_clients = cfg.get("federated", {}).get("num_clients", 3)
-    # Simple chunking: client 1 gets first chunk, client 2 gets second chunk, etc. (1-indexed)
-    chunk_size = len(parquet_files) // num_clients
-    start_idx = (client_id - 1) * chunk_size
-    # The last client gets any remaining files
-    end_idx = start_idx + chunk_size if client_id < num_clients else len(parquet_files)
-    client_files = parquet_files[start_idx:end_idx]
-    
-    print(f"[CLIENT {client_id}] Found {len(client_files)} sensors allocated to this node (out of {len(parquet_files)}). Initializing distributed training...")
-    
-    # 1. Initialize the edge model
-    client_input = cfg.get("model", {}).get("input_size", len(FEATURE_COLS))
-    client_hidden = cfg.get("model", {}).get("hidden_size", 64)
-    client_model = ClientLSTM(input_size=client_input, hidden_size=client_hidden)
-    optimizer = torch.optim.Adam(client_model.parameters(), lr=cfg.get("training", {}).get("lr", 0.001))
-    # client_model.eval() #eval 不會訓練, 用在 Testing/Inference Mode, 想要測試模型對「新感測器」的預測準確度時
-    client_model.train() # Training Mode
-
-    # 建議 2026/03/01 當作測試預測目標，之前的用來訓練
-    split_date = pd.Timestamp("2026-02-28 00:00:00")
-
-    # Experimental tracking for CSV
-    experimental_logs = []
-
-    # 2. Establish gRPC Connection 
-    # docker: 'fsl-server:50051'
-    # local: 'localhost:50051'
     server_host = cfg.get("grpc", {}).get("server_host", "fsl-server")
     server_port = cfg.get("grpc", {}).get("server_port", 50051)
     target_address = f"{server_host}:{server_port}"
-    print(f" [CLIENT] Connecting to server at {target_address}...")
-    
+
+    time.sleep(cfg.get("training", {}).get("start_delay", 8))
+    print(f"[CLIENT] Connecting to Server at {target_address} for registration...")
+
     with grpc.insecure_channel(target_address) as channel:
         stub = fsl_pb2_grpc.FSLServiceStub(channel)
+
+        # --- Step 0: Register with Server to get assigned client_id ---
+        reg = stub.Register(fsl_pb2.RegisterRequest())
+        client_id = reg.client_id
+        num_clients = reg.total_clients
+        print(f"[CLIENT] Registered successfully. Assigned ID: {client_id} / {num_clients}")
+
+        # Locate all sensor files
+        search_path = os.path.join(project_root, data_dir, "*.parquet")
+        parquet_files = glob.glob(search_path)
+        parquet_files.sort() # Ensure consistent ordering across clients
         
+        # Split datasets among clients (using server-assigned values)
+        # Simple chunking: client 1 gets first chunk, client 2 gets second chunk, etc. (1-indexed)
+        chunk_size = len(parquet_files) // num_clients
+        start_idx = (client_id - 1) * chunk_size
+        # The last client gets any remaining files
+        end_idx = start_idx + chunk_size if client_id < num_clients else len(parquet_files)
+        client_files = parquet_files[start_idx:end_idx]
+        
+        print(f"[CLIENT {client_id}] Found {len(client_files)} sensors allocated to this node (out of {len(parquet_files)}). Initializing distributed training...")
+        
+        # 1. Initialize the edge model
+        client_input = cfg.get("model", {}).get("input_size", len(FEATURE_COLS))
+        client_hidden = cfg.get("model", {}).get("hidden_size", 64)
+        client_model = ClientLSTM(input_size=client_input, hidden_size=client_hidden)
+        optimizer = torch.optim.Adam(client_model.parameters(), lr=cfg.get("training", {}).get("lr", 0.001))
+        client_model.train() # Training Mode
+
+        # 建議 2026/03/01 當作測試預測目標，之前的用來訓練
+        split_date = pd.Timestamp("2026-02-28 00:00:00")
+
+        # Experimental tracking for CSV
+        experimental_logs = []
+
+        # 2. Training loop (already inside the channel context)
+        print(f" [CLIENT] Connecting to server at {target_address}...")
         for epoch in range(epochs):  
             print(f"[EPOCH {epoch+1}/{epochs}] Starting distributed training cycle for Client {client_id}...")
             
@@ -80,6 +82,9 @@ def run_all_client(client_id=1, data_dir="dataset/processed", epochs=10):
                 try:
                     # 3. Load and preprocess data
                     df = pd.read_parquet(file_path)
+                    if 'Timestamp' in df.columns:
+                        df.set_index('Timestamp', inplace=True)
+                        df.index = pd.to_datetime(df.index)
                     
                     # --- 核心修改：計算未來 3 小時降雨總量 ---
                     # 使用 shift(-3) 取得未來數據，滾動窗口 3 小時加總
@@ -241,15 +246,5 @@ def run_all_client(client_id=1, data_dir="dataset/processed", epochs=10):
 
     print(f"\n========== Training complete for Client {client_id}.==========")
 if __name__ == '__main__':
-    # Parse client ID from command line, default to 1
-    # Example usage: python -m src.nodes.client_node 1
-    import sys
     import io
-    cid = 1
-    if len(sys.argv) > 1:
-        try:
-            cid = int(sys.argv[1])
-        except ValueError:
-            print("Invalid client ID. Defaulting to 1.")
-            
-    run_all_client(client_id=cid)
+    run_all_client()
