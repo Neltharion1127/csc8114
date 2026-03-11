@@ -4,6 +4,7 @@ compression:
 data:
   csv_path: /app/data/rainfall.csv
   processed_dir: dataset/processed
+  test_days: 14
   sensor_split:
     '0': []
     '1': []

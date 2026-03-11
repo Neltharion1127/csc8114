@@ -14,6 +14,7 @@ message ForwardRequest {
     float true_target = 3;      // The actual rainfall value for Loss calculation
     float latency_ms = 4;       // Measured local latency
     string compression_mode = 5; // The compression mode used
+    bool is_training = 6;        // True for train pass (do backprop), False for test pass
 }
 
 // Used by a client to register with the server and get an assigned ID

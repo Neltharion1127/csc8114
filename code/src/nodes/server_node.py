@@ -84,17 +84,24 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                 prediction = self.server_model(smashed_activation)
                 loss = self.criterion(prediction, target)
                 
-                self.optimizer.zero_grad()
-                loss.backward()
-            
-                if smashed_activation.grad is None:
-                    raise ValueError("Gradient calculation failed on the smashed activation.")
+                is_training = getattr(request, 'is_training', True)
                 
-                grad_mag = torch.norm(smashed_activation.grad).item()
-                # Reuse shared compress() — symmetric with the client side
-                activation_gradient = compress(smashed_activation.grad, compression_mode)
+                if is_training:
+                    self.optimizer.zero_grad()
+                    loss.backward()
                 
-                self.optimizer.step()
+                    if smashed_activation.grad is None:
+                        raise ValueError("Gradient calculation failed on the smashed activation.")
+                    
+                    grad_mag = torch.norm(smashed_activation.grad).item()
+                    # Reuse shared compress() — symmetric with the client side
+                    activation_gradient = compress(smashed_activation.grad, compression_mode)
+                    
+                    self.optimizer.step()
+                else:
+                    grad_mag = 0.0
+                    activation_gradient = b"" # empty gradient for testing
+                    
                 comp_time = (time.time() - start_comp_time) * 1000.0
 
             # Collect values for logging (outside lock)

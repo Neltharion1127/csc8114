@@ -22,8 +22,10 @@ FEATURE_COLS = cfg.get("data", {}).get(
     ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"],
 )
 
-# The date that separates training data from test data
-SPLIT_DATE = pd.Timestamp("2026-02-28 00:00:00")
+# The date that separates training data from test data (dynamic window for testing)
+end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
+test_days = cfg.get("data", {}).get("test_days", 14)
+SPLIT_DATE = pd.Timestamp(end_date_str).tz_localize(None) - pd.Timedelta(days=test_days)
 
 
 # --- Data Loading & Preprocessing ---
@@ -46,23 +48,23 @@ def _load_sensor_data(file_path: str) -> pd.DataFrame:
 
 # --- Balanced Training Sample Selection ---
 
-def _sample_training_index(df: pd.DataFrame) -> tuple[int, str] | None:
+def _sample_index(df: pd.DataFrame, is_training: bool = True) -> tuple[int, str] | None:
     """
-    Picks a random training index using balanced rain/dry sampling.
+    Picks a random index using balanced rain/dry sampling.
     Returns (target_idx, mode) or None if no valid samples exist.
-    
-    Strategy: 50% chance to force-pick a rainy sample to counter class imbalance.
-    Only uses data before SPLIT_DATE, with enough history (>=24 rows) and future (>=3 rows).
     """
-    split_pos = df.index.get_indexer([SPLIT_DATE], method='pad')[0]
+    try:
+        split_pos = df.index.get_indexer([SPLIT_DATE], method='pad')[0]
+    except Exception:
+        split_pos = int(len(df) * 0.8) # fallback to 80/20 if date missing
+        
     all_indices = np.arange(len(df))
 
-    # Only train on data before the test cutoff, with valid window bounds
-    base_mask = (
-        (all_indices < split_pos) &
-        (all_indices >= 24) &
-        (all_indices < len(df) - 3)
-    )
+    base_mask = (all_indices >= 24) & (all_indices < len(df) - 3)
+    if is_training:
+        base_mask = base_mask & (all_indices < split_pos)
+    else:
+        base_mask = base_mask & (all_indices >= split_pos)
 
     rainy_pos = all_indices[base_mask & (df['future_3h_rain'] > 0)]
     dry_pos   = all_indices[base_mask & (df['future_3h_rain'] == 0)]
@@ -76,7 +78,7 @@ def _sample_training_index(df: pd.DataFrame) -> tuple[int, str] | None:
 
 # --- Single-Step Forward & Backward Training ---
 
-def _forward_and_backprop(
+def _forward_step(
     stub,
     client_id: int,
     client_model: ClientLSTM,
@@ -87,6 +89,7 @@ def _forward_and_backprop(
     mode: str,
     sensor_id: str,
     compression_mode: str,
+    is_training: bool = True,
 ) -> dict:
     """
     Runs one full split-learning step for a single training sample:
@@ -118,10 +121,12 @@ def _forward_and_backprop(
         client_id=client_id,
         activation_data=activation_bytes,
         true_target=target_value,
-        latency_ms=0.0,
+        latency_ms=0.0, # TODO: implement true latency reporting
         compression_mode=compression_mode,
+        is_training=is_training
     )
-    print(f"[CLIENT] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
+    phase = "TRAIN" if is_training else "TEST"
+    print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
 
     # Send to server, receive gradient feedback
     response = stub.Forward(request)
@@ -133,16 +138,17 @@ def _forward_and_backprop(
     except Exception:
         current_loss = 0.0
 
-    # Display training progress
+    # Display progress
     icon = "💧💧💧" if target_value > 0 else "☁️"
-    print(f"{icon} [{mode}] Sensor: {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
+    print(f"{icon} [{mode}] {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
 
-    # Decompress gradient and run backward pass
-    received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode)
-    smashed_activation.backward(received_grad)
-    optimizer.step()
+    # Decompress gradient and run backward pass ONLY if training
+    if is_training:
+        received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode)
+        smashed_activation.backward(received_grad)
+        optimizer.step()
 
-    print(f"[SERVER] Feedback processed for {sensor_id} | {response.status_message} | Latency: {latency_ms:.2f} ms")
+    print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
 
     return {
         "Target": target_value,
@@ -276,25 +282,19 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
                 try:
                     df = _load_sensor_data(file_path)
-                    result = _sample_training_index(df)
+                    result = _sample_index(df, is_training=True)
 
                     if result is None:
-                        experimental_logs.append({
-                            "Epoch": epoch + 1, "Sensor": sensor_id,
-                            "Target": -1, "RainFlag": -1,
-                            "Loss": 0.0, "LatencyMs": 0.0,
-                            "PayloadBytes": 0, "Status": "SKIPPED_NO_DATA",
-                        })
                         continue
 
                     target_idx, mode = result
                     target_value = float(df['future_3h_rain'].iloc[target_idx])
 
-                    log_entry = _forward_and_backprop(
+                    log_entry = _forward_step(
                         stub, client_id, client_model, optimizer,
-                        df, target_idx, target_value, mode, sensor_id, compression_mode,
+                        df, target_idx, target_value, mode, sensor_id, compression_mode, is_training=True
                     )
-                    experimental_logs.append({"Epoch": epoch + 1, "Sensor": sensor_id, **log_entry})
+                    experimental_logs.append({"Epoch": epoch + 1, "Status": "TRAIN", "Sensor": sensor_id, **log_entry})
 
                 except Exception as e:
                     print(f"[CLIENT {client_id} ERROR] {sensor_id}: {e}")
@@ -305,6 +305,27 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 client_model = _fed_avg_sync(stub, client_id, client_model)
             except Exception as e:
                 print(f"[CLIENT {client_id}] Sync failed: {e}")
+                
+            # Evaluation Phase (Testing on new global model)
+            print(f"--- [EVALUATION] Client {client_id} Epoch {epoch+1} ---")
+            client_model.eval()
+            with torch.no_grad():
+                for file_path in client_files:
+                    sensor_id = Path(file_path).stem
+                    try:
+                        df = _load_sensor_data(file_path)
+                        result = _sample_index(df, is_training=False)
+                        if result:
+                            target_idx, mode = result
+                            target_value = float(df['future_3h_rain'].iloc[target_idx])
+                            log_entry = _forward_step(
+                                stub, client_id, client_model, optimizer,
+                                df, target_idx, target_value, mode, sensor_id, compression_mode, is_training=False
+                            )
+                            experimental_logs.append({"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry})
+                    except Exception as e:
+                        pass
+            client_model.train()
 
     # Step 5: Save results
     _save_results(client_id, experimental_logs)
