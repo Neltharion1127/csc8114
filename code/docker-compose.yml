@@ -22,6 +22,13 @@ services:
       - .:/app
       - /app/.venv
       - ./results:/app/results
+    healthcheck:
+      # Use python with grpc to test if the port is open and responding
+      test: [ "CMD-SHELL", "uv run python -c \"import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1); s.connect(('127.0.0.1', 50051)); s.close()\" || exit 1" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
 
   # ---------------------------------------------
   # 2. The Edge Client running the ClientLSTM
@@ -30,13 +37,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # container_name: fsl-client #不寫，讓 docker 自動命名
     # Run the client script that establishes the ping
     # command: uv run python src/nodes/client_node.py
     command: uv run python src/nodes/client_node.py ${CLIENT_ID}
-    # Don't start the client until the server container is up
+    # Don't start the client until the server container is up AND healthy
     depends_on:
-      - fsl-server
+      fsl-server:
+        condition: service_healthy
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
