@@ -43,8 +43,8 @@ server:
   max_workers: 10
 
 data_download:
-  start_date: null       # ISO date or null to use last_days
-  end_date: "2026-03-01T00:00:00Z"         # ISO date or null to use now
+  start_date: "2025-01-01T00:00:00"   # 1 full year of data
+  end_date: "2026-03-10T00:00:00"      # up to today
   sleep_seconds: 2       # pause between chunks
   retries: 2             # number of retries per chunk on failure
   timeout_seconds: 60    # per-request timeout (seconds)

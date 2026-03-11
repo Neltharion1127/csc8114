@@ -14,7 +14,6 @@ dependencies = [
     "requests>=2.31",
     "scikit-learn>=1.4",
     "tqdm>=4.66",
-    "uo-pyfetch",
     "pyarrow>=23.0.1",
 ]
 
@@ -27,5 +26,3 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["shared", "data", "models", "client", "server", "sim", "utils", "experiments"]
 
-[tool.uv.sources]
-uo-pyfetch = { url = "https://api.v2.urbanobservatory.ac.uk/lib/uo-pyfetch.tar.gz" }
