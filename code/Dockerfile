@@ -3,6 +3,7 @@ FROM python:3.12-slim-bookworm
 
 # Set Python to run unbuffered and quiet warnings
 ENV PYTHONUNBUFFERED=1
+ENV CUDA_VISIBLE_DEVICES=""
 
 # Working directory inside the container
 WORKDIR /app
