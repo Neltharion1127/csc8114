@@ -1,82 +1,57 @@
+# Split Learning Guide (FSL Development Workflow)
 
-# Split Learning Guide（Data → Preprocess → Check → Train）
+這份指南包含了目前 FSL (Federated Split Learning) 專案從資料抓取到訓練評估的標準工作流。
 
-## 1. 下載原始雨量資料  
-使用 Urban Observatory API 抓取 Newcastle 本地感測器資料。
+## 1. 抓取與處理氣象資料 (Data Download)
+我們目前已經棄用舊版的 Urban Observatory，改為使用 **Open-Meteo API** 來抓取精準且無缺失的歷史天氣與降雨資料。
 
 ```bash
-uv run python src/data/data_download.py
+uv run python src/data/data_download_openmeteo.py
 ```
 
-**目的**：從 Newcastle Urban Observatory 抓取原始 CSV 資料。  
-**輸出**：`dataset/newcastle_rainfall_data.csv`
-**補充**: 下載的時間範圍可在 `config.yaml` 中的 `data_download` 區塊手動設定
+**目的**：根據 `config.yaml` 裡設定的 `start_date` 和 `end_date`，自動抓取 Newcastle 範圍內 12 個感測器的資料，並直接處裡成訓練可用的序列檔案。
+**輸出**：
+`dataset/processed/*.parquet` (12份感測器乾淨資料，訓練即插即用)
+
+> **💡 配置小技巧**：
+> - 所有的資料時間範圍都在 `config.yaml` 中的 `data_download` 區塊控制。
+> - `config.yaml` 裡的 `test_days: 14` 決定了每個 parquet 檔案裡最後 14 天的資料會被強制劃分為**測試集**，嚴格不參與訓練。
 
 ---
 
-## 2. 標準化與切割雨量資料（取代舊 preprocessing）
-```bash
-uv run python src/data/standardize_rainfalldata.py
-```
+## 2. 啟動 FSL 網路與訓練 (Training & Evaluation)
+不再需要手動起多個 terminal，現在完全由 Docker  orchestration 及 Makefile 接管。
 
-**目的：**
-- 依感測器類型拆分原始 CSV
-- 將不同頻率（例如 15 分鐘）重採樣為 **1 小時**
-- 輸出乾淨、可用的 parquet 格式資料
-
-**輸出**：  
-`dataset/processed/*.parquet`  
-- 確保 xxx_EA_TPRG 檔案已生成且包含雨量數據
----
-
-## 3. 資料品質檢查（非常重要）
-```bash
-uv run python src/data/senseor_data_check.py
-```
-
-**目的：**
-- 確認 **EA_TPRG** 感測器是否顯示「✅ 有雨」
-- 確保雨量片段數量 > 0
-
-> ⚠️ 若此步驟看不到雨，後續模型將 **無法學會降雨預測**
-
----
-
-## 4. 啟動 Server / Client（Docker）
 ```bash
 make test-network
 ```
 
-**目的**：使用 Docker Compose 啟動 server / client 模組，建立完整 SplitNN 網路。
+**這個指令會自動連貫執行：**
+1. 建立最新的 Server 和 Client Docker Image。
+2. 啟動 `fsl-server`，並透過 healthcheck 確保其 gRPC port 準備就緒。
+3. 自動根據 `config.yaml` 裡的 `num_clients` (例如 3) 啟動對應數量的 `fsl-client`。
+4. 在終端機上 tail (追蹤) 全部機器交錯的即時日誌。
+
+### 訓練與評估生命週期：
+每個 Epoch 的完整生命週期如下：
+1. **[TRAIN] 邊緣端前向傳播**：Client 抓取訓練集資料，算出一小段**激活值 (Smashed Activation)**，依據 `compression: mode:` 設定壓縮後，發給 Server。
+2. **[SERVER] 雲端反向傳播**：Server 收包、算 Loss、算梯度，再把梯度壓縮退回。
+3. **[FED AVG] 全局聚合**：Client 跑完自己負責的資料後，發送權重到 Server 等待聚合。Server 收齊後合成最新全局模型下發。
+4. **[EVALUATION] 獨立測試**：Client 拿到剛出爐的全局模型，用測試集（最後 14 天）跑前向傳播。此時附帶 `is_training=False` 標籤，Server **只算 Loss 不更新權重**，產出無偏見的測試成績。
 
 ---
 
-## （Optional）手動啟動 Server / Client
+## 3. 實驗與產出文件 (Logs & Results)
 
-### (1)啟動 Server（接收 smashed activations）
-- 檢查設定：打開 config.yaml，確認 num_clients 的數量（例如 3）
-- 啟動 server
-```bash
-uv run python -m src.nodes.server_node
-```
-- Server 生成檔案：`results/server_log_*.csv` 記錄所有 Client 傳來的 Loss、預測值 (Prediction) 與真實降雨量 (Target)。
+所有的實驗日誌都會被存放於本地的 `results/` 資料夾中（透過 Docker volume 映射出來）。
 
-### (2)啟動 Client 
-- 開啟與 num_clients 數量相同的終端機視窗，分別輸入對應 ID
-視窗 1, 視窗 2, 視窗 3, ...
-```bash
-uv run python -m src.nodes.client_node 1
-uv run python -m src.nodes.client_node 2
-uv run python -m src.nodes.client_node 3
-```
-- Client 生成檔案：`results/training_log_client{id}_*.csv` 記錄該 Client 負責的感測器訓練細節、延遲 (Latency) 與資料傳輸量 (Payload)
+- **Server Log**：`results/server_log_*.csv`
+  記錄每一筆傳輸的 Prediction、Target、Latency、資料壓縮解壓耗時等。
+- **Client Log**：`results/training_log_client*.csv`
+  記錄該 Client 每次前向傳播的 Loss 下降軌跡，附帶 `[TRAIN]` 或 `[TEST]` 狀態。
 
-**Hint**
-- 避免卡死：Server 會等待所有 Client 到齊才開始聚合權重。若只想開 1 個視窗測試，請將 num_clients 改為 1。
-- 數據分配：每個 Client 會根據 ID 自動領取 1/N 的 Parquet 檔案，確保雨量計數據不遺漏。
-
-**預期結果**：
-- 在訓練過程中應看到 **`[RAIN_SAMPL]`** 字樣  
-- 代表模型正在針對「有雨片段」進行強化學習
-
----
+> **⚠️ 如何清理環境：**
+> 如果程式卡死或想重新跑實驗，務必先清理舊容器：
+> ```bash
+> make clean
+> ```
