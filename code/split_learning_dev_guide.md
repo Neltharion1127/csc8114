@@ -84,7 +84,7 @@ uv run python src/data/plot_training_curve.py --session 20260312150555
 
 ---
 
-## 5. 獨立評估 (Independent Evaluation)
+## 5. 評估 (Evaluation)
 當訓練完成後，我們可以使用獨立的評估腳本來檢驗模型在完全沒見過的 14 天測試集上的最終表現。
 
 ```bash
