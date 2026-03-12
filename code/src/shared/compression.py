@@ -27,16 +27,16 @@ def decompress(data_bytes: bytes, shape: tuple, mode: str) -> torch.Tensor:
     Decompresses bytes back into a PyTorch tensor.
     """
     if mode == "float16":
-        arr = np.frombuffer(data_bytes, dtype=np.float16).astype(np.float32)
+        arr = np.frombuffer(data_bytes, dtype=np.float16).astype(np.float32, copy=True)
         
     elif mode == "int8":
         # Extract the scale (first 4 bytes)
         scale = np.frombuffer(data_bytes[:4], dtype=np.float32)[0]
         # Dequantize the rest
-        quantized = np.frombuffer(data_bytes[4:], dtype=np.int8).astype(np.float32)
+        quantized = np.frombuffer(data_bytes[4:], dtype=np.int8).astype(np.float32, copy=True)
         arr = quantized * scale
         
     else:  # float32 or default
-        arr = np.frombuffer(data_bytes, dtype=np.float32)
+        arr = np.frombuffer(data_bytes, dtype=np.float32).copy()
         
     return torch.from_numpy(arr).view(shape)

@@ -38,7 +38,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self._client_name_to_id: dict[str, int] = {}
         self._assigned_ids: set[int] = set()
 
-        self.session_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        self.session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
         self.periodic_dir = os.path.join(self.session_dir, "periodic")
         os.makedirs(self.session_dir, exist_ok=True)

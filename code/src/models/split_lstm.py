@@ -52,7 +52,6 @@ class ServerHead(nn.Module):
             nn.Linear(hidden_size, 32),
             nn.LeakyReLU(0.1), # Allows gradients to flow even when input < 0
             nn.Linear(32, output_size),
-            nn.ReLU()          # Rain is >= 0
         )
         
     def forward(self, smashed_activation):

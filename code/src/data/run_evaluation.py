@@ -47,9 +47,9 @@ def find_best_server() -> str:
     Find the most recent server model in bestweights/.
     Supports both layouts:
       Flat   : bestweights/server_head_round_<N>_<stamp>.pth
-      Session: bestweights/<YYYYMMDDHHMMSS>/server_head_round_<N>_<stamp>.pth
+      Session: bestweights/<session>/server_head_round_<N>_<stamp>.pth
 
-    Sorting priority: session-subdir name (if present) > embedded timestamp.
+    Sorting priority: session-subdir mtime (if present) > embedded timestamp.
     Returns the path of the latest server model.
     """
     bw_dir = project_root / "bestweights"
@@ -69,9 +69,8 @@ def find_best_server() -> str:
 
     def _sort_key(p: str):
         parent = Path(p).parent
-        # If the parent IS bestweights/ (flat), use "0" so subdirs sort later (newer)
-        folder = parent.name if parent != bw_dir else "0"
-        return (folder, _parse_timestamp(p), _parse_round(p))
+        folder_mtime = parent.stat().st_mtime if parent != bw_dir else 0.0
+        return (folder_mtime, _parse_timestamp(p), _parse_round(p))
 
     all_paths.sort(key=_sort_key)
     latest_server = all_paths[-1]

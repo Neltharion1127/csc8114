@@ -10,7 +10,7 @@ Produces one figure with:
 
 Usage:
     uv run python src/data/plot_training_curve.py
-    uv run python src/data/plot_training_curve.py --session 20260312150555
+    uv run python src/data/plot_training_curve.py --session 2026-03-12_15-05-55
     uv run python src/data/plot_training_curve.py --device mps
 """
 import os
@@ -62,7 +62,7 @@ def _load_ckpt(path: str, device: torch.device):
 
 
 def _find_session(session_id: str | None) -> Path:
-    """Return the session directory to use (bestweights/YYYYMMDD...)."""
+    """Return the session directory to use."""
     bw = project_root / "bestweights"
     if session_id:
         p = bw / session_id
@@ -70,15 +70,13 @@ def _find_session(session_id: str | None) -> Path:
             raise FileNotFoundError(f"Session directory not found: {p}")
         return p
 
-    # Auto-select latest: find all 14-digit directories (YYYYMMDDhhmmss)
-    import re
-    sessions = sorted([
-        d for d in bw.iterdir() 
-        if d.is_dir() and re.match(r"^\d{14}$", d.name)
-    ])
+    sessions = sorted(
+        [d for d in bw.iterdir() if d.is_dir()],
+        key=lambda d: (d.stat().st_mtime, d.name),
+    )
     
     if not sessions:
-        raise FileNotFoundError(f"No valid session directories (YYYYMMDD...) found in {bw}")
+        raise FileNotFoundError(f"No session directories found in {bw}")
     
     latest = sessions[-1]
     print(f"[DEBUG] Picking latest session: {latest.name}")

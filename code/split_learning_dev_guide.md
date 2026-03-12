@@ -63,6 +63,7 @@ make test-network
 ## 3. 實驗與產出文件 (Logs & Results)
 
 所有的實驗日誌都會被存放於本地的 `results/<session>/` 資料夾中（透過 Docker volume 映射出來）。
+目前 `<session>` 採用人類可讀格式，例如：`2026-03-12_21-36-35`。
 
 - **Server Log**：`results/<session>/server_log_<session>.csv`
   記錄每一筆傳輸的 Prediction、Target、Latency、compression mode、解壓/計算耗時等。
@@ -123,7 +124,7 @@ server log 也會同步落下：
 uv run python src/data/plot_server_metrics.py
 
 # 或指定 session
-uv run python src/data/plot_server_metrics.py --session 20260312150555
+uv run python src/data/plot_server_metrics.py --log results/2026-03-12_15-05-55/server_log_2026-03-12_15-05-55.csv
 ```
 
 **輸出**：`results/<session>/server_metrics_<session>.png`
@@ -135,7 +136,7 @@ uv run python src/data/plot_server_metrics.py --session 20260312150555
 uv run python src/data/plot_training_curve.py
 
 # 或指定 session
-uv run python src/data/plot_training_curve.py --session 20260312150555
+uv run python src/data/plot_training_curve.py --session 2026-03-12_15-05-55
 ```
 
 **輸出**：`results/<session>/training_curve_<session>.png`

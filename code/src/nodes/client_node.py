@@ -1,6 +1,7 @@
 import grpc
 import glob
 import os
+import re
 import socket
 import time
 from pathlib import Path
@@ -29,6 +30,20 @@ end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00
 test_days = cfg.get("data", {}).get("test_days", 14)
 SPLIT_DATE = pd.Timestamp(end_date_str).tz_localize(None) - pd.Timedelta(days=test_days)
 
+
+def _resolve_requested_client_id() -> int:
+    """Prefer an explicit CLIENT_ID, otherwise derive it from a compose-style hostname."""
+    raw_env = os.getenv("CLIENT_ID", "").strip()
+    if raw_env:
+        try:
+            return int(raw_env)
+        except ValueError:
+            pass
+
+    hostname = os.getenv("HOSTNAME") or socket.gethostname()
+    match = re.fullmatch(r"fsl-client-(\d+)", hostname)
+    return int(match.group(1)) if match else 0
+
 def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> None:
     """Run the full client training and evaluation loop."""
     server_host = cfg.get("grpc", {}).get("server_host", "fsl-server")
@@ -36,8 +51,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     target_address = f"{server_host}:{server_port}"
     compression_mode = cfg.get("compression", {}).get("mode", "float32")
     epochs = cfg.get("training", {}).get("num_rounds", epochs)
-    requested_client_id = int(os.getenv("CLIENT_ID", "0") or "0")
     client_name = os.getenv("HOSTNAME") or socket.gethostname()
+    requested_client_id = _resolve_requested_client_id()
 
     time.sleep(cfg.get("training", {}).get("start_delay", 8))
     print(f"[CLIENT] Connecting to {target_address} for registration...")
@@ -69,6 +84,12 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         end_idx    = start_idx + chunk_size if client_id < num_clients else len(all_files)
         client_files = all_files[start_idx:end_idx]
         print(f"[CLIENT {client_id}] Allocated {len(client_files)}/{len(all_files)} sensors")
+        if not client_files:
+            raise RuntimeError(
+                f"Client {client_id} was assigned 0 sensors "
+                f"(total_sensors={len(all_files)}, total_clients={num_clients}). "
+                "Reduce num_clients or provide more sensor files."
+            )
 
         use_gpu = cfg.get("training", {}).get("use_gpu", False)
         device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
@@ -77,6 +98,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         client_model = ClientLSTM(
             input_size=cfg.get("model", {}).get("input_size", len(FEATURE_COLS)),
             hidden_size=cfg.get("model", {}).get("hidden_size", 64),
+            num_layers=cfg.get("model", {}).get("num_layers", 1),
         ).to(device)
         
         optimizer = torch.optim.Adam(
@@ -94,6 +116,11 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 sensor_data_cache[file_path] = load_sensor_data(file_path)
             except Exception as e:
                 print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
+        if not sensor_data_cache:
+            raise RuntimeError(
+                f"Client {client_id} could not load any sensor data from {len(client_files)} assigned files. "
+                "Check dataset contents and preprocessing outputs."
+            )
 
         checkpoint_state = CheckpointState()
         patience = cfg.get("training", {}).get("early_stopping_patience", 15)
@@ -113,6 +140,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         test_state = SchedulerState(compression_mode=compression_mode)
 
         for epoch in range(epochs):
+            client_model.train()
             print(f"[EPOCH {epoch+1}/{epochs}] Client {client_id} starting...")
             epoch_train_losses = []
             epoch_train_steps = 0

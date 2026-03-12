@@ -11,7 +11,7 @@ dashboard covering:
 
 Usage:
     uv run python src/data/plot_server_metrics.py
-    uv run python src/data/plot_server_metrics.py --log results/server_log_20260312150555.csv
+    uv run python src/data/plot_server_metrics.py --log results/2026-03-12_15-05-55/server_log_2026-03-12_15-05-55.csv
 """
 import sys
 import glob
@@ -32,19 +32,14 @@ if str(project_root) not in sys.path:
 
 
 def _find_latest_log() -> Path:
-    # Use rglob to find all logs recursively inside results/
-    import re
     all_csvs = list((project_root / "results").rglob("server_log_*.csv"))
-    
-    # Filter for logs that have a 14-digit timestamp in their name or parent folder
-    # Then sort by the filename (which contains the timestamp)
-    logs = sorted(all_csvs, key=lambda p: p.name)
-    
-    if not logs:
+
+    if not all_csvs:
         raise FileNotFoundError(
             f"No server_log_*.csv found in {project_root / 'results'}"
         )
-    
+
+    logs = sorted(all_csvs, key=lambda p: (p.stat().st_mtime, p.name))
     latest = logs[-1]
     print(f"[DEBUG] Picking latest log: {latest.relative_to(project_root)}")
     return latest
