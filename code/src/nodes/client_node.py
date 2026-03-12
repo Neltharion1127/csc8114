@@ -11,6 +11,7 @@ from src.models.split_lstm import ClientLSTM
 import time
 import os
 import json
+from datetime import datetime
 
 # Use shared common module (provides `cfg` and `project_root`)
 from src.shared.common import cfg, project_root
@@ -103,9 +104,13 @@ def _forward_step(
     Returns a log entry dict with loss, latency, and payload info.
     """
     # Extract input features: last 24 hours before target_idx
+    use_gpu = cfg.get("training", {}).get("use_gpu", False)
+    device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
+    
     raw_data = torch.tensor(
         df[FEATURE_COLS].iloc[target_idx - 24:target_idx].values,
-        dtype=torch.float32
+        dtype=torch.float32,
+        device=device
     )
     input_tensor = raw_data.unsqueeze(0)  # -> (1, 24, num_features)
 
@@ -133,10 +138,20 @@ def _forward_step(
     latency_ms = (time.time() - start_time) * 1000.0
 
     # Parse loss from server's status message, e.g. "Success: Loss 0.0040"
+    # Parse loss from server's status message, e.g. "Success: Loss 0.0040 Pred 0.123"
     try:
-        current_loss = float(response.status_message.split("Loss")[-1].split()[0].strip())
+        parts = response.status_message.split()
+        loss_idx = parts.index("Loss") + 1
+        current_loss = float(parts[loss_idx])
+        
+        if "Pred" in parts:
+            pred_idx = parts.index("Pred") + 1
+            prediction_val = float(parts[pred_idx])
+        else:
+            prediction_val = 0.0
     except Exception:
         current_loss = 0.0
+        prediction_val = 0.0
 
     # Display progress
     icon = "💧💧💧" if target_value > 0 else "☁️"
@@ -144,7 +159,7 @@ def _forward_step(
 
     # Decompress gradient and run backward pass ONLY if training
     if is_training:
-        received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode)
+        received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode).to(device)
         smashed_activation.backward(received_grad)
         optimizer.step()
 
@@ -152,6 +167,7 @@ def _forward_step(
 
     return {
         "Target": target_value,
+        "Prediction": prediction_val,
         "RainFlag": 1 if target_value > 0 else 0,
         "Loss": current_loss,
         "LatencyMs": float(latency_ms),
@@ -192,7 +208,8 @@ def _fed_avg_sync(stub, client_id: int, client_model: ClientLSTM) -> ClientLSTM:
 
 # --- Save Training Logs ---
 
-def _save_results(client_id: int, experimental_logs: list) -> None:
+def _save_results(client_id: int, experimental_logs: list, best_model_path: str = None, 
+                  best_test_loss: float = None, avg_latency: float = None, avg_bytes: float = None) -> None:
     """
     Saves training logs as a CSV and a JSON metadata sidecar to results/.
     """
@@ -210,6 +227,10 @@ def _save_results(client_id: int, experimental_logs: list) -> None:
         "timestamp": timestamp,
         "csv": filename,
         "num_records": len(experimental_logs),
+        "best_model_path": best_model_path,
+        "best_test_loss": best_test_loss,
+        "avg_latency_ms": avg_latency,
+        "avg_payload_bytes": avg_bytes,
         "cfg": cfg,
     }
     meta_path = filepath.replace('.csv', '_meta.json')
@@ -261,10 +282,15 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         print(f"[CLIENT {client_id}] Allocated {len(client_files)}/{len(all_files)} sensors")
 
         # Step 3: Initialize model and training state
+        use_gpu = cfg.get("training", {}).get("use_gpu", False)
+        device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
+        print(f"[CLIENT {client_id}] Using device: {device} (use_gpu={use_gpu})")
+        
         client_model = ClientLSTM(
             input_size=cfg.get("model", {}).get("input_size", len(FEATURE_COLS)),
             hidden_size=cfg.get("model", {}).get("hidden_size", 64),
-        )
+        ).to(device)
+        
         optimizer = torch.optim.Adam(
             client_model.parameters(),
             lr=cfg.get("training", {}).get("lr", 0.001)
@@ -272,6 +298,21 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         client_model.train()
         experimental_logs = []
 
+        # Load all assigned sensor files into memory once to avoid disk I/O per epoch
+        print(f"[CLIENT {client_id}] Pre-loading sensor data into memory...")
+        sensor_data_cache = {}
+        for file_path in client_files:
+            sensor_id = Path(file_path).stem
+            try:
+                sensor_data_cache[file_path] = _load_sensor_data(file_path)
+            except Exception as e:
+                print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
+                
+        # Track best performance for checkpointing
+        best_test_loss = float('inf')
+        best_model_path = None
+        os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
+        
         # Step 4: Training loop
         for epoch in range(epochs):
             print(f"[EPOCH {epoch+1}/{epochs}] Client {client_id} starting...")
@@ -281,7 +322,9 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 sensor_id = Path(file_path).stem
 
                 try:
-                    df = _load_sensor_data(file_path)
+                    df = sensor_data_cache.get(file_path)
+                    if df is None:
+                        continue
                     result = _sample_index(df, is_training=True)
 
                     if result is None:
@@ -309,11 +352,15 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             # Evaluation Phase (Testing on new global model)
             print(f"--- [EVALUATION] Client {client_id} Epoch {epoch+1} ---")
             client_model.eval()
+            epoch_test_losses = []
+            
             with torch.no_grad():
                 for file_path in client_files:
                     sensor_id = Path(file_path).stem
                     try:
-                        df = _load_sensor_data(file_path)
+                        df = sensor_data_cache.get(file_path)
+                        if df is None:
+                            continue
                         result = _sample_index(df, is_training=False)
                         if result:
                             target_idx, mode = result
@@ -323,14 +370,52 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                                 df, target_idx, target_value, mode, sensor_id, compression_mode, is_training=False
                             )
                             experimental_logs.append({"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry})
+                            
+                            if log_entry["Loss"] is not None:
+                                epoch_test_losses.append(float(log_entry["Loss"]))
                     except Exception as e:
                         pass
-            client_model.train()
+                        
+            # Calculate and check if this is the best epoch yet
+            if epoch_test_losses:
+                avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
+                print(f"[CLIENT {client_id}] Epoch {epoch+1} Avg Test Loss: {avg_test_loss:.4f}")
+                
+                if avg_test_loss < best_test_loss:
+                    best_test_loss = avg_test_loss
+                    os.makedirs(os.path.join(project_root, "bestweights"), exist_ok=True)
+                    stamp = datetime.now().strftime("%y%m%d%H%M")
+                    best_model_path = os.path.join(project_root, "bestweights", f"best_client_{client_id}_model_{stamp}.pth")
+                    torch.save(client_model.state_dict(), best_model_path)
+                    print(f"✨ [CLIENT {client_id}] New Best Model! Test Loss: {best_test_loss:.4f} -> Saved to {best_model_path}")
+            
+    # Calculate some summary stats from the experimental logs
+    num_logs = len(experimental_logs)
+    total_latency = sum(float(log["LatencyMs"]) for log in experimental_logs)
+    avg_latency = total_latency / num_logs if num_logs > 0 else 0.0
+    total_bytes = sum(float(log["PayloadBytes"]) for log in experimental_logs)
+    avg_bytes = total_bytes / num_logs if num_logs > 0 else 0.0
 
     # Step 5: Save results
-    _save_results(client_id, experimental_logs)
-    print(f"\n========== Training complete for Client {client_id}. ==========")
-
+    _save_results(
+        client_id, 
+        experimental_logs, 
+        best_model_path, 
+        best_test_loss=best_test_loss if best_test_loss != float('inf') else None,
+        avg_latency=avg_latency,
+        avg_bytes=avg_bytes
+    )
+    
+    print("\n" + "="*60)
+    print(f"🏆  TRAINING COMPLETE: CLIENT {client_id} SUMMARY")
+    print("="*60)
+    print(f"[INFO]  Total Epochs Completed : {epochs}")
+    print(f"[INFO]  Total Forward Passes   : {num_logs}")
+    print(f"[INFO]  Best Test Loss (MSE)   : {best_test_loss:.4f}" if best_test_loss != float('inf') else "[INFO]  Best Test Loss (MSE)   : N/A")
+    print(f"[INFO]  Avg Latency per Pass   : {avg_latency:.2f} ms")
+    print(f"[INFO]  Avg Payload per Pass   : {avg_bytes/1024:.2f} KB")
+    print(f"[INFO]  Best Model Checkpoint  : {best_model_path}")
+    print("="*60 + "\n")
 
 if __name__ == '__main__':
     run_all_client()

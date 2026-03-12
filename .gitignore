@@ -58,4 +58,5 @@ code/proto/*_pb2.py
 code/proto/*_pb2_grpc.py
 
 # Training results & logs (runtime output, not source)
-code/results/
+code/results*/
+code/bestweights*/

@@ -17,7 +17,6 @@ import os
 import sys
 
 # Use shared config
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.shared.common import cfg, project_root
 from datetime import datetime
 
