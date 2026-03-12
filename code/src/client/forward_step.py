@@ -1,0 +1,96 @@
+import time
+
+import pandas as pd
+import torch
+
+from proto import fsl_pb2
+from src.models.split_lstm import ClientLSTM
+from src.shared.common import cfg
+from src.shared.compression import compress, decompress
+
+
+def run_forward_step(
+    stub,
+    client_id: int,
+    client_model: ClientLSTM,
+    optimizer: torch.optim.Optimizer,
+    df: pd.DataFrame,
+    target_idx: int,
+    target_value: float,
+    mode: str,
+    sensor_id: str,
+    compression_mode: str,
+    feature_cols: list[str],
+    feat_stats: tuple | None = None,
+    is_training: bool = True,
+    last_latency_ms: float = 0.0,
+) -> dict:
+    """
+    Runs one split-learning request/response cycle and returns the step log.
+    """
+    use_gpu = cfg.get("training", {}).get("use_gpu", False)
+    profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
+    device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
+
+    raw_data = df[feature_cols].iloc[target_idx - 24:target_idx].values
+    if feat_stats:
+        mean, std = feat_stats
+        raw_data = (raw_data - mean) / std
+
+    raw_data_tensor = torch.tensor(raw_data, dtype=torch.float32, device=device)
+    input_tensor = raw_data_tensor.unsqueeze(0)
+    smashed_activation = client_model(input_tensor)
+
+    start_time = time.time()
+    activation_bytes = compress(smashed_activation, compression_mode)
+    payload_size = len(activation_bytes)
+    reported_latency_ms = last_latency_ms if profiler_enabled else 0.0
+    reported_payload_bytes = payload_size if profiler_enabled else 0
+
+    request = fsl_pb2.ForwardRequest(
+        client_id=client_id,
+        activation_data=activation_bytes,
+        true_target=target_value,
+        latency_ms=reported_latency_ms,
+        compression_mode=compression_mode,
+        is_training=is_training,
+        payload_bytes=reported_payload_bytes,
+    )
+    phase = "TRAIN" if is_training else "TEST"
+    print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
+
+    response = stub.Forward(request)
+    latency_ms = (time.time() - start_time) * 1000.0 if profiler_enabled else 0.0
+
+    if not response.success:
+        raise RuntimeError(response.status_message or "Server forward pass failed.")
+
+    current_loss = float(response.loss)
+    prediction_val = float(response.prediction)
+
+    icon = "💧💧💧" if target_value > 0 else "☁️"
+    print(f"{icon} [{mode}] {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
+
+    if is_training:
+        received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode).to(device)
+        smashed_activation.backward(received_grad)
+        torch.nn.utils.clip_grad_norm_(client_model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+    print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
+    scheduler_enabled = cfg.get("scheduler", {}).get("enabled", True)
+    next_compression_mode = compression_mode
+    if scheduler_enabled and response.next_compression_mode:
+        next_compression_mode = response.next_compression_mode
+
+    return {
+        "Target": target_value,
+        "Prediction": prediction_val,
+        "RainFlag": 1 if target_value > 0 else 0,
+        "Loss": current_loss,
+        "LatencyMs": float(latency_ms),
+        "PayloadBytes": reported_payload_bytes,
+        "NextCompression": next_compression_mode,
+        "ProfilerEnabled": int(profiler_enabled),
+        "SchedulerEnabled": int(scheduler_enabled),
+    }

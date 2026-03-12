@@ -24,8 +24,12 @@ model:
 output:
   metrics_dir: /app/outputs/metrics
   plots_dir: /app/outputs/plots
+profiler:
+  enabled: true
 scheduler:
-  latency_threshold: 1.0
+  enabled: true
+  latency_threshold: 4.0
+  int8_latency_threshold: 10.0
   max_rho: 20
   min_rho: 1
 training:

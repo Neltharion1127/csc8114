@@ -15,6 +15,7 @@ message ForwardRequest {
     float latency_ms = 4;       // Measured local latency
     string compression_mode = 5; // The compression mode used
     bool is_training = 6;        // True for train pass (do backprop), False for test pass
+    int32 payload_bytes = 7;     // Size of the transmitted activation in bytes
 }
 
 // Used by a client to register with the server and get an assigned ID
@@ -28,8 +29,12 @@ message RegisterResponse {
 
 // Response sent from Server back to Client during the Backward Pass
 message ForwardResponse {
-    bytes gradient_data = 1;    // The serialized PyTorch gradient tensor (to continue backprop locally)
-    string status_message = 2;  // Any status or commands from the server (e.g., "OK" or "STOP")
+    bytes gradient_data = 1;         // The serialized PyTorch gradient tensor (to continue backprop locally)
+    string status_message = 2;       // Any status or commands from the server (e.g., "OK" or "STOP")
+    string next_compression_mode = 3; // Assigned compression mode for the next round by the Scheduler
+    bool success = 4;                // Whether the server completed the request successfully
+    float loss = 5;                  // Structured loss value for the current request
+    float prediction = 6;            // Structured prediction for the current request
 }
 
 
