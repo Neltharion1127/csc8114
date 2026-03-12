@@ -2,13 +2,8 @@ compression:
   mode: float32
   topk_ratio: 0.5
 data:
-  csv_path: /app/data/rainfall.csv
   processed_dir: dataset/processed
   test_days: 14
-  sensor_split:
-    '0': []
-    '1': []
-    '2': []
   train_ratio: 0.7
   val_ratio: 0.15
 federated:
@@ -39,16 +34,13 @@ training:
   lr: 0.001
   num_rounds: 100
   start_delay: 8
-
+  use_gpu: true # Set to True to enable MPS GPU acceleration on Mac
 server:
   max_workers: 10
 
 data_download:
   start_date: "2025-01-01T00:00:00"   # 1 full year of data
   end_date: "2026-03-10T00:00:00"      # up to today
-  sleep_seconds: 2       # pause between chunks
-  retries: 2             # number of retries per chunk on failure
-  timeout_seconds: 60    # per-request timeout (seconds)
   # Feature columns used by the model/data pipeline
   feature_cols:
     - Temperature
@@ -57,9 +49,7 @@ data_download:
     - Wind Speed
     - Rain
   # Spatial bounding box for Newcastle: [min_lon, min_lat, max_lon, max_lat]
-  bbox: [-1.71, 54.95, -1.54, 55.03]
+  # bbox: [-1.71, 54.95, -1.54, 55.03]
   # Data download window settings
-  last_days: 91
-  chunk_days: 7
   raw_out_dir: dataset
   raw_filename: newcastle_rainfall_data.csv

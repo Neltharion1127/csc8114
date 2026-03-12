@@ -8,6 +8,7 @@ from src.models.split_lstm import ServerHead
 import sys
 import os
 import pandas as pd
+import glob
 from datetime import datetime
 
 # Use shared common module (provides `cfg` and `project_root`)
@@ -27,7 +28,12 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.hidden_size = cfg.get("model", {}).get("hidden_size", 64)
         lr = cfg.get("training", {}).get("lr", 0.001)
 
-        self.server_model = ServerHead(hidden_size=self.hidden_size, output_size=1)
+        # self.device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        use_gpu = cfg.get("training", {}).get("use_gpu", False)
+        self.device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
+        print(f"[SERVER] Using device: {self.device} (use_gpu={use_gpu})")
+        
+        self.server_model = ServerHead(hidden_size=self.hidden_size, output_size=1).to(self.device)
         self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=lr)
         self.criterion = torch.nn.MSELoss()
         
@@ -72,11 +78,11 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # Expected shape from client: (batch_size, hidden_size)
             compression_mode = request.compression_mode if hasattr(request, "compression_mode") and request.compression_mode else "float32"
             start_decomp_time = time.time()
-            smashed_activation = decompress(request.activation_data, (-1, self.hidden_size), compression_mode)
+            smashed_activation = decompress(request.activation_data, (-1, self.hidden_size), compression_mode).to(self.device)
             smashed_activation = smashed_activation.detach().clone().requires_grad_(True)
             decomp_time = (time.time() - start_decomp_time) * 1000.0
             
-            target = torch.tensor([[request.true_target]], dtype=torch.float32)
+            target = torch.tensor([[request.true_target]], dtype=torch.float32, device=self.device)
             
             # --- 關鍵改動：使用 Lock 保護共享資源 ---
             with self.sync_lock:
@@ -139,7 +145,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             # 6. Construct the response containing the gradient feedback
             return fsl_pb2.ForwardResponse(
                 gradient_data=activation_gradient,
-                status_message=f"Success: Loss {loss_val:.4f}"
+                status_message=f"Success: Loss {loss_val:.4f} Pred {pred_val:.4f}"
             )
 
         except Exception as e:
@@ -179,7 +185,23 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                     # 3. Reset buffer and increment round
                     self.client_weights_buffer = []
                     self.current_round += 1
+                    
+                    # Save the server model for this round so it can be paired with the best client models
+                    os.makedirs(os.path.join("bestweights"), exist_ok=True)
+                    stamp = datetime.now().strftime("%y%m%d%H%M%S")
+                    server_model_path = os.path.join("bestweights", f"server_head_round_{self.current_round}_{stamp}.pth")
+                    torch.save(self.server_model.state_dict(), server_model_path)
+                    
+                    # Delete older server checkpoints to save disk space (keep only the latest 1)
+                    old_checkpoints = sorted(glob.glob(os.path.join("bestweights", "server_head_round_*.pth")))
+                    for old_ckpt in old_checkpoints[:-1]:
+                        try:
+                            os.remove(old_ckpt)
+                        except Exception as e:
+                            pass
+                    
                     print(f"[FED AVG] Successfully updated global model to Round {self.current_round}")
+                    print(f"[SERVER] Saved: {server_model_path} (Old rounds removed)")
             
             # 4. Wait for the global model to be updated if we were the early client
             # (In a real production system, you'd use a more robust waiting/event mechanism)
@@ -225,11 +247,15 @@ def serve():
         # Keep the process alive
         server.wait_for_termination()
     except KeyboardInterrupt:
-        # Save any remaining logs on shutdown
+        print("\n[SERVER] Keyboard interrupt received. Shutting down gracefully...")
+    finally:
+        # Forced write: Ensure any remaining logs are saved regardless of how the server exits
+        print("[SERVER] Executing safety mechanism: Flushing remaining logs...")
         if hasattr(servicer, '_save_logs'):
              servicer._save_logs()
                  
         server.stop(0)
+        print("[SERVER] Shutdown complete.")
 
 if __name__ == '__main__':
     serve()

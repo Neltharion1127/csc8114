@@ -20,9 +20,10 @@ services:
       - PYTHONPATH=/app
       - CUDA_VISIBLE_DEVICES=
     volumes:
-      - .:/app
+      - .:/app:delegated
       - /app/.venv
-      - ./results:/app/results
+      - ./results:/app/results:delegated
+      - ./bestweights:/app/bestweights:delegated
     healthcheck:
       # Use python with grpc to test if the port is open and responding
       test: [ "CMD-SHELL", "uv run python -c \"import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1); s.connect(('127.0.0.1', 50051)); s.close()\" || exit 1" ]
@@ -52,8 +53,9 @@ services:
       - CLIENT_ID=${CLIENT_ID}
     # For Phase 5: Map the local dataset folder into the client container
     volumes:
-      - .:/app
+      - .:/app:delegated
       - /app/.venv
-      - ./dataset:/app/dataset
-      - ./results:/app/results
+      - ./dataset:/app/dataset:delegated
+      - ./results:/app/results:delegated
+      - ./bestweights:/app/bestweights:delegated
     working_dir: /app
