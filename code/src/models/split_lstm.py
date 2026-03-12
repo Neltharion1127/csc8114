@@ -18,7 +18,8 @@ class ClientLSTM(nn.Module):
             input_size=input_size, 
             hidden_size=hidden_size, 
             num_layers=num_layers, 
-            batch_first=True
+            batch_first=True,
+            dropout=0.3 if num_layers > 1 else 0.0
         )
         
     def forward(self, x):
@@ -46,11 +47,12 @@ class ServerHead(nn.Module):
     def __init__(self, hidden_size=64, output_size=1):
         super(ServerHead, self).__init__()
         
-        # Simple Multi-Layer Perceptron (MLP) for final regression
+        # Back to a more robust MLP structure
         self.regressor = nn.Sequential(
             nn.Linear(hidden_size, 32),
-            nn.ReLU(),
-            nn.Linear(32, output_size)
+            nn.LeakyReLU(0.1), # Allows gradients to flow even when input < 0
+            nn.Linear(32, output_size),
+            nn.ReLU()          # Rain is >= 0
         )
         
     def forward(self, smashed_activation):

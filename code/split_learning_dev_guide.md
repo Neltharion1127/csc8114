@@ -55,3 +55,47 @@ make test-network
 > ```bash
 > make clean
 > ```
+
+## 4. 視覺化分析 (Visualization)
+
+### 4.1 Server Metrics Dashboard
+
+```bash
+# 載入最新 session 的 server log
+uv run python src/data/plot_server_metrics.py
+
+# 或指定 session
+uv run python src/data/plot_server_metrics.py --session 20260312150555
+```
+
+**輸出**：`results/<session>/server_metrics_<session>.png`
+
+### 4.2 Training Curve (Per-Client & Combined)
+
+```bash
+# 載入最新 session 的 client log
+uv run python src/data/plot_training_curve.py
+
+# 或指定 session
+uv run python src/data/plot_training_curve.py --session 20260312150555
+```
+
+**輸出**：`results/<session>/training_curve_<session>.png`
+
+---
+
+## 5. 獨立評估 (Independent Evaluation)
+當訓練完成後，我們可以使用獨立的評估腳本來檢驗模型在完全沒見過的 14 天測試集上的最終表現。
+
+```bash
+uv run python src/data/run_evaluation.py
+```
+
+**這個指令會執行：**
+1. **模型自動選取**：自動從 `bestweights/` 中抓取最新的 Server 與對應的 Client 權重。
+2. **數據標準化**：自動計算各感測器的 Mean/Std（與訓練時一致），確保預測基準正確。
+3. **指標報告**：針對 12 個感測器分別輸出 MSE、MAE 以及降雨預測準確率（Accuracy）。
+
+**輸出範例**：
+你將會看到一個整合性表格，顯示各 Client 的表現以及全局平均值。這對於最終學術報告提供數據支持非常有用。
+
