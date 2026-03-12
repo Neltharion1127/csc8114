@@ -90,6 +90,7 @@ def _forward_step(
     mode: str,
     sensor_id: str,
     compression_mode: str,
+    feat_stats: tuple[np.ndarray, np.ndarray] | None = None,
     is_training: bool = True,
 ) -> dict:
     """
@@ -107,12 +108,17 @@ def _forward_step(
     use_gpu = cfg.get("training", {}).get("use_gpu", False)
     device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
     
-    raw_data = torch.tensor(
-        df[FEATURE_COLS].iloc[target_idx - 24:target_idx].values,
+    raw_data = df[FEATURE_COLS].iloc[target_idx - 24:target_idx].values
+    if feat_stats:
+        mean, std = feat_stats
+        raw_data = (raw_data - mean) / std
+        
+    raw_data_tensor = torch.tensor(
+        raw_data,
         dtype=torch.float32,
         device=device
     )
-    input_tensor = raw_data.unsqueeze(0)  # -> (1, 24, num_features)
+    input_tensor = raw_data_tensor.unsqueeze(0)  # -> (1, 24, num_features)
 
     # Forward pass through client-side model
     smashed_activation = client_model(input_tensor)
@@ -150,7 +156,7 @@ def _forward_step(
         else:
             prediction_val = 0.0
     except Exception:
-        current_loss = 0.0
+        current_loss = float('inf') # Default to infinity to avoid false 'best' model
         prediction_val = 0.0
 
     # Display progress
@@ -161,6 +167,10 @@ def _forward_step(
     if is_training:
         received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode).to(device)
         smashed_activation.backward(received_grad)
+        
+        # Gradient Clipping to prevent explosions
+        torch.nn.utils.clip_grad_norm_(client_model.parameters(), max_norm=1.0)
+        
         optimizer.step()
 
     print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
@@ -208,12 +218,12 @@ def _fed_avg_sync(stub, client_id: int, client_model: ClientLSTM) -> ClientLSTM:
 
 # --- Save Training Logs ---
 
-def _save_results(client_id: int, experimental_logs: list, best_model_path: str = None, 
+def _save_results(client_id: int, experimental_logs: list, session_id: str, best_model_path: str = None, 
                   best_test_loss: float = None, avg_latency: float = None, avg_bytes: float = None) -> None:
     """
     Saves training logs as a CSV and a JSON metadata sidecar to results/.
     """
-    output_dir = os.path.join(project_root, "results")
+    output_dir = os.path.join(project_root, "results", session_id)
     os.makedirs(output_dir, exist_ok=True)
 
     log_df = pd.DataFrame(experimental_logs)
@@ -268,10 +278,14 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     with grpc.insecure_channel(target_address) as channel:
         stub = fsl_pb2_grpc.FSLServiceStub(channel)
 
-        # Step 1: Register with server to get an assigned ID
+        # Step 1: Register with server to get an assigned ID + shared session_id
         reg = stub.Register(fsl_pb2.RegisterRequest())
-        client_id, num_clients = reg.client_id, reg.total_clients
-        print(f"[CLIENT] Registered — ID: {client_id} / {num_clients}")
+        client_id, num_clients, session_id = reg.client_id, reg.total_clients, reg.session_id
+        print(f"[CLIENT] Registered — ID: {client_id} / {num_clients} | session: {session_id}")
+
+        # Shared session directory (same as server's)
+        session_dir = os.path.join(project_root, "bestweights", session_id)
+        os.makedirs(session_dir, exist_ok=True)
 
         # Step 2: Partition sensor files for this client
         all_files = sorted(glob.glob(os.path.join(project_root, data_dir, "*.parquet")))
@@ -308,11 +322,25 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             except Exception as e:
                 print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
                 
-        # Track best performance for checkpointing
+        # Track best performance for early stopping & checkpointing
         best_test_loss = float('inf')
+        no_improvement_count = 0
+        patience = cfg.get("training", {}).get("early_stopping_patience", 15)
+        
         best_model_path = None
+        current_round = 0  # track which FedAvg round we are on
+        ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
+        periodic_dir  = os.path.join(session_dir, "periodic")
+        os.makedirs(periodic_dir, exist_ok=True)
         os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
         
+        # Calculate global mean/std for all assigned sensors for normalization
+        print(f"[CLIENT {client_id}] Calculating feature statistics for normalization...")
+        all_combined = pd.concat(sensor_data_cache.values())
+        feat_mean = all_combined[FEATURE_COLS].mean().values
+        feat_std  = all_combined[FEATURE_COLS].std().values + 1e-9 # avoid div zero
+        feat_stats = (feat_mean, feat_std)
+
         # Step 4: Training loop
         for epoch in range(epochs):
             print(f"[EPOCH {epoch+1}/{epochs}] Client {client_id} starting...")
@@ -335,7 +363,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
                     log_entry = _forward_step(
                         stub, client_id, client_model, optimizer,
-                        df, target_idx, target_value, mode, sensor_id, compression_mode, is_training=True
+                        df, target_idx, target_value, mode, sensor_id, 
+                        compression_mode, feat_stats, is_training=True
                     )
                     experimental_logs.append({"Epoch": epoch + 1, "Status": "TRAIN", "Sensor": sensor_id, **log_entry})
 
@@ -346,6 +375,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             print(f"[CLIENT {client_id}] Epoch {epoch+1} done. Synchronizing...")
             try:
                 client_model = _fed_avg_sync(stub, client_id, client_model)
+                current_round += 1  # increment round counter after successful sync
             except Exception as e:
                 print(f"[CLIENT {client_id}] Sync failed: {e}")
                 
@@ -367,7 +397,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                             target_value = float(df['future_3h_rain'].iloc[target_idx])
                             log_entry = _forward_step(
                                 stub, client_id, client_model, optimizer,
-                                df, target_idx, target_value, mode, sensor_id, compression_mode, is_training=False
+                                df, target_idx, target_value, mode, sensor_id, 
+                                compression_mode, feat_stats, is_training=False
                             )
                             experimental_logs.append({"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry})
                             
@@ -376,18 +407,64 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     except Exception as e:
                         pass
                         
-            # Calculate and check if this is the best epoch yet
+            # ── Checkpoint logic ─────────────────────────────────────────────
             if epoch_test_losses:
                 avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
                 print(f"[CLIENT {client_id}] Epoch {epoch+1} Avg Test Loss: {avg_test_loss:.4f}")
-                
+
+                # Shared checkpoint metadata
+                num_layers_ckpt = sum(
+                    1 for k in client_model.state_dict()
+                    if k.startswith("lstm.weight_ih_l")
+                )
+                base_ckpt = {
+                    "round":                current_round,
+                    "epoch":               epoch + 1,
+                    "model_state_dict":    client_model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss":                avg_test_loss,
+                    "config": {
+                        "hidden_size": cfg.get("model", {}).get("hidden_size", 64),
+                        "num_layers":  num_layers_ckpt,
+                        "input_size":  cfg.get("model", {}).get("input_size", 5),
+                    },
+                    "session_id": session_id,
+                    "client_id":  client_id,
+                }
+
+                # ── 建議 1: Best checkpoint ──────────────────────────────────
                 if avg_test_loss < best_test_loss:
                     best_test_loss = avg_test_loss
-                    os.makedirs(os.path.join(project_root, "bestweights"), exist_ok=True)
-                    stamp = datetime.now().strftime("%y%m%d%H%M")
-                    best_model_path = os.path.join(project_root, "bestweights", f"best_client_{client_id}_model_{stamp}.pth")
-                    torch.save(client_model.state_dict(), best_model_path)
-                    print(f"✨ [CLIENT {client_id}] New Best Model! Test Loss: {best_test_loss:.4f} -> Saved to {best_model_path}")
+                    no_improvement_count = 0 # reset
+                    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                    best_model_path = os.path.join(
+                        session_dir,
+                        f"best_client_{client_id}_round_{current_round}_model_{stamp}.pth"
+                    )
+                    torch.save(base_ckpt, best_model_path)
+                    print(f"\u2728 [CLIENT {client_id}] New Best! Round {current_round}, "
+                          f"Loss={best_test_loss:.4f} \u2192 {session_id}/{Path(best_model_path).name}")
+                else:
+                    no_improvement_count += 1
+                    print(f"[CLIENT {client_id}] No improvement for {no_improvement_count}/{patience} rounds.")
+
+                # ── Early Stopping trigger ──────────────────────────────────
+                if no_improvement_count >= patience:
+                    print(f"\n🛑 [EARLY STOP] Client {client_id} triggered at round {current_round} (Patience={patience})")
+                    break
+
+                # ── Periodic checkpoint (every N rounds) ─────────────
+                if current_round > 0 and current_round % ckpt_interval == 0:
+                    periodic_path = os.path.join(
+                        periodic_dir,
+                        f"client_{client_id}_round_{current_round:04d}.pth"
+                    )
+                    torch.save(base_ckpt, periodic_path)
+                    print(f"[CLIENT {client_id}] 💾 Periodic ckpt saved: round {current_round:04d}")
+            
+            # Check if outer loop should break (for Early Stopping)
+            if no_improvement_count >= patience:
+                break
             
     # Calculate some summary stats from the experimental logs
     num_logs = len(experimental_logs)
@@ -400,6 +477,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     _save_results(
         client_id, 
         experimental_logs, 
+        session_id,
         best_model_path, 
         best_test_loss=best_test_loss if best_test_loss != float('inf') else None,
         avg_latency=avg_latency,
