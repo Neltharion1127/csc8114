@@ -1,6 +1,7 @@
 import grpc
 import glob
 import os
+import socket
 import time
 from pathlib import Path
 
@@ -35,6 +36,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     target_address = f"{server_host}:{server_port}"
     compression_mode = cfg.get("compression", {}).get("mode", "float32")
     epochs = cfg.get("training", {}).get("num_rounds", epochs)
+    requested_client_id = int(os.getenv("CLIENT_ID", "0") or "0")
+    client_name = os.getenv("HOSTNAME") or socket.gethostname()
 
     time.sleep(cfg.get("training", {}).get("start_delay", 8))
     print(f"[CLIENT] Connecting to {target_address} for registration...")
@@ -43,9 +46,17 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         stub = fsl_pb2_grpc.FSLServiceStub(channel)
 
         # Step 1: Register with server to get an assigned ID + shared session_id
-        reg = stub.Register(fsl_pb2.RegisterRequest())
+        reg = stub.Register(
+            fsl_pb2.RegisterRequest(
+                client_name=client_name,
+                requested_client_id=requested_client_id,
+            )
+        )
         client_id, num_clients, session_id = reg.client_id, reg.total_clients, reg.session_id
-        print(f"[CLIENT] Registered — ID: {client_id} / {num_clients} | session: {session_id}")
+        print(
+            f"[CLIENT] Registered — name: {client_name} | requested_id: {requested_client_id or 'auto'} "
+            f"| assigned_id: {client_id} / {num_clients} | session: {session_id}"
+        )
 
         # Shared session directory (same as server's)
         session_dir = os.path.join(project_root, "bestweights", session_id)
@@ -103,6 +114,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
         for epoch in range(epochs):
             print(f"[EPOCH {epoch+1}/{epochs}] Client {client_id} starting...")
+            epoch_train_losses = []
+            epoch_train_steps = 0
 
             for file_path in client_files:
                 optimizer.zero_grad()
@@ -137,11 +150,21 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                         last_latency_ms=train_state.last_latency_ms,
                     )
                     train_state.update(log_entry)
+                    epoch_train_steps += 1
+                    if log_entry["Loss"] is not None:
+                        epoch_train_losses.append(float(log_entry["Loss"]))
 
                     experimental_logs.append({"Epoch": epoch + 1, "Status": "TRAIN", "Sensor": sensor_id, **log_entry})
 
                 except Exception as e:
                     print(f"[CLIENT {client_id} ERROR] {sensor_id}: {e}")
+
+            if epoch_train_steps:
+                avg_train_loss = sum(epoch_train_losses) / len(epoch_train_losses) if epoch_train_losses else float("nan")
+                print(
+                    f"[CLIENT {client_id}] Epoch {epoch+1} train summary | "
+                    f"steps={epoch_train_steps} avg_loss={avg_train_loss:.4f}"
+                )
 
             print(f"[CLIENT {client_id}] Epoch {epoch+1} done. Synchronizing...")
             try:
@@ -191,7 +214,10 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
             if epoch_test_losses:
                 avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
-                print(f"[CLIENT {client_id}] Epoch {epoch+1} Avg Test Loss: {avg_test_loss:.4f}")
+                print(
+                    f"[CLIENT {client_id}] Epoch {epoch+1} test summary | "
+                    f"steps={len(epoch_test_losses)} avg_loss={avg_test_loss:.4f}"
+                )
                 should_stop = evaluate_epoch(
                     client_id=client_id,
                     client_model=client_model,

@@ -1,6 +1,9 @@
 compression:
   mode: float32
   topk_ratio: 0.5
+console:
+  log_step_details: false
+  log_server_requests: false
 data:
   processed_dir: dataset/processed
   test_days: 14

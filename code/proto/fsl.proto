@@ -19,7 +19,10 @@ message ForwardRequest {
 }
 
 // Used by a client to register with the server and get an assigned ID
-message RegisterRequest {}
+message RegisterRequest {
+    string client_name = 1;       // Stable client/container name for logging and re-registration
+    int32 requested_client_id = 2; // Preferred logical client ID, typically provided by orchestration
+}
 
 message RegisterResponse {
     int32 client_id = 1;      // The ID assigned by the server (1-indexed)

@@ -35,6 +35,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
 
         self._next_client_id = 1
         self._reg_lock = threading.Lock()
+        self._client_name_to_id: dict[str, int] = {}
+        self._assigned_ids: set[int] = set()
 
         self.session_id = datetime.now().strftime("%Y%m%d%H%M%S")
         self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
@@ -60,6 +62,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             float16_threshold=scheduler_cfg.get("latency_threshold", 4.0),
             int8_threshold=scheduler_cfg.get("int8_latency_threshold", 10.0),
         )
+        self.log_server_requests = cfg.get("console", {}).get("log_server_requests", False)
         self.profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
         self.scheduler_enabled = scheduler_cfg.get("enabled", True)
         self.reporter = ServerReporter(session_id=self.session_id)
@@ -67,9 +70,30 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     def Register(self, request, context):
         """Assign a client id and return the shared session id."""
         with self._reg_lock:
-            assigned_id = self._next_client_id
-            self._next_client_id += 1
-        print(f"[SERVER] Client registered — ID: {assigned_id} | session: {self.session_id}")
+            client_name = request.client_name or f"client-{self._next_client_id}"
+            requested_id = request.requested_client_id
+
+            if client_name in self._client_name_to_id:
+                assigned_id = self._client_name_to_id[client_name]
+            elif requested_id > 0 and requested_id not in self._assigned_ids:
+                assigned_id = requested_id
+                self._client_name_to_id[client_name] = assigned_id
+                self._assigned_ids.add(assigned_id)
+            else:
+                while self._next_client_id in self._assigned_ids:
+                    self._next_client_id += 1
+                assigned_id = self._next_client_id
+                self._client_name_to_id[client_name] = assigned_id
+                self._assigned_ids.add(assigned_id)
+                self._next_client_id += 1
+
+            if assigned_id >= self._next_client_id:
+                self._next_client_id = assigned_id + 1
+
+        print(
+            f"[SERVER] Client registered — name: {client_name} | requested_id: {requested_id or 'auto'} "
+            f"| assigned_id: {assigned_id} | session: {self.session_id}"
+        )
         return fsl_pb2.RegisterResponse(
             client_id=assigned_id,
             total_clients=self.num_clients,
@@ -96,7 +120,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                 scheduler_enabled=self.scheduler_enabled,
             )
             self.reporter.record(result.log_entry)
-            print(result.monitor_message)
+            if self.log_server_requests:
+                print(result.monitor_message)
 
             return result.response
 

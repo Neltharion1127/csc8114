@@ -29,6 +29,7 @@ def run_forward_step(
     Runs one split-learning request/response cycle and returns the step log.
     """
     use_gpu = cfg.get("training", {}).get("use_gpu", False)
+    log_step_details = cfg.get("console", {}).get("log_step_details", False)
     profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
     device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
 
@@ -57,7 +58,8 @@ def run_forward_step(
         payload_bytes=reported_payload_bytes,
     )
     phase = "TRAIN" if is_training else "TEST"
-    print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
+    if log_step_details:
+        print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
 
     response = stub.Forward(request)
     latency_ms = (time.time() - start_time) * 1000.0 if profiler_enabled else 0.0
@@ -68,8 +70,9 @@ def run_forward_step(
     current_loss = float(response.loss)
     prediction_val = float(response.prediction)
 
-    icon = "💧💧💧" if target_value > 0 else "☁️"
-    print(f"{icon} [{mode}] {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
+    if log_step_details:
+        icon = "RAIN" if target_value > 0 else "DRY"
+        print(f"[{icon}] [{mode}] {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
 
     if is_training:
         received_grad = decompress(response.gradient_data, smashed_activation.shape, compression_mode).to(device)
@@ -77,7 +80,8 @@ def run_forward_step(
         torch.nn.utils.clip_grad_norm_(client_model.parameters(), max_norm=1.0)
         optimizer.step()
 
-    print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
+    if log_step_details:
+        print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
     scheduler_enabled = cfg.get("scheduler", {}).get("enabled", True)
     next_compression_mode = compression_mode
     if scheduler_enabled and response.next_compression_mode:
