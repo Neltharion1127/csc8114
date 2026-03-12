@@ -208,12 +208,12 @@ def _fed_avg_sync(stub, client_id: int, client_model: ClientLSTM) -> ClientLSTM:
 
 # --- Save Training Logs ---
 
-def _save_results(client_id: int, experimental_logs: list, best_model_path: str = None, 
+def _save_results(client_id: int, experimental_logs: list, session_id: str, best_model_path: str = None, 
                   best_test_loss: float = None, avg_latency: float = None, avg_bytes: float = None) -> None:
     """
     Saves training logs as a CSV and a JSON metadata sidecar to results/.
     """
-    output_dir = os.path.join(project_root, "results")
+    output_dir = os.path.join(project_root, "results", session_id)
     os.makedirs(output_dir, exist_ok=True)
 
     log_df = pd.DataFrame(experimental_logs)
@@ -268,10 +268,14 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     with grpc.insecure_channel(target_address) as channel:
         stub = fsl_pb2_grpc.FSLServiceStub(channel)
 
-        # Step 1: Register with server to get an assigned ID
+        # Step 1: Register with server to get an assigned ID + shared session_id
         reg = stub.Register(fsl_pb2.RegisterRequest())
-        client_id, num_clients = reg.client_id, reg.total_clients
-        print(f"[CLIENT] Registered — ID: {client_id} / {num_clients}")
+        client_id, num_clients, session_id = reg.client_id, reg.total_clients, reg.session_id
+        print(f"[CLIENT] Registered — ID: {client_id} / {num_clients} | session: {session_id}")
+
+        # Shared session directory (same as server's)
+        session_dir = os.path.join(project_root, "bestweights", session_id)
+        os.makedirs(session_dir, exist_ok=True)
 
         # Step 2: Partition sensor files for this client
         all_files = sorted(glob.glob(os.path.join(project_root, data_dir, "*.parquet")))
@@ -311,6 +315,10 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         # Track best performance for checkpointing
         best_test_loss = float('inf')
         best_model_path = None
+        current_round = 0  # track which FedAvg round we are on
+        ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
+        periodic_dir  = os.path.join(session_dir, "periodic")
+        os.makedirs(periodic_dir, exist_ok=True)
         os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
         
         # Step 4: Training loop
@@ -346,6 +354,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             print(f"[CLIENT {client_id}] Epoch {epoch+1} done. Synchronizing...")
             try:
                 client_model = _fed_avg_sync(stub, client_id, client_model)
+                current_round += 1  # increment round counter after successful sync
             except Exception as e:
                 print(f"[CLIENT {client_id}] Sync failed: {e}")
                 
@@ -376,18 +385,51 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     except Exception as e:
                         pass
                         
-            # Calculate and check if this is the best epoch yet
+            # ── Checkpoint logic ─────────────────────────────────────────────
             if epoch_test_losses:
                 avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
                 print(f"[CLIENT {client_id}] Epoch {epoch+1} Avg Test Loss: {avg_test_loss:.4f}")
-                
+
+                # Shared checkpoint metadata
+                num_layers_ckpt = sum(
+                    1 for k in client_model.state_dict()
+                    if k.startswith("lstm.weight_ih_l")
+                )
+                base_ckpt = {
+                    "round":                current_round,
+                    "epoch":               epoch + 1,
+                    "model_state_dict":    client_model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss":                avg_test_loss,
+                    "config": {
+                        "hidden_size": cfg.get("model", {}).get("hidden_size", 64),
+                        "num_layers":  num_layers_ckpt,
+                        "input_size":  cfg.get("model", {}).get("input_size", 5),
+                    },
+                    "session_id": session_id,
+                    "client_id":  client_id,
+                }
+
+                # ── 建議 1: Best checkpoint ──────────────────────────────────
                 if avg_test_loss < best_test_loss:
                     best_test_loss = avg_test_loss
-                    os.makedirs(os.path.join(project_root, "bestweights"), exist_ok=True)
-                    stamp = datetime.now().strftime("%y%m%d%H%M")
-                    best_model_path = os.path.join(project_root, "bestweights", f"best_client_{client_id}_model_{stamp}.pth")
-                    torch.save(client_model.state_dict(), best_model_path)
-                    print(f"✨ [CLIENT {client_id}] New Best Model! Test Loss: {best_test_loss:.4f} -> Saved to {best_model_path}")
+                    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                    best_model_path = os.path.join(
+                        session_dir,
+                        f"best_client_{client_id}_round_{current_round}_model_{stamp}.pth"
+                    )
+                    torch.save(base_ckpt, best_model_path)
+                    print(f"\u2728 [CLIENT {client_id}] New Best! Round {current_round}, "
+                          f"Loss={best_test_loss:.4f} \u2192 {session_id}/{Path(best_model_path).name}")
+
+                # ── 建議 4: Periodic checkpoint (every N rounds) ─────────────
+                if current_round > 0 and current_round % ckpt_interval == 0:
+                    periodic_path = os.path.join(
+                        periodic_dir,
+                        f"client_{client_id}_round_{current_round:04d}.pth"
+                    )
+                    torch.save(base_ckpt, periodic_path)
+                    print(f"[CLIENT {client_id}] 💾 Periodic ckpt saved: round {current_round:04d}")
             
     # Calculate some summary stats from the experimental logs
     num_logs = len(experimental_logs)
@@ -400,6 +442,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     _save_results(
         client_id, 
         experimental_logs, 
+        session_id,
         best_model_path, 
         best_test_loss=best_test_loss if best_test_loss != float('inf') else None,
         avg_latency=avg_latency,

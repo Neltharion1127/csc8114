@@ -9,6 +9,7 @@ import sys
 import os
 import pandas as pd
 import glob
+from pathlib import Path
 from datetime import datetime
 
 # Use shared common module (provides `cfg` and `project_root`)
@@ -43,30 +44,42 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.current_round = 0
         self.num_clients = cfg.get("federated", {}).get("num_clients", 3)
         self.sync_lock = threading.Lock() # 確保併發安全
-        
+
         # Client registration state
         self._next_client_id = 1
         self._reg_lock = threading.Lock()
-        
+
+        # ── Session directory: one folder per training run ──────────────
+        # Generated ONCE at server startup; broadcast to all clients via Register()
+        self.session_id  = datetime.now().strftime("%Y%m%d%H%M%S")
+        self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
+        self.periodic_dir = os.path.join(self.session_dir, "periodic")
+        os.makedirs(self.session_dir,  exist_ok=True)
+        os.makedirs(self.periodic_dir, exist_ok=True)
+        self.ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
+        print(f"[SERVER] Session ID: {self.session_id}  →  {self.session_dir}")
+        print(f"[SERVER] Periodic checkpoint every {self.ckpt_interval} rounds  →  {self.periodic_dir}")
+
         # Diagnostics logging
         self.server_logs = []
-        self.log_dir = os.path.join(project_root, "results")
+        self.log_dir = os.path.join(project_root, "results", self.session_id)
         os.makedirs(self.log_dir, exist_ok=True)
-        self.log_file = os.path.join(self.log_dir, f"server_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-        print("[SERVER] ServerHead model initialized and ready for training.")
+        self.log_file = os.path.join(self.log_dir, f"server_log_{self.session_id}.csv")
+        print(f"[SERVER] Server log path: {self.log_file}")
     
     def Register(self, request, context):
         """
-        Assigns a unique client ID to a connecting client.
-        Thread-safe via a dedicated lock.
+        Assigns a unique client ID to a connecting client and returns the
+        shared session_id so every client saves to the same directory.
         """
         with self._reg_lock:
             assigned_id = self._next_client_id
             self._next_client_id += 1
-        print(f"[SERVER] Client registered with ID: {assigned_id} (total expected: {self.num_clients})")
+        print(f"[SERVER] Client registered — ID: {assigned_id} | session: {self.session_id}")
         return fsl_pb2.RegisterResponse(
             client_id=assigned_id,
-            total_clients=self.num_clients
+            total_clients=self.num_clients,
+            session_id=self.session_id,
         )
 
     def Forward(self, request, context):
@@ -115,17 +128,25 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             pred_val   = prediction.item()
             loss_val   = loss.item()
             
+            # ── 建議 2: Enhanced logging ────────────────────────────────────
+            current_lr  = self.optimizer.param_groups[0]["lr"]
+            rain_correct = int((target_val > 0.1) == (pred_val > 0.1))  # 1=correct, 0=wrong
             self.server_logs.append({
-                    "timestamp": datetime.now().isoformat(),
-                    "client_id": request.client_id,
-                    "compression_mode": compression_mode,
-                    "target": target_val,
-                    "prediction": pred_val,
-                    "loss": loss_val,
-                    "decompression_time_ms": decomp_time,
-                    "computation_time_ms": comp_time,
-                    "gradient_magnitude": grad_mag
-                })
+                "timestamp":             datetime.now().isoformat(),
+                "round":                 self.current_round,            # which FedAvg round
+                "client_id":            request.client_id,
+                "is_training":          int(is_training),               # 1=train, 0=test
+                "rain_flag":            int(target_val > 0.1),          # 1=rain, 0=dry
+                "rain_correct":         rain_correct,                   # rain/dry classification accuracy
+                "compression_mode":     compression_mode,
+                "target":               target_val,
+                "prediction":           pred_val,
+                "loss":                 loss_val,
+                "learning_rate":        current_lr,
+                "decompression_time_ms": decomp_time,
+                "computation_time_ms":  comp_time,
+                "gradient_magnitude":   grad_mag,
+            })
 
             # --- 輸出監控 (鎖外執行，不影響運算效能) ---
             if target_val > 0:
@@ -186,22 +207,44 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                     self.client_weights_buffer = []
                     self.current_round += 1
                     
-                    # Save the server model for this round so it can be paired with the best client models
-                    os.makedirs(os.path.join("bestweights"), exist_ok=True)
-                    stamp = datetime.now().strftime("%y%m%d%H%M%S")
-                    server_model_path = os.path.join("bestweights", f"server_head_round_{self.current_round}_{stamp}.pth")
-                    torch.save(self.server_model.state_dict(), server_model_path)
-                    
-                    # Delete older server checkpoints to save disk space (keep only the latest 1)
-                    old_checkpoints = sorted(glob.glob(os.path.join("bestweights", "server_head_round_*.pth")))
+                    # ── 建議 1: Save full checkpoint dict ────────────────────────────
+                    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                    server_ckpt = {
+                        "round":             self.current_round,
+                        "model_state_dict":  self.server_model.state_dict(),
+                        "optimizer_state_dict": self.optimizer.state_dict(),
+                        "config": {
+                            "hidden_size": self.hidden_size,
+                        },
+                        "session_id": self.session_id,
+                    }
+                    server_model_path = os.path.join(
+                        self.session_dir,
+                        f"server_head_round_{self.current_round}_{stamp}.pth"
+                    )
+                    torch.save(server_ckpt, server_model_path)
+
+                    # Keep only the latest best server checkpoint (save disk)
+                    old_checkpoints = sorted(glob.glob(
+                        os.path.join(self.session_dir, "server_head_round_*.pth")
+                    ))
                     for old_ckpt in old_checkpoints[:-1]:
                         try:
                             os.remove(old_ckpt)
-                        except Exception as e:
+                        except Exception:
                             pass
-                    
+
+                    # ── 建議 4: Periodic checkpoint (every N rounds) ──────────────
+                    if self.current_round % self.ckpt_interval == 0:
+                        periodic_path = os.path.join(
+                            self.periodic_dir,
+                            f"server_round_{self.current_round:04d}.pth"
+                        )
+                        torch.save(server_ckpt, periodic_path)
+                        print(f"[SERVER] 💾 Periodic ckpt saved: round {self.current_round:04d}")
+
                     print(f"[FED AVG] Successfully updated global model to Round {self.current_round}")
-                    print(f"[SERVER] Saved: {server_model_path} (Old rounds removed)")
+                    print(f"[SERVER] Best ckpt: {self.session_id}/{Path(server_model_path).name}")
             
             # 4. Wait for the global model to be updated if we were the early client
             # (In a real production system, you'd use a more robust waiting/event mechanism)
