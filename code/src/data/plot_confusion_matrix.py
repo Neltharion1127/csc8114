@@ -26,6 +26,8 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
+from src.shared.targets import rain_threshold_mm
+
 
 def _find_session(session_id: str | None) -> Path:
     results_dir = project_root / "results"
@@ -121,8 +123,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--session", type=str, default=None, help="Session folder under results/")
     parser.add_argument("--phase", type=str, default="both", choices=["TRAIN", "TEST", "both"])
-    parser.add_argument("--threshold-mm", type=float, default=0.1, help="Rain classification threshold in mm")
+    parser.add_argument("--threshold-mm", type=float, default=None, help="Rain classification threshold in mm")
     args = parser.parse_args()
+    threshold_mm = rain_threshold_mm() if args.threshold_mm is None else float(args.threshold_mm)
 
     session_dir = _find_session(args.session)
     logs = _latest_client_logs(session_dir)
@@ -142,7 +145,7 @@ def main() -> None:
             if phase_df.empty:
                 tp = fn = fp = tn = 0
             else:
-                tp, fn, fp, tn = _confusion_counts(phase_df, threshold_mm=args.threshold_mm)
+                tp, fn, fp, tn = _confusion_counts(phase_df, threshold_mm=threshold_mm)
             total_tp += tp
             total_fn += fn
             total_fp += fp
@@ -160,7 +163,7 @@ def main() -> None:
         rows.append(agg_row)
 
     plt.suptitle(
-        f"Confusion Matrices — Session {session_dir.name} (threshold={args.threshold_mm:.2f}mm)",
+        f"Confusion Matrices — Session {session_dir.name} (threshold={threshold_mm:.2f}mm)",
         fontsize=13,
         fontweight="bold",
         y=1.02,

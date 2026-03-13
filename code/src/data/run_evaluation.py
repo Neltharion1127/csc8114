@@ -16,7 +16,7 @@ if str(project_root) not in sys.path:
 
 from src.shared.common import cfg
 from src.models.split_lstm import ClientLSTM, ServerHead
-from src.shared.targets import inverse_target_scalar
+from src.shared.targets import inverse_target_scalar, is_rain, rain_probability_threshold
 
 def _parse_timestamp(path: str) -> str:
     """
@@ -174,6 +174,7 @@ def evaluate_client(
     Returns a dict with mse, mae, accuracy, and sample count.
     """
     criterion = nn.MSELoss()
+    prob_threshold = rain_probability_threshold()
 
     # ── Load checkpoint (supports both new dict format and old bare state_dict) ──
     raw = torch.load(client_path, map_location="cpu", weights_only=True)
@@ -243,7 +244,7 @@ def evaluate_client(
                 smashed = client_model(x)
                 rain_logit, rain_amount = server_model(smashed)
                 rain_prob = torch.sigmoid(rain_logit).item()
-                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= 0.5 else 0.0
+                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
                 pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
 
                 total_loss += criterion(pred, y).item()
@@ -259,7 +260,7 @@ def evaluate_client(
     preds_arr   = np.array(all_preds)
     mse      = total_loss / total_batches
     mae      = float(np.mean(np.abs(targets_arr - preds_arr)))
-    accuracy = float(np.mean((targets_arr > 0.1) == (preds_arr > 0.1)) * 100)
+    accuracy = float(np.mean([is_rain(t) == is_rain(p) for t, p in zip(targets_arr, preds_arr)]) * 100)
 
     return {
         "client_id":   client_id,

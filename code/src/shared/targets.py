@@ -34,3 +34,20 @@ def transform_target_tensor(tensor: torch.Tensor) -> torch.Tensor:
     if mode == "log1p":
         return torch.log1p(torch.clamp(tensor, min=0.0))
     return tensor
+
+
+def rain_threshold_mm() -> float:
+    """Rain/no-rain decision threshold in raw rainfall units (mm)."""
+    return float(cfg.get("training", {}).get("rain_threshold_mm", 0.1))
+
+
+def is_rain(value: float, *, threshold: float | None = None) -> bool:
+    """Classify rainfall value (mm) as rain/dry using configured threshold."""
+    if threshold is None:
+        threshold = rain_threshold_mm()
+    return float(value) > float(threshold)
+
+
+def rain_probability_threshold() -> float:
+    """Probability threshold for deciding whether to emit non-zero rainfall prediction."""
+    return float(cfg.get("training", {}).get("rain_probability_threshold", 0.5))

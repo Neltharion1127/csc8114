@@ -5,6 +5,7 @@ import time
 import pandas as pd
 
 from src.shared.common import cfg, project_root
+from src.shared.targets import is_rain
 
 
 def summarize_logs(experimental_logs: list[dict]) -> tuple[float, float]:
@@ -32,7 +33,10 @@ def summarize_phase(logs: list[dict], phase: str) -> dict[str, float]:
     return {
         "steps": steps,
         "avg_loss": sum(float(log["Loss"]) for log in phase_logs) / steps,
-        "rain_acc": sum(int((float(log["Target"]) > 0.1) == (float(log["Prediction"]) > 0.1)) for log in phase_logs) / steps,
+        "rain_acc": sum(
+            int(is_rain(float(log["Target"])) == is_rain(float(log["Prediction"])))
+            for log in phase_logs
+        ) / steps,
         "avg_cls_loss": sum(float(log.get("ClassificationLoss", 0.0)) for log in phase_logs) / steps,
         "avg_reg_loss": sum(float(log.get("RegressionLoss", 0.0)) for log in phase_logs) / steps,
     }

@@ -306,3 +306,101 @@ uv run python src/data/run_evaluation.py
 - `node` 檔案從「業務邏輯全塞一處」轉為「流程編排 + 模組職責分離」
 - id 分配、註冊與日誌可讀性明顯改善
 - 後續做 scheduler/rho/top-k 與模型調參時，改動面積更小、定位更快
+
+---
+
+## 9. 2026-03-13 進度更新（最新行為準則）
+
+### 9.1 執行入口：Native flow 優先
+目前建議優先使用：
+
+```bash
+make clean-native
+make run-native
+```
+
+- `clean-native`：清理殘留 server/client Python 進程
+- `run-native`：本機啟動 server + `num_clients` client（帶彩色前綴日誌）
+- 啟動前會檢查 `SERVER_PORT` 是否被占用，避免誤連舊進程
+
+### 9.2 評估口徑已改為固定測試集（不再每輪隨機抽單點）
+目前 client 評估階段會先建立**固定 test index cache**，每輪用同一批測試點做評估：
+
+- 新增配置：`training.eval_max_samples_per_sensor`
+  - `0`：每個 sensor 使用完整固定測試集（最穩定、最慢）
+  - `>0`：每個 sensor 固定均勻抽樣上限（例如 64，顯著加速）
+- console 會輸出：
+  - `positive_count`
+  - `recall`
+  - `cm=TP/FN/FP/TN`
+
+這讓 recall/F1 類指標更可比，避免「抽樣剛好沒有正例」導致 recall 無意義。
+
+### 9.3 Reproducibility：已加入全局 seed
+已接入：
+
+```yaml
+training:
+  seed: 42
+```
+
+- server 使用 `seed`
+- client 使用 `seed + client_id`
+- 同時設定 `random / numpy / torch`，提升重跑一致性
+
+### 9.4 Server 完成屏障更嚴格（防止提前收尾）
+`NotifyCompletion` 現在有三重校驗：
+
+- `session_id` 必須匹配當前 server session
+- `client_id` 必須是已註冊 client
+- 重複 completion 會忽略（去重）
+
+只有合法且達到目標 client 數後才會：
+- 輸出 `ALL CLIENTS FINISHED`
+- 觸發 server shutdown
+
+### 9.5 Server log 落盤策略已修正（避免高風險重寫）
+舊版會反覆重寫整個 CSV；新版改為：
+
+- 批量 append（依 `server.log_flush_interval`）
+- thread-safe（加鎖取批次）
+- 結束時 flush 兜底
+
+建議配置：
+
+```yaml
+server:
+  log_flush_interval: 1000
+```
+
+若要更即時看到落盤，可調低（例如 `500`）。
+
+### 9.6 目前實驗解讀重點
+- `accuracy` 在不平衡雨天資料下容易偏高，請搭配 `recall` 與 `TP/FN/FP/TN` 一起看
+- `eval_max_samples_per_sensor=64` 是目前「可接受速度 + 可比性」的實用折中
+- 參數微調（head width/dropout）收益已趨於平緩，建議把重心放到 scheduler on/off 的受控對比
+
+### 9.7 分類 loss 與閾值掃描（2026-03-13 晚間）
+目前 classification 分支已支持兩種 loss：
+
+```yaml
+training:
+  classification_loss_type: weighted_bce  # or focal
+  focal_gamma: 2.0
+  focal_alpha: -1.0  # <0 表示關閉 alpha balancing
+```
+
+三組核心實驗（`rain_probability_threshold=0.5`）：
+
+- `weighted_bce`：`acc=0.7960, recall=0.4990, precision=0.4338, f1=0.4642`
+- `focal(gamma=1.5, alpha=off)`：`acc=0.7452, recall=0.6012, precision=0.3663, f1=0.4553`
+- `focal(gamma=2.0, alpha=0.25)`：`acc=0.8745, recall=0.3094, precision=0.9439, f1=0.4661`
+
+在 `focal(gamma=2.0, alpha=0.25)` 基礎上將閾值降到 `0.45` 後（session `2026-03-13_03-19-17`）：
+
+- `acc=0.8673, recall=0.4446, precision=0.6962, f1=0.5427`
+
+結論：
+- `0.50 -> 0.45` 有效提升 recall 與 F1，precision 下降但仍在可接受範圍
+- 目前可把 `focal(gamma=2.0, alpha=0.25, threshold=0.45)` 當作「均衡型」baseline
+- 下一步建議先凍結模型參數，進入 scheduler/compression 對比實驗

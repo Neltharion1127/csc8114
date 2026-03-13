@@ -10,7 +10,12 @@ from proto import fsl_pb2
 from src.shared.compression import compress, decompress
 from src.shared.common import cfg
 from src.shared.runtime import maybe_autocast
-from src.shared.targets import inverse_target_scalar
+from src.shared.targets import (
+    inverse_target_scalar,
+    is_rain,
+    rain_probability_threshold,
+    rain_threshold_mm,
+)
 
 
 @dataclass
@@ -18,6 +23,38 @@ class ForwardPassResult:
     response: fsl_pb2.ForwardResponse
     log_entry: dict
     monitor_message: str
+
+
+def _classification_loss(
+    rain_logit: torch.Tensor,
+    rain_target: torch.Tensor,
+    *,
+    pos_weight: torch.Tensor,
+) -> torch.Tensor:
+    training_cfg = cfg.get("training", {})
+    loss_type = str(training_cfg.get("classification_loss_type", "weighted_bce")).strip().lower()
+    focal_gamma = float(training_cfg.get("focal_gamma", 2.0))
+    focal_alpha = float(training_cfg.get("focal_alpha", -1.0))
+
+    bce_loss = F.binary_cross_entropy_with_logits(
+        rain_logit,
+        rain_target,
+        pos_weight=pos_weight,
+        reduction="none",
+    )
+    if loss_type != "focal":
+        return bce_loss.mean()
+
+    prob = torch.sigmoid(rain_logit)
+    pt = torch.where(rain_target > 0.5, prob, 1.0 - prob)
+    focal_factor = torch.pow(1.0 - pt, focal_gamma)
+    loss = focal_factor * bce_loss
+
+    if 0.0 <= focal_alpha <= 1.0:
+        alpha_t = rain_target * focal_alpha + (1.0 - rain_target) * (1.0 - focal_alpha)
+        loss = alpha_t * loss
+
+    return loss.mean()
 
 
 def handle_forward_request(
@@ -42,7 +79,9 @@ def handle_forward_request(
     target = torch.tensor([[request.true_target]], dtype=torch.float32, device=device)
     is_training = getattr(request, "is_training", True)
     raw_target_val = getattr(request, "raw_target", request.true_target)
-    rain_target = torch.tensor([[1.0 if raw_target_val > 0.1 else 0.0]], dtype=torch.float32, device=device)
+    rain_threshold = rain_threshold_mm()
+    prob_threshold = rain_probability_threshold()
+    rain_target = torch.tensor([[1.0 if is_rain(raw_target_val, threshold=rain_threshold) else 0.0]], dtype=torch.float32, device=device)
     cls_weight = float(request.classification_loss_weight) if hasattr(request, "classification_loss_weight") and request.classification_loss_weight > 0 else 1.0
     reg_weight = float(request.regression_loss_weight) if hasattr(request, "regression_loss_weight") and request.regression_loss_weight > 0 else 1.0
     pos_weight_value = float(cfg.get("training", {}).get("classification_positive_weight", 1.0))
@@ -52,7 +91,7 @@ def handle_forward_request(
         start_comp_time = time.time()
         with maybe_autocast(device):
             rain_logit, rain_amount = server_model(smashed_activation)
-            cls_loss = F.binary_cross_entropy_with_logits(
+            cls_loss = _classification_loss(
                 rain_logit,
                 rain_target,
                 pos_weight=pos_weight,
@@ -81,12 +120,15 @@ def handle_forward_request(
 
     rain_prob = torch.sigmoid(rain_logit).item()
     pred_val = rain_amount.item()
-    raw_pred_val = inverse_target_scalar(pred_val) if rain_prob >= 0.5 else 0.0
+    raw_pred_val = inverse_target_scalar(pred_val) if rain_prob >= prob_threshold else 0.0
     loss_val = loss.item()
     cls_loss_val = cls_loss.item()
     reg_loss_val = reg_loss.item() if isinstance(reg_loss, torch.Tensor) else float(reg_loss)
     current_lr = optimizer.param_groups[0]["lr"]
-    rain_correct = int((raw_target_val > 0.1) == (raw_pred_val > 0.1))
+    rain_correct = int(
+        is_rain(raw_target_val, threshold=rain_threshold)
+        == is_rain(raw_pred_val, threshold=rain_threshold)
+    )
     reported_latency = getattr(request, "latency_ms", 0.0)
     payload_bytes = getattr(request, "payload_bytes", 0)
 
@@ -95,7 +137,7 @@ def handle_forward_request(
         "round": current_round,
         "client_id": request.client_id,
         "is_training": int(is_training),
-        "rain_flag": int(raw_target_val > 0.1),
+        "rain_flag": int(is_rain(raw_target_val, threshold=rain_threshold)),
         "rain_correct": rain_correct,
         "compression_mode": compression_mode,
         "next_compression": assigned_compression,

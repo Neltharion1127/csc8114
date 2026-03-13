@@ -22,6 +22,7 @@ from src.models.split_lstm import ClientLSTM
 
 from src.shared.common import cfg, project_root
 from src.shared.runtime import grpc_channel_options, resolve_device, resolve_server_address, set_global_seed
+from src.shared.targets import is_rain
 
 FEATURE_COLS = cfg.get("data", {}).get(
     "feature_cols",
@@ -164,7 +165,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 test_index_cache[file_path] = test_indices
                 total_eval_samples += int(len(test_indices))
                 if len(test_indices) > 0:
-                    total_eval_positive += int((df["future_3h_rain"].iloc[test_indices] > 0.1).sum())
+                    total_eval_positive += int(df["future_3h_rain"].iloc[test_indices].apply(is_rain).sum())
             print(
                 f"[CLIENT {client_id}] Fixed test set prepared: "
                 f"samples={total_eval_samples} positives={total_eval_positive} "
@@ -297,8 +298,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                                 epoch_logs.append(epoch_record)
                                 if log_entry["Loss"] is not None:
                                     epoch_test_losses.append(float(log_entry["Loss"]))
-                                true_rain = float(log_entry["Target"]) > 0.1
-                                pred_rain = float(log_entry["Prediction"]) > 0.1
+                                true_rain = is_rain(float(log_entry["Target"]))
+                                pred_rain = is_rain(float(log_entry["Prediction"]))
                                 if true_rain and pred_rain:
                                     tp += 1
                                 elif true_rain and not pred_rain:

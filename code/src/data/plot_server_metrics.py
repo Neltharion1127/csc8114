@@ -30,6 +30,8 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
+from src.shared.targets import is_rain
+
 
 def _find_latest_log() -> Path:
     all_csvs = list((project_root / "results").rglob("server_log_*.csv"))
@@ -63,7 +65,7 @@ def plot_server_metrics(log_path: Path):
 
     if "rain_correct" not in df.columns:
         # Derive on-the-fly from target & prediction
-        df["rain_correct"] = ((df["target"] > 0.1) == (df["prediction"] > 0.1)).astype(int)
+        df["rain_correct"] = [int(is_rain(t) == is_rain(p)) for t, p in zip(df["target"], df["prediction"])]
 
     session_id = log_path.stem.replace("server_log_", "")
 
@@ -125,7 +127,10 @@ def plot_server_metrics(log_path: Path):
                  label=f"Client {int(cid)}")
 
     # Rain-only accuracy
-    rain_df = df_train[df_train["rain_flag"] == 1] if "rain_flag" in df.columns else pd.DataFrame()
+    if "rain_flag" in df.columns:
+        rain_df = df_train[df_train["rain_flag"] == 1]
+    else:
+        rain_df = df_train[df_train["target"].apply(is_rain)]
     if not rain_df.empty:
         agg_rain = per_round(rain_df, ["rain_correct"])
         ax2.plot(agg_rain["round"], agg_rain["rain_correct"] * 100, "k^--",

@@ -35,7 +35,7 @@ if str(project_root) not in sys.path:
 
 from src.shared.common import cfg
 from src.models.split_lstm import ClientLSTM, ServerHead
-from src.shared.targets import inverse_target_scalar
+from src.shared.targets import inverse_target_scalar, rain_probability_threshold
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +115,7 @@ def _eval_pair(client_state: dict, server_state: dict,
     server_model.eval()
 
     criterion    = nn.MSELoss()
+    prob_threshold = rain_probability_threshold()
     data_dir     = project_root / cfg.get("data", {}).get("processed_dir", "dataset/processed")
     features_cfg = cfg.get("data", {}).get(
         "feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"]
@@ -150,7 +151,7 @@ def _eval_pair(client_state: dict, server_state: dict,
                 smashed = client_model(x)
                 rain_logit, rain_amount = server_model(smashed)
                 rain_prob = torch.sigmoid(rain_logit).item()
-                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= 0.5 else 0.0
+                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
                 pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
                 total_loss += criterion(pred, y).item()
                 total_batches += 1

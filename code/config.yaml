@@ -42,6 +42,11 @@ training:
   batch_size: 32
   classification_loss_weight: 1.0
   classification_positive_weight: 1.8
+  classification_loss_type: focal # weighted_bce | focal
+  focal_gamma: 2.0
+  focal_alpha: 0.25 # [0,1] to enable alpha balancing; negative means disabled
+  rain_threshold_mm: 0.1
+  rain_probability_threshold: 0.45
   local_steps: 10
   lr: 0.0005
   num_rounds: 100
@@ -56,7 +61,7 @@ training:
   early_stopping_patience: 30
   eval_max_samples_per_sensor: 64
 server:
-  log_flush_interval: 500
+  log_flush_interval: 1000
   max_workers: 10
 
 data_download:
