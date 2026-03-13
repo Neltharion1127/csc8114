@@ -269,3 +269,40 @@ uv run python src/data/run_evaluation.py
 
 - 請先確認是不是在看 `server_head_round_*`
 - 再確認 `periodic/server_round_*.pth` 是否與 server log 的 `round` 對得上
+
+---
+
+## 8. 2026-03-12（jie）提交更新摘要
+
+以下為 `jie` 在 2026-03-12 的三個關鍵提交（依時間排序）：
+
+### 8.1 `257ff1f` — client/server 模組化重構 + scheduler/profiler 基礎接入
+- 時間：`2026-03-12 21:09:45 +0000`
+- 影響：`16 files changed, +1029/-611`
+- 核心變更：
+  - 將原本過長的 `nodes/client_node.py`、`nodes/server_node.py` 拆為 `src/client/*` 與 `src/server/*` 多個模組
+  - 新增 client 模組：`checkpointing.py`、`data_pipeline.py`、`forward_step.py`、`reporting.py`、`scheduler_state.py`、`sync.py`
+  - 新增 server 模組：`bootstrap.py`、`fedavg.py`、`forward_service.py`、`reporting.py`、`scheduler.py`
+  - 明確分離 train/test 的 scheduler state，降低狀態污染風險
+
+### 8.2 `95887a2` — 修正 container 名稱與 client id 對不上的問題 + 降噪 log
+- 時間：`2026-03-12 21:24:24 +0000`
+- 影響：`5 files changed, +73/-12`
+- 核心變更：
+  - 調整註冊/分配流程，避免 Docker 容器名稱與 `requested_client_id` 不一致造成的混淆
+  - 透過 `config.yaml` 與 proto 欄位配合，讓 client/server 對 id 的認知一致
+  - 減少 console 單步輸出，保留 epoch 摘要與關鍵同步訊息
+
+### 8.3 `f95fd0b` — 工程面優化（執行流程、評估與輸出一致性）
+- 時間：`2026-03-12 22:05:26 +0000`
+- 影響：`10 files changed, +83/-43`
+- 核心變更：
+  - 調整 `Makefile` / `docker-compose` 以改善日常實驗流程
+  - 更新 `split_lstm.py` 與 node 腳本，讓訓練/評估鏈路更一致
+  - 改善繪圖與評估工具整合（`run_evaluation.py`、`plot_training_curve.py`、`plot_server_metrics.py`）
+  - 修正 `compression.py` 相關工程細節，降低執行期警告與混亂輸出
+
+### 8.4 這三個提交帶來的直接結果
+- `node` 檔案從「業務邏輯全塞一處」轉為「流程編排 + 模組職責分離」
+- id 分配、註冊與日誌可讀性明顯改善
+- 後續做 scheduler/rho/top-k 與模型調參時，改動面積更小、定位更快
