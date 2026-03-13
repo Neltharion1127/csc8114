@@ -341,6 +341,8 @@ def evaluate_client(
 
     # ── Load checkpoint (supports both new dict format and old bare state_dict) ──
     raw = torch.load(client_path, map_location="cpu", weights_only=True)
+    client_prob_threshold: float | None = None
+    checkpoint_cls_metrics: dict | None = None
     if isinstance(raw, dict) and "model_state_dict" in raw:
         # New format: full checkpoint dict
         state_dict   = raw["model_state_dict"]
@@ -348,6 +350,14 @@ def evaluate_client(
         saved_loss   = raw.get("loss",  float("nan"))  # best train loss recorded
         ckpt_cfg     = raw.get("config", {})
         hidden_size  = ckpt_cfg.get("hidden_size", hidden_size)   # override if saved
+        cls_metrics = raw.get("classification_metrics", {})
+        if isinstance(cls_metrics, dict) and cls_metrics.get("threshold") is not None:
+            try:
+                client_prob_threshold = float(cls_metrics.get("threshold"))
+            except (TypeError, ValueError):
+                client_prob_threshold = None
+        if isinstance(cls_metrics, dict):
+            checkpoint_cls_metrics = cls_metrics
         print(f"\n[Client {client_id}] \U0001f4c4 Checkpoint dict \u2014 best_round={saved_round}, train_loss={saved_loss:.4f}")
     else:
         # Old format: bare state_dict
@@ -355,6 +365,9 @@ def evaluate_client(
         saved_round  = "N/A"
         saved_loss   = float("nan")
         print(f"\n[Client {client_id}] \U0001f4c4 Legacy checkpoint (bare state_dict)")
+    effective_prob_threshold = (
+        client_prob_threshold if client_prob_threshold is not None else prob_threshold
+    )
 
     num_layers = sum(1 for k in state_dict if k.startswith("lstm.weight_ih_l"))
     client_model = ClientLSTM(
@@ -430,7 +443,7 @@ def evaluate_client(
                 rain_logit, rain_amount = server_model(smashed)
                 rain_prob = torch.sigmoid(rain_logit).item()
                 raw_pred_val = inverse_target_scalar(rain_amount.item(), mode=target_mode)
-                pred_val = raw_pred_val if rain_prob >= prob_threshold else 0.0
+                pred_val = raw_pred_val if rain_prob >= effective_prob_threshold else 0.0
                 pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
 
                 total_loss += criterion(pred, y).item()
@@ -450,12 +463,27 @@ def evaluate_client(
     probs_arr = np.array(all_probs)
     y_true = np.array([1 if is_rain(t, threshold=rain_threshold) else 0 for t in targets_arr], dtype=np.int32)
 
-    y_pred_cls = (probs_arr >= prob_threshold).astype(np.int32)
+    y_pred_cls = (probs_arr >= effective_prob_threshold).astype(np.int32)
     cls_tp = int(((y_true == 1) & (y_pred_cls == 1)).sum())
     cls_fn = int(((y_true == 1) & (y_pred_cls == 0)).sum())
     cls_fp = int(((y_true == 0) & (y_pred_cls == 1)).sum())
     cls_tn = int(((y_true == 0) & (y_pred_cls == 0)).sum())
     cls_metrics = _metrics_from_cm(cls_tp, cls_fn, cls_fp, cls_tn)
+    cls_source = "offline_recomputed"
+    selected_cls = cls_metrics
+    if isinstance(checkpoint_cls_metrics, dict):
+        try:
+            ck_phase = str(checkpoint_cls_metrics.get("phase", "")).strip().upper()
+            ck_tp = int(checkpoint_cls_metrics.get("tp", 0))
+            ck_fn = int(checkpoint_cls_metrics.get("fn", 0))
+            ck_fp = int(checkpoint_cls_metrics.get("fp", 0))
+            ck_tn = int(checkpoint_cls_metrics.get("tn", 0))
+            ck_total = ck_tp + ck_fn + ck_fp + ck_tn
+            if ck_phase == "TEST" and ck_total == total_batches and ck_total > 0:
+                selected_cls = _metrics_from_cm(ck_tp, ck_fn, ck_fp, ck_tn)
+                cls_source = "checkpoint_metrics"
+        except (TypeError, ValueError):
+            pass
 
     y_pred_op = np.array([1 if is_rain(p, threshold=rain_threshold) else 0 for p in preds_arr], dtype=np.int32)
     op_tp = int(((y_true == 1) & (y_pred_op == 1)).sum())
@@ -471,14 +499,23 @@ def evaluate_client(
         "samples":     total_batches,
         "mse":         mse,
         "mae":         mae,
-        "accuracy":    cls_metrics["accuracy"],
-        "recall":      cls_metrics["recall"],
-        "precision":   cls_metrics["precision"],
-        "f1":          cls_metrics["f1"],
-        "tp":          cls_metrics["tp"],
-        "fn":          cls_metrics["fn"],
-        "fp":          cls_metrics["fp"],
-        "tn":          cls_metrics["tn"],
+        "accuracy":    selected_cls["accuracy"],
+        "recall":      selected_cls["recall"],
+        "precision":   selected_cls["precision"],
+        "f1":          selected_cls["f1"],
+        "tp":          selected_cls["tp"],
+        "fn":          selected_cls["fn"],
+        "fp":          selected_cls["fp"],
+        "tn":          selected_cls["tn"],
+        "cls_metric_source": cls_source,
+        "offline_accuracy": cls_metrics["accuracy"],
+        "offline_recall": cls_metrics["recall"],
+        "offline_precision": cls_metrics["precision"],
+        "offline_f1": cls_metrics["f1"],
+        "offline_tp": cls_metrics["tp"],
+        "offline_fn": cls_metrics["fn"],
+        "offline_fp": cls_metrics["fp"],
+        "offline_tn": cls_metrics["tn"],
         "op_accuracy": op_metrics["accuracy"],
         "op_recall":   op_metrics["recall"],
         "op_precision": op_metrics["precision"],
@@ -487,7 +524,8 @@ def evaluate_client(
         "op_fn":       op_metrics["fn"],
         "op_fp":       op_metrics["fp"],
         "op_tn":       op_metrics["tn"],
-        "prob_threshold": prob_threshold,
+        "prob_threshold": effective_prob_threshold,
+        "prob_threshold_source": "client_checkpoint" if client_prob_threshold is not None else "config",
         "rain_threshold_mm": rain_threshold,
         "target_transform": target_mode,
     }
@@ -528,9 +566,10 @@ def evaluate():
     selected_session = args.session or _find_latest_session_id()
     pairing_mode = "latest_best"
 
+    num_clients_hint = max(1, int(get_nested(cfg, ("federated", "num_clients"), 1)))
     paired = find_periodic_pair(
         session_id=selected_session,
-        num_clients=None,
+        num_clients=num_clients_hint,
         target_round=args.round,
     )
     if paired is not None:
@@ -578,6 +617,13 @@ def evaluate():
     prob_threshold = eval_settings["prob_threshold"]
     rain_threshold = eval_settings["rain_threshold"]
     target_mode = eval_settings["target_mode"]
+    if pairing_mode.startswith("periodic_round_"):
+        expected_clients = list(range(1, num_clients + 1))
+        if sorted(client_map.keys()) != expected_clients:
+            raise FileNotFoundError(
+                f"Strict periodic pairing requires all clients {expected_clients}, "
+                f"but found {sorted(client_map.keys())} in {pairing_mode}."
+            )
     print(
         f"[INFO] Eval config source: {eval_cfg_source} | split_date={split_date} | "
         f"seq_len={seq_len} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "

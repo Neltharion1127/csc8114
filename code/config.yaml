@@ -7,6 +7,7 @@ console:
 data:
   processed_dir: dataset/processed
   test_days: 14
+  val_days: 14
   train_ratio: 0.7
   val_ratio: 0.15
   # Feature columns consumed by model/data pipeline (preferred location)
@@ -47,18 +48,18 @@ scheduler:
 training:
   seed: 42
   batch_size: 32
-  classification_loss_weight: 1.0
-  classification_positive_weight: 1.3
+  classification_loss_weight: 2.0
+  classification_positive_weight: 1.1
   classification_loss_type: focal # weighted_bce | focal
   focal_gamma: 2.0
   focal_alpha: 0.25 # [0,1] to enable alpha balancing; negative means disabled
   rain_threshold_mm: 0.1
-  rain_probability_threshold: 0.43
+  rain_probability_threshold: 0.34
   local_steps: 10
   lr: 0.0005
   num_rounds: 30
-  rain_sample_ratio: 0.30
-  regression_loss_weight: 2.0
+  rain_sample_ratio: 0.15
+  regression_loss_weight: 1.0
   target_transform: log1p
   start_delay: 8
   device: auto  # auto | cuda | mps | cpu

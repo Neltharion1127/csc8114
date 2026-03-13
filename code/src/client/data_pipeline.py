@@ -32,6 +32,71 @@ def resolve_split_pos(df: pd.DataFrame, split_date: pd.Timestamp) -> int:
     return int(split_pos)
 
 
+def collect_eval_indices(
+    df: pd.DataFrame,
+    *,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+    min_history: int = 24,
+    horizon: int = 3,
+) -> np.ndarray:
+    """Collect deterministic indices in a [start_date, end_date) time window."""
+    def _to_naive_timestamp(value: pd.Timestamp | None) -> pd.Timestamp | None:
+        if value is None:
+            return None
+        ts = pd.Timestamp(value)
+        return ts.tz_convert(None) if ts.tzinfo is not None else ts
+
+    all_indices = np.arange(len(df))
+    mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
+
+    if isinstance(df.index, pd.DatetimeIndex):
+        timestamps = pd.to_datetime(df.index)
+        if timestamps.tz is not None:
+            timestamps = timestamps.tz_convert(None)
+        start_ts = _to_naive_timestamp(start_date)
+        end_ts = _to_naive_timestamp(end_date)
+        if start_ts is not None:
+            mask = mask & (timestamps >= start_ts)
+        if end_ts is not None:
+            mask = mask & (timestamps < end_ts)
+    else:
+        if start_date is not None:
+            start_pos = resolve_split_pos(df, _to_naive_timestamp(start_date))
+            mask = mask & (all_indices >= start_pos)
+        if end_date is not None:
+            end_pos = resolve_split_pos(df, _to_naive_timestamp(end_date))
+            mask = mask & (all_indices < end_pos)
+
+    if "future_3h_rain" in df.columns:
+        valid_target = df["future_3h_rain"].notna().to_numpy()
+        mask = mask & valid_target
+    return all_indices[mask]
+
+
+def collect_eval_indices_capped(
+    df: pd.DataFrame,
+    *,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+    eval_max_samples: int = 0,
+    min_history: int = 24,
+    horizon: int = 3,
+) -> np.ndarray:
+    """Collect deterministic eval indices in a time window, with optional fixed cap."""
+    eval_indices = collect_eval_indices(
+        df,
+        start_date=start_date,
+        end_date=end_date,
+        min_history=min_history,
+        horizon=horizon,
+    )
+    if eval_max_samples > 0 and len(eval_indices) > eval_max_samples:
+        picks = np.linspace(0, len(eval_indices) - 1, eval_max_samples, dtype=int)
+        eval_indices = eval_indices[picks]
+    return eval_indices
+
+
 def collect_test_indices(
     df: pd.DataFrame,
     split_date: pd.Timestamp,
@@ -40,14 +105,13 @@ def collect_test_indices(
     horizon: int = 3,
 ) -> np.ndarray:
     """Collect deterministic test indices with valid context and non-NaN targets."""
-    split_pos = resolve_split_pos(df, split_date)
-    all_indices = np.arange(len(df))
-    base_mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
-    test_mask = base_mask & (all_indices >= split_pos)
-    if "future_3h_rain" in df.columns:
-        valid_target = df["future_3h_rain"].notna().to_numpy()
-        test_mask = test_mask & valid_target
-    return all_indices[test_mask]
+    return collect_eval_indices(
+        df,
+        start_date=split_date,
+        end_date=None,
+        min_history=min_history,
+        horizon=horizon,
+    )
 
 
 def collect_test_indices_capped(
@@ -59,15 +123,14 @@ def collect_test_indices_capped(
     horizon: int = 3,
 ) -> np.ndarray:
     """Collect deterministic test indices, with optional fixed-size cap per sensor."""
-    test_indices = collect_test_indices(
+    test_indices = collect_eval_indices_capped(
         df,
-        split_date,
+        start_date=split_date,
+        end_date=None,
+        eval_max_samples=eval_max_samples,
         min_history=min_history,
         horizon=horizon,
     )
-    if eval_max_samples > 0 and len(test_indices) > eval_max_samples:
-        picks = np.linspace(0, len(test_indices) - 1, eval_max_samples, dtype=int)
-        test_indices = test_indices[picks]
     return test_indices
 
 

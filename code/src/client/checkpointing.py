@@ -12,6 +12,7 @@ from src.shared.common import cfg
 @dataclass
 class CheckpointState:
     best_test_loss: float = float("inf")
+    best_test_f1: float = float("-inf")
     no_improvement_count: int = 0
     best_model_path: str | None = None
 
@@ -23,7 +24,8 @@ def evaluate_epoch(
     optimizer,
     current_round: int,
     epoch: int,
-    avg_test_loss: float,
+    avg_val_loss: float,
+    val_metrics: dict[str, float | int],
     session_id: str,
     session_dir: str,
     periodic_dir: str,
@@ -31,6 +33,10 @@ def evaluate_epoch(
     ckpt_interval: int,
     state: CheckpointState,
 ) -> bool:
+    current_f1 = float(val_metrics.get("f1", 0.0))
+    current_precision = float(val_metrics.get("precision", 0.0))
+    current_recall = float(val_metrics.get("recall", 0.0))
+    current_threshold = float(val_metrics.get("selected_threshold", cfg.get("training", {}).get("rain_probability_threshold", 0.5)))
     num_layers_ckpt = sum(
         1 for key in client_model.state_dict()
         if key.startswith("lstm.weight_ih_l")
@@ -40,7 +46,25 @@ def evaluate_epoch(
         "epoch": epoch + 1,
         "model_state_dict": client_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "loss": avg_test_loss,
+        "loss": avg_val_loss,
+        "classification_metrics": {
+            "phase": str(val_metrics.get("phase", "VAL")),
+            "f1": current_f1,
+            "precision": current_precision,
+            "recall": current_recall,
+            "accuracy": float(val_metrics.get("accuracy", 0.0)),
+            "threshold": current_threshold,
+            "tp": int(val_metrics.get("tp", 0)),
+            "fn": int(val_metrics.get("fn", 0)),
+            "fp": int(val_metrics.get("fp", 0)),
+            "tn": int(val_metrics.get("tn", 0)),
+            "samples": int(
+                int(val_metrics.get("tp", 0))
+                + int(val_metrics.get("fn", 0))
+                + int(val_metrics.get("fp", 0))
+                + int(val_metrics.get("tn", 0))
+            ),
+        },
         "config": {
             "hidden_size": cfg.get("model", {}).get("hidden_size", 64),
             "num_layers": num_layers_ckpt,
@@ -51,8 +75,11 @@ def evaluate_epoch(
         "client_id": client_id,
     }
 
-    if avg_test_loss < state.best_test_loss:
-        state.best_test_loss = avg_test_loss
+    score_improved = current_f1 > state.best_test_f1 + 1e-9
+    tie_break_improved = abs(current_f1 - state.best_test_f1) <= 1e-9 and avg_val_loss < state.best_test_loss - 1e-9
+    if score_improved or tie_break_improved:
+        state.best_test_f1 = current_f1
+        state.best_test_loss = avg_val_loss
         state.no_improvement_count = 0
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
         state.best_model_path = os.path.join(
@@ -62,7 +89,8 @@ def evaluate_epoch(
         torch.save(base_ckpt, state.best_model_path)
         print(
             f"[CLIENT {client_id}] New Best! Round {current_round}, "
-            f"Loss={state.best_test_loss:.4f} -> {session_id}/{Path(state.best_model_path).name}"
+            f"F1={state.best_test_f1:.4f}, Loss={state.best_test_loss:.4f}, "
+            f"Threshold={current_threshold:.3f} -> {session_id}/{Path(state.best_model_path).name}"
         )
     else:
         state.no_improvement_count += 1

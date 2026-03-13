@@ -4,10 +4,64 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.client.data_pipeline import collect_test_indices_capped, load_sensor_data, sample_index
+from src.client.data_pipeline import collect_eval_indices_capped, load_sensor_data, sample_index
 from src.client.forward_step import run_forward_step
 from src.client.scheduler_state import SchedulerState
 from src.shared.targets import is_rain, rain_probability_threshold
+
+
+def _binary_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float | int]:
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    f1 = float(2.0 * recall * precision / (recall + precision)) if (recall + precision) > 0 else 0.0
+    total = tp + fn + fp + tn
+    accuracy = float((tp + tn) / total) if total > 0 else 0.0
+    return {
+        "tp": tp,
+        "fn": fn,
+        "fp": fp,
+        "tn": tn,
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+        "accuracy": accuracy,
+    }
+
+
+def _select_best_threshold(
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    *,
+    default_threshold: float,
+) -> tuple[float, dict[str, float | int], dict[str, float | int]]:
+    default_pred = (probs >= default_threshold).astype(np.int32)
+    default_metrics = _binary_metrics(y_true, default_pred)
+
+    best_threshold = float(default_threshold)
+    best_metrics = default_metrics
+    best_score = (
+        float(default_metrics["f1"]),
+        float(default_metrics["precision"]),
+        -abs(float(default_threshold) - float(default_threshold)),
+    )
+    for threshold in np.linspace(0.0, 1.0, 201):
+        y_pred = (probs >= threshold).astype(np.int32)
+        metrics = _binary_metrics(y_true, y_pred)
+        score = (
+            float(metrics["f1"]),
+            float(metrics["precision"]),
+            -abs(float(threshold) - float(default_threshold)),
+        )
+        if score > best_score:
+            best_score = score
+            best_threshold = float(threshold)
+            best_metrics = metrics
+
+    return best_threshold, best_metrics, default_metrics
 
 
 def preload_sensor_data(client_id: int, client_files: list[str]) -> dict[str, pd.DataFrame]:
@@ -40,36 +94,39 @@ def compute_feature_stats(
     return feat_mean, feat_std
 
 
-def build_test_index_cache(
+def build_eval_index_cache(
     *,
     client_id: int,
     sensor_data_cache: dict[str, pd.DataFrame],
-    split_date: pd.Timestamp,
+    start_date: pd.Timestamp | None,
+    end_date: pd.Timestamp | None,
     eval_max_samples: int,
     seq_len: int,
+    label: str,
     horizon: int = 3,
 ) -> tuple[dict[str, np.ndarray], int, int]:
-    test_index_cache: dict[str, np.ndarray] = {}
+    eval_index_cache: dict[str, np.ndarray] = {}
     total_eval_samples = 0
     total_eval_positive = 0
     for file_path, df in sensor_data_cache.items():
-        test_indices = collect_test_indices_capped(
+        eval_indices = collect_eval_indices_capped(
             df,
-            split_date,
+            start_date=start_date,
+            end_date=end_date,
             eval_max_samples=eval_max_samples,
             min_history=seq_len,
             horizon=horizon,
         )
-        test_index_cache[file_path] = test_indices
-        total_eval_samples += int(len(test_indices))
-        if len(test_indices) > 0:
-            total_eval_positive += int(df["future_3h_rain"].iloc[test_indices].apply(is_rain).sum())
+        eval_index_cache[file_path] = eval_indices
+        total_eval_samples += int(len(eval_indices))
+        if len(eval_indices) > 0:
+            total_eval_positive += int(df["future_3h_rain"].iloc[eval_indices].apply(is_rain).sum())
     print(
-        f"[CLIENT {client_id}] Fixed test set prepared: "
+        f"[CLIENT {client_id}] Fixed {label.lower()} set prepared: "
         f"samples={total_eval_samples} positives={total_eval_positive} "
         f"(per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'})"
     )
-    return test_index_cache, total_eval_samples, total_eval_positive
+    return eval_index_cache, total_eval_samples, total_eval_positive
 
 
 def run_train_epoch(
@@ -152,8 +209,8 @@ def run_eval_epoch(
     optimizer,
     client_files: list[str],
     sensor_data_cache: dict[str, pd.DataFrame],
-    test_index_cache: dict[str, np.ndarray],
-    test_state: SchedulerState,
+    eval_index_cache: dict[str, np.ndarray],
+    eval_state: SchedulerState,
     feature_cols: list[str],
     feat_stats: tuple[np.ndarray, np.ndarray],
     device: torch.device,
@@ -161,10 +218,12 @@ def run_eval_epoch(
     epoch: int,
     experimental_logs: list[dict],
     epoch_logs: list[dict],
-) -> tuple[list[float], int, int, int, int]:
-    epoch_test_losses: list[float] = []
-    tp = fn = fp = tn = 0
-    prob_threshold = rain_probability_threshold()
+    phase_label: str = "VAL",
+) -> tuple[list[float], dict[str, float | int]]:
+    epoch_eval_losses: list[float] = []
+    eval_targets: list[float] = []
+    eval_probs: list[float] = []
+    default_threshold = float(rain_probability_threshold())
     with torch.no_grad():
         for file_path in client_files:
             sensor_id = Path(file_path).stem
@@ -172,10 +231,10 @@ def run_eval_epoch(
                 df = sensor_data_cache.get(file_path)
                 if df is None:
                     continue
-                test_indices = test_index_cache.get(file_path)
-                if test_indices is None or len(test_indices) == 0:
+                eval_indices = eval_index_cache.get(file_path)
+                if eval_indices is None or len(eval_indices) == 0:
                     continue
-                for target_idx in test_indices:
+                for target_idx in eval_indices:
                     target_value = float(df["future_3h_rain"].iloc[target_idx])
                     log_entry = run_forward_step(
                         stub,
@@ -185,32 +244,61 @@ def run_eval_epoch(
                         df,
                         int(target_idx),
                         target_value,
-                        "FIXED_TEST",
+                        f"FIXED_{phase_label}",
                         sensor_id,
-                        test_state.compression_mode,
+                        eval_state.compression_mode,
                         feature_cols,
                         feat_stats,
                         device,
                         is_training=False,
-                        last_latency_ms=test_state.last_latency_ms,
+                        last_latency_ms=eval_state.last_latency_ms,
                         seq_len=seq_len,
                     )
-                    test_state.update(log_entry)
-                    epoch_record = {"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry}
+                    eval_state.update(log_entry)
+                    epoch_record = {"Epoch": epoch + 1, "Status": phase_label, "Sensor": sensor_id, **log_entry}
                     experimental_logs.append(epoch_record)
                     epoch_logs.append(epoch_record)
                     if log_entry["Loss"] is not None:
-                        epoch_test_losses.append(float(log_entry["Loss"]))
-                    true_rain = is_rain(float(log_entry["Target"]))
-                    pred_rain = float(log_entry.get("RainProbability", 0.0)) >= prob_threshold
-                    if true_rain and pred_rain:
-                        tp += 1
-                    elif true_rain and not pred_rain:
-                        fn += 1
-                    elif not true_rain and pred_rain:
-                        fp += 1
-                    else:
-                        tn += 1
+                        epoch_eval_losses.append(float(log_entry["Loss"]))
+                    eval_targets.append(float(log_entry["Target"]))
+                    eval_probs.append(float(log_entry.get("RainProbability", 0.0)))
             except Exception as e:
                 print(f"[CLIENT {client_id} WARN] Eval failed on {sensor_id}: {e}")
-    return epoch_test_losses, tp, fn, fp, tn
+
+    if not eval_targets:
+        empty_metrics = {
+            "tp": 0,
+            "fn": 0,
+            "fp": 0,
+            "tn": 0,
+            "recall": 0.0,
+            "precision": 0.0,
+            "f1": 0.0,
+            "accuracy": 0.0,
+            "selected_threshold": default_threshold,
+            "default_threshold": default_threshold,
+            "default_recall": 0.0,
+            "default_precision": 0.0,
+            "default_f1": 0.0,
+            "default_accuracy": 0.0,
+        }
+        return epoch_eval_losses, empty_metrics
+
+    y_true = np.array([1 if is_rain(target) else 0 for target in eval_targets], dtype=np.int32)
+    probs_arr = np.array(eval_probs, dtype=np.float32)
+    selected_threshold, selected_metrics, default_metrics = _select_best_threshold(
+        y_true,
+        probs_arr,
+        default_threshold=default_threshold,
+    )
+    eval_metrics: dict[str, float | int] = {
+        **selected_metrics,
+        "phase": phase_label,
+        "selected_threshold": float(selected_threshold),
+        "default_threshold": default_threshold,
+        "default_recall": float(default_metrics["recall"]),
+        "default_precision": float(default_metrics["precision"]),
+        "default_f1": float(default_metrics["f1"]),
+        "default_accuracy": float(default_metrics["accuracy"]),
+    }
+    return epoch_eval_losses, eval_metrics

@@ -16,7 +16,7 @@ from src.client.reporting import print_summary, save_progress, save_results, sum
 from src.client.scheduler_state import SchedulerState
 from src.client.sync import fed_avg_sync
 from src.client.training_loop import (
-    build_test_index_cache,
+    build_eval_index_cache,
     compute_feature_stats,
     preload_sensor_data,
     run_eval_epoch,
@@ -31,8 +31,13 @@ from src.shared.targets import rain_threshold_mm
 FEATURE_COLS = feature_cols_from_cfg()
 
 end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
-test_days = cfg.get("data", {}).get("test_days", 14)
-SPLIT_DATE = pd.Timestamp(end_date_str).tz_localize(None) - pd.Timedelta(days=test_days)
+test_days = int(cfg.get("data", {}).get("test_days", 14))
+val_days = int(cfg.get("data", {}).get("val_days", test_days))
+END_DATE = pd.Timestamp(end_date_str)
+if END_DATE.tzinfo is not None:
+    END_DATE = END_DATE.tz_convert(None)
+TEST_START_DATE = END_DATE - pd.Timedelta(days=test_days)
+VAL_START_DATE = TEST_START_DATE - pd.Timedelta(days=val_days)
 
 
 def _resolve_requested_client_id() -> int:
@@ -148,17 +153,28 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
 
             eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
-            test_index_cache, _, _ = build_test_index_cache(
+            val_index_cache, val_samples, _ = build_eval_index_cache(
                 client_id=client_id,
                 sensor_data_cache=sensor_data_cache,
-                split_date=SPLIT_DATE,
+                start_date=VAL_START_DATE,
+                end_date=TEST_START_DATE,
                 eval_max_samples=eval_max_samples,
                 seq_len=seq_len,
+                label="VAL",
                 horizon=target_horizon,
+            )
+            if val_samples == 0:
+                raise RuntimeError(
+                    f"Client {client_id} has 0 validation samples in window "
+                    f"[{VAL_START_DATE}, {TEST_START_DATE}). Increase data span or adjust val/test days."
+                )
+            print(
+                f"[CLIENT {client_id}] Data windows | train:<{VAL_START_DATE} "
+                f"| val:[{VAL_START_DATE},{TEST_START_DATE}) | test:>={TEST_START_DATE}"
             )
 
             train_state = SchedulerState(compression_mode=compression_mode)
-            test_state = SchedulerState(compression_mode=compression_mode)
+            val_state = SchedulerState(compression_mode=compression_mode)
 
             for epoch in range(epochs):
                 epoch_start_time = time.time()
@@ -175,7 +191,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     optimizer=optimizer,
                     client_files=client_files,
                     sensor_data_cache=sensor_data_cache,
-                    split_date=SPLIT_DATE,
+                    split_date=VAL_START_DATE,
                     train_state=train_state,
                     feature_cols=FEATURE_COLS,
                     feat_stats=feat_stats,
@@ -222,18 +238,18 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 if sync_timeout_triggered:
                     break
 
-                print(f"--- [EVALUATION] Client {client_id} Epoch {epoch+1} ---")
+                print(f"--- [VALIDATION] Client {client_id} Epoch {epoch+1} ---")
                 client_model.eval()
                 eval_start_time = time.time()
-                epoch_test_losses, tp, fn, fp, tn = run_eval_epoch(
+                epoch_val_losses, eval_metrics = run_eval_epoch(
                     stub=stub,
                     client_id=client_id,
                     client_model=client_model,
                     optimizer=optimizer,
                     client_files=client_files,
                     sensor_data_cache=sensor_data_cache,
-                    test_index_cache=test_index_cache,
-                    test_state=test_state,
+                    eval_index_cache=val_index_cache,
+                    eval_state=val_state,
                     feature_cols=FEATURE_COLS,
                     feat_stats=feat_stats,
                     device=device,
@@ -241,25 +257,39 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     epoch=epoch,
                     experimental_logs=experimental_logs,
                     epoch_logs=epoch_logs,
+                    phase_label="VAL",
                 )
 
-                if epoch_test_losses:
-                    avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
-                    test_summary = summarize_phase(epoch_logs, "TEST")
+                if epoch_val_losses:
+                    avg_val_loss = sum(epoch_val_losses) / len(epoch_val_losses)
+                    val_summary = summarize_phase(epoch_logs, "VAL")
+                    tp = int(eval_metrics["tp"])
+                    fn = int(eval_metrics["fn"])
+                    fp = int(eval_metrics["fp"])
+                    tn = int(eval_metrics["tn"])
                     positive_count = tp + fn
-                    recall = (tp / positive_count) if positive_count > 0 else None
+                    recall = float(eval_metrics["recall"])
+                    precision = float(eval_metrics["precision"])
+                    f1 = float(eval_metrics["f1"])
+                    selected_threshold = float(eval_metrics["selected_threshold"])
+                    default_threshold = float(eval_metrics["default_threshold"])
+                    default_recall = float(eval_metrics["default_recall"])
+                    default_precision = float(eval_metrics["default_precision"])
+                    default_f1 = float(eval_metrics["default_f1"])
                     eval_elapsed_s = max(1e-9, time.time() - eval_start_time)
                     print(
-                        f"[CLIENT {client_id}] Epoch {epoch+1} test summary | "
-                        f"steps={len(epoch_test_losses)} avg_loss={avg_test_loss:.4f} "
-                        f"rain_acc={test_summary['rain_acc']:.3f} "
-                        f"cls_loss={test_summary['avg_cls_loss']:.4f} "
-                        f"reg_loss={test_summary['avg_reg_loss']:.4f} "
+                        f"[CLIENT {client_id}] Epoch {epoch+1} val summary | "
+                        f"steps={len(epoch_val_losses)} avg_loss={avg_val_loss:.4f} "
+                        f"rain_acc={val_summary['rain_acc']:.3f} "
+                        f"cls_loss={val_summary['avg_cls_loss']:.4f} "
+                        f"reg_loss={val_summary['avg_reg_loss']:.4f} "
                         f"positive_count={positive_count} "
-                        f"recall={(f'{recall:.3f}' if recall is not None else 'N/A')} "
+                        f"recall={recall:.3f} precision={precision:.3f} f1={f1:.3f} "
+                        f"thr={selected_threshold:.3f} (default={default_threshold:.3f}, "
+                        f"default_r/p/f1={default_recall:.3f}/{default_precision:.3f}/{default_f1:.3f}) "
                         f"cm=TP:{tp}/FN:{fn}/FP:{fp}/TN:{tn} "
-                        f"test_time={eval_elapsed_s:.2f}s "
-                        f"test_throughput={len(epoch_test_losses) / eval_elapsed_s:.2f} steps/s"
+                        f"val_time={eval_elapsed_s:.2f}s "
+                        f"val_throughput={len(epoch_val_losses) / eval_elapsed_s:.2f} steps/s"
                     )
                     should_stop = evaluate_epoch(
                         client_id=client_id,
@@ -267,7 +297,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                         optimizer=optimizer,
                         current_round=current_round,
                         epoch=epoch,
-                        avg_test_loss=avg_test_loss,
+                        avg_val_loss=avg_val_loss,
+                        val_metrics=eval_metrics,
                         session_id=session_id,
                         session_dir=session_dir,
                         periodic_dir=periodic_dir,
@@ -279,7 +310,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                         break
 
                 epoch_elapsed_s = max(1e-9, time.time() - epoch_start_time)
-                epoch_steps = epoch_train_steps + len(epoch_test_losses)
+                epoch_steps = epoch_train_steps + len(epoch_val_losses)
                 print(
                     f"[CLIENT {client_id}] Epoch {epoch+1} timing | "
                     f"total_time={epoch_elapsed_s:.2f}s total_steps={epoch_steps} "
