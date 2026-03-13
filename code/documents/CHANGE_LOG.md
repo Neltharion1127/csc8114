@@ -9,6 +9,8 @@ Mainly adjusted: `split_lstm.py`, `client_node.py`, `server_node.py`
 - **Prevents Overfitting**: Added Dropout layers to the Client LSTM.
 - **Smoother Signals**: Switched Server to LeakyReLU to prevent neuron failure.
 - **Stable Structure**: Fixed network to 64 → 32 → 1 for consistent feature learning.
+- **Rain/Dry Balance**: Used 50/50 **Balanced Sampling** instead of changing the Loss formula. This effectively prevents the model from "always guessing zero" and is more stable for training.
+
 
 ### 2. Data Preprocessing
 - **Auto-Standardization (Z-score)**: Automatically calculates Mean and Std for data.

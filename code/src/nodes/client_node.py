@@ -303,6 +303,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
         client_model = ClientLSTM(
             input_size=cfg.get("model", {}).get("input_size", len(FEATURE_COLS)),
             hidden_size=cfg.get("model", {}).get("hidden_size", 64),
+            num_layers=cfg.get("model", {}).get("num_layers", 1),
         ).to(device)
         
         optimizer = torch.optim.Adam(
