@@ -1,7 +1,7 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients clean-native check-native-port clean
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion clean-native check-native-port clean
 
 NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 SERVER_COLOR := \033[1;34m
@@ -11,6 +11,7 @@ SERVER_PORT ?= 50051
 SERVER_DEVICE ?= cpu
 CLIENT_DEVICE ?= mps
 STARTUP_TIMEOUT ?= 60
+PLOT_DEVICE ?= cpu
 UV_CACHE_DIR ?= .uv-cache
 UV := UV_CACHE_DIR=$(UV_CACHE_DIR) UV_LINK_MODE=copy uv
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
@@ -24,6 +25,10 @@ help:
 	@echo "  make run-native      - Start native server first, then native clients"
 	@echo "  make run-native-server   - Start native server (no Docker)"
 	@echo "  make run-native-client   - One command to start 1..NUM_CLIENTS native clients"
+	@echo "  make plot SESSION=<id> - Manually plot one session"
+	@echo "  make plot-latest     - Plot latest session (training curve + server metrics)"
+	@echo "  make plot-session SESSION=<id> - Plot a specific session"
+	@echo "  make plot-confusion SESSION=<id> - Plot confusion matrices for one session"
 	@echo "  make clean-native    - Kill native server/client Python processes"
 	@echo "  make clean           - Removes all Docker containers and network caches"
 
@@ -62,7 +67,8 @@ run-network: clean
 		esac; \
 		(docker logs -f fsl-client-$$i 2>&1 | awk -v prefix=$$(printf "fsl-client-%d" $$i) -v color="$$color" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, prefix, reset, $$0; fflush()}') & \
 	done; \
-	wait
+	wait; \
+	$(MAKE) plot-latest
 
 # Backward-compatible alias
 test-network: run-network
@@ -98,7 +104,39 @@ run-native-client:
 		) & \
 		pids="$$pids $$!"; \
 	done; \
-	wait $$pids
+	wait $$pids; \
+	$(MAKE) plot-latest
+
+plot-latest:
+	@SESSION=$$(ls -1dt results/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
+	if [ -z "$$SESSION" ]; then \
+		echo "No results session found under results/"; \
+		exit 1; \
+	fi; \
+	echo "Generating plots for session $$SESSION..."; \
+	$(PYTHON) -m src.data.plot_training_curve --session $$SESSION --device $(PLOT_DEVICE); \
+	$(PYTHON) -m src.data.plot_server_metrics --log results/$$SESSION/server_log_$$SESSION.csv; \
+	$(PYTHON) -m src.data.plot_confusion_matrix --session $$SESSION --phase both
+
+plot-session:
+	@if [ -z "$(SESSION)" ]; then \
+		echo "Usage: make plot-session SESSION=2026-03-13_01-53-07 [PLOT_DEVICE=cpu|mps]"; \
+		exit 1; \
+	fi
+	@echo "Generating plots for session $(SESSION)..."
+	@$(PYTHON) -m src.data.plot_training_curve --session $(SESSION) --device $(PLOT_DEVICE)
+	@$(PYTHON) -m src.data.plot_server_metrics --log results/$(SESSION)/server_log_$(SESSION).csv
+	@$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
+
+plot: plot-session
+
+plot-confusion:
+	@if [ -z "$(SESSION)" ]; then \
+		echo "Usage: make plot-confusion SESSION=2026-03-13_01-53-07"; \
+		exit 1; \
+	fi
+	@echo "Generating confusion matrix for session $(SESSION)..."
+	@$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
 
 run-native-clients: run-native-client
 
@@ -145,7 +183,8 @@ run-native:
 		) & \
 		pids="$$pids $$!"; \
 	done; \
-	wait $$pids
+	wait $$pids; \
+	$(MAKE) plot-latest
 
 check-native-port:
 	@if lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P >/dev/null 2>&1; then \
