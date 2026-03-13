@@ -4,25 +4,27 @@ import os
 import re
 import socket
 import time
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 
 from proto import fsl_pb2
 from proto import fsl_pb2_grpc
 from src.client.checkpointing import CheckpointState, evaluate_epoch
-from src.client.data_pipeline import collect_test_indices, load_sensor_data, sample_index
-from src.client.forward_step import run_forward_step
 from src.client.reporting import print_summary, save_progress, save_results, summarize_logs, summarize_phase
 from src.client.scheduler_state import SchedulerState
 from src.client.sync import fed_avg_sync
+from src.client.training_loop import (
+    build_test_index_cache,
+    compute_feature_stats,
+    preload_sensor_data,
+    run_eval_epoch,
+    run_train_epoch,
+)
 from src.models.split_lstm import ClientLSTM
 
 from src.shared.common import cfg, project_root
 from src.shared.runtime import grpc_channel_options, resolve_device, resolve_server_address, set_global_seed
-from src.shared.targets import is_rain
 
 FEATURE_COLS = cfg.get("data", {}).get(
     "feature_cols",
@@ -46,6 +48,7 @@ def _resolve_requested_client_id() -> int:
     hostname = os.getenv("HOSTNAME") or socket.gethostname()
     match = re.fullmatch(r"fsl-client-(\d+)", hostname)
     return int(match.group(1)) if match else 0
+
 
 def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> None:
     """Run the full client training and evaluation loop."""
@@ -124,19 +127,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
             client_model.train()
 
-            print(f"[CLIENT {client_id}] Pre-loading sensor data into memory...")
-            sensor_data_cache = {}
-            for file_path in client_files:
-                sensor_id = Path(file_path).stem
-                try:
-                    sensor_data_cache[file_path] = load_sensor_data(file_path)
-                except Exception as e:
-                    print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
-            if not sensor_data_cache:
-                raise RuntimeError(
-                    f"Client {client_id} could not load any sensor data from {len(client_files)} assigned files. "
-                    "Check dataset contents and preprocessing outputs."
-                )
+            sensor_data_cache = preload_sensor_data(client_id, client_files)
 
             patience = cfg.get("training", {}).get("early_stopping_patience", 15)
             current_round = 0
@@ -147,29 +138,18 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             os.makedirs(periodic_dir, exist_ok=True)
             os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
 
-            print(f"[CLIENT {client_id}] Calculating feature statistics for normalization...")
-            all_combined = pd.concat(sensor_data_cache.values())
-            feat_mean = all_combined[FEATURE_COLS].mean().values
-            feat_std = all_combined[FEATURE_COLS].std().values + 1e-9
-            feat_stats = (feat_mean, feat_std)
+            feat_stats = compute_feature_stats(
+                client_id=client_id,
+                sensor_data_cache=sensor_data_cache,
+                feature_cols=FEATURE_COLS,
+            )
 
             eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
-            test_index_cache: dict[str, np.ndarray] = {}
-            total_eval_samples = 0
-            total_eval_positive = 0
-            for file_path, df in sensor_data_cache.items():
-                test_indices = collect_test_indices(df, SPLIT_DATE)
-                if eval_max_samples > 0 and len(test_indices) > eval_max_samples:
-                    picks = np.linspace(0, len(test_indices) - 1, eval_max_samples, dtype=int)
-                    test_indices = test_indices[picks]
-                test_index_cache[file_path] = test_indices
-                total_eval_samples += int(len(test_indices))
-                if len(test_indices) > 0:
-                    total_eval_positive += int(df["future_3h_rain"].iloc[test_indices].apply(is_rain).sum())
-            print(
-                f"[CLIENT {client_id}] Fixed test set prepared: "
-                f"samples={total_eval_samples} positives={total_eval_positive} "
-                f"(per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'})"
+            test_index_cache, _, _ = build_test_index_cache(
+                client_id=client_id,
+                sensor_data_cache=sensor_data_cache,
+                split_date=SPLIT_DATE,
+                eval_max_samples=eval_max_samples,
             )
 
             train_state = SchedulerState(compression_mode=compression_mode)
@@ -183,48 +163,24 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 epoch_train_steps = 0
                 sync_timeout_triggered = False
 
-                for file_path in client_files:
-                    sensor_id = Path(file_path).stem
-                    try:
-                        df = sensor_data_cache.get(file_path)
-                        if df is None:
-                            continue
-                        for _ in range(local_steps):
-                            optimizer.zero_grad()
-                            result = sample_index(
-                                df,
-                                SPLIT_DATE,
-                                is_training=True,
-                                rain_sample_ratio=rain_sample_ratio,
-                            )
-                            if result is None:
-                                continue
-                            target_idx, mode = result
-                            target_value = float(df["future_3h_rain"].iloc[target_idx])
-                            log_entry = run_forward_step(
-                                stub,
-                                client_id,
-                                client_model,
-                                optimizer,
-                                df,
-                                target_idx,
-                                target_value,
-                                mode,
-                                sensor_id,
-                                train_state.compression_mode,
-                                FEATURE_COLS,
-                                feat_stats,
-                                device,
-                                is_training=True,
-                                last_latency_ms=train_state.last_latency_ms,
-                            )
-                            train_state.update(log_entry)
-                            epoch_train_steps += 1
-                            epoch_record = {"Epoch": epoch + 1, "Status": "TRAIN", "Sensor": sensor_id, **log_entry}
-                            experimental_logs.append(epoch_record)
-                            epoch_logs.append(epoch_record)
-                    except Exception as e:
-                        print(f"[CLIENT {client_id} ERROR] {sensor_id}: {e}")
+                epoch_train_steps = run_train_epoch(
+                    stub=stub,
+                    client_id=client_id,
+                    client_model=client_model,
+                    optimizer=optimizer,
+                    client_files=client_files,
+                    sensor_data_cache=sensor_data_cache,
+                    split_date=SPLIT_DATE,
+                    train_state=train_state,
+                    feature_cols=FEATURE_COLS,
+                    feat_stats=feat_stats,
+                    device=device,
+                    local_steps=local_steps,
+                    rain_sample_ratio=rain_sample_ratio,
+                    epoch=epoch,
+                    experimental_logs=experimental_logs,
+                    epoch_logs=epoch_logs,
+                )
 
                 if epoch_train_steps:
                     train_summary = summarize_phase(epoch_logs, "TRAIN")
@@ -260,56 +216,23 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
                 print(f"--- [EVALUATION] Client {client_id} Epoch {epoch+1} ---")
                 client_model.eval()
-                epoch_test_losses = []
-                tp = fn = fp = tn = 0
                 eval_start_time = time.time()
-                with torch.no_grad():
-                    for file_path in client_files:
-                        sensor_id = Path(file_path).stem
-                        try:
-                            df = sensor_data_cache.get(file_path)
-                            if df is None:
-                                continue
-                            test_indices = test_index_cache.get(file_path)
-                            if test_indices is None or len(test_indices) == 0:
-                                continue
-                            for target_idx in test_indices:
-                                target_value = float(df["future_3h_rain"].iloc[target_idx])
-                                log_entry = run_forward_step(
-                                    stub,
-                                    client_id,
-                                    client_model,
-                                    optimizer,
-                                    df,
-                                    int(target_idx),
-                                    target_value,
-                                    "FIXED_TEST",
-                                    sensor_id,
-                                    test_state.compression_mode,
-                                    FEATURE_COLS,
-                                    feat_stats,
-                                    device,
-                                    is_training=False,
-                                    last_latency_ms=test_state.last_latency_ms,
-                                )
-                                test_state.update(log_entry)
-                                epoch_record = {"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry}
-                                experimental_logs.append(epoch_record)
-                                epoch_logs.append(epoch_record)
-                                if log_entry["Loss"] is not None:
-                                    epoch_test_losses.append(float(log_entry["Loss"]))
-                                true_rain = is_rain(float(log_entry["Target"]))
-                                pred_rain = is_rain(float(log_entry["Prediction"]))
-                                if true_rain and pred_rain:
-                                    tp += 1
-                                elif true_rain and not pred_rain:
-                                    fn += 1
-                                elif not true_rain and pred_rain:
-                                    fp += 1
-                                else:
-                                    tn += 1
-                        except Exception:
-                            pass
+                epoch_test_losses, tp, fn, fp, tn = run_eval_epoch(
+                    stub=stub,
+                    client_id=client_id,
+                    client_model=client_model,
+                    optimizer=optimizer,
+                    client_files=client_files,
+                    sensor_data_cache=sensor_data_cache,
+                    test_index_cache=test_index_cache,
+                    test_state=test_state,
+                    feature_cols=FEATURE_COLS,
+                    feat_stats=feat_stats,
+                    device=device,
+                    epoch=epoch,
+                    experimental_logs=experimental_logs,
+                    epoch_logs=epoch_logs,
+                )
 
                 if epoch_test_losses:
                     avg_test_loss = sum(epoch_test_losses) / len(epoch_test_losses)
