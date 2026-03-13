@@ -29,31 +29,49 @@ class FedAvgCoordinator:
         self.periodic_dir = periodic_dir
         self.ckpt_interval = ckpt_interval
 
-        self.client_weights_buffer = []
+        self.client_weights_buffer: dict[int, dict] = {}
         self.global_weights = None
         self.current_round = 0
         self.lock = threading.Lock()
+        self.round_cond = threading.Condition(self.lock)
+        self.round_start_time: float | None = None
 
     def synchronize(self, request, *, local_weights, server_model, optimizer) -> fsl_pb2.SyncResponse:
-        with self.lock:
-            self.client_weights_buffer.append(local_weights)
+        with self.round_cond:
+            target_round = self.current_round + 1
+            now = time.time()
+            if not self.client_weights_buffer:
+                self.round_start_time = now
+            self.client_weights_buffer[request.client_id] = local_weights
+            barrier_elapsed_s = (now - self.round_start_time) if self.round_start_time is not None else 0.0
             print(
                 f"[FED AVG] Received weights from Client:{request.client_id}. "
-                f"Buffer size: {len(self.client_weights_buffer)}/{self.num_clients}"
+                f"Buffer size: {len(self.client_weights_buffer)}/{self.num_clients} | "
+                f"barrier_elapsed={barrier_elapsed_s:.2f}s"
             )
 
             if len(self.client_weights_buffer) >= self.num_clients:
-                self._aggregate(server_model=server_model, optimizer=optimizer)
+                self._aggregate(
+                    server_model=server_model,
+                    optimizer=optimizer,
+                    barrier_elapsed_s=barrier_elapsed_s,
+                )
+                self.round_cond.notify_all()
+            else:
+                remaining = 60.0
+                while self.current_round < target_round and remaining > 0:
+                    start_wait = time.time()
+                    self.round_cond.wait(timeout=remaining)
+                    remaining -= time.time() - start_wait
 
+            if self.current_round < target_round or self.global_weights is None:
+                # Roll back this client's contribution if the round timed out, so the next
+                # synchronization round starts with a clean and correct buffer.
+                self.client_weights_buffer.pop(request.client_id, None)
+                if not self.client_weights_buffer:
+                    self.round_start_time = None
+                raise TimeoutError("Timeout waiting for global model aggregation.")
             current_round = self.current_round
-
-        wait_time = 0
-        while self.global_weights is None and wait_time < 60:
-            time.sleep(1)
-            wait_time += 1
-
-        if self.global_weights is None:
-            raise TimeoutError("Timeout waiting for global model aggregation.")
 
         global_weights_bytes = tensor_to_bytes(self.global_weights)
         return fsl_pb2.SyncResponse(
@@ -61,16 +79,21 @@ class FedAvgCoordinator:
             round_number=current_round,
         )
 
-    def _aggregate(self, *, server_model, optimizer) -> None:
-        print(f"[FED AVG] Round {self.current_round + 1}: Aggregating {len(self.client_weights_buffer)} models...")
+    def _aggregate(self, *, server_model, optimizer, barrier_elapsed_s: float) -> None:
+        aggregate_start = time.time()
+        print(
+            f"[FED AVG] Round {self.current_round + 1}: Aggregating {len(self.client_weights_buffer)} models... "
+            f"(waited {barrier_elapsed_s:.2f}s for all clients)"
+        )
 
-        self.global_weights = copy.deepcopy(self.client_weights_buffer[0])
+        weights_list = list(self.client_weights_buffer.values())
+        self.global_weights = copy.deepcopy(weights_list[0])
         for key in self.global_weights.keys():
-            for i in range(1, len(self.client_weights_buffer)):
-                self.global_weights[key] += self.client_weights_buffer[i][key]
-            self.global_weights[key] = torch.div(self.global_weights[key], len(self.client_weights_buffer))
+            for i in range(1, len(weights_list)):
+                self.global_weights[key] += weights_list[i][key]
+            self.global_weights[key] = torch.div(self.global_weights[key], len(weights_list))
 
-        self.client_weights_buffer = []
+        self.client_weights_buffer = {}
         self.current_round += 1
 
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -107,7 +130,12 @@ class FedAvgCoordinator:
             torch.save(server_ckpt, periodic_path)
             print(f"[SERVER] Periodic ckpt saved: round {self.current_round:04d}")
 
-        print(f"[FED AVG] Successfully updated global model to Round {self.current_round}")
+        aggregate_elapsed_s = time.time() - aggregate_start
+        self.round_start_time = None
+        print(
+            f"[FED AVG] Successfully updated global model to Round {self.current_round} "
+            f"(aggregate_time={aggregate_elapsed_s:.2f}s)"
+        )
         print(f"[SERVER] Best ckpt: {self.session_id}/{Path(server_model_path).name}")
 
     @staticmethod

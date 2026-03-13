@@ -16,6 +16,7 @@ if str(project_root) not in sys.path:
 
 from src.shared.common import cfg
 from src.models.split_lstm import ClientLSTM, ServerHead
+from src.shared.targets import inverse_target_scalar
 
 def _parse_timestamp(path: str) -> str:
     """
@@ -240,12 +241,15 @@ def evaluate_client(
                 y = torch.tensor([[target_val]], dtype=torch.float32).to(device)
 
                 smashed = client_model(x)
-                pred    = server_model(smashed)
+                rain_logit, rain_amount = server_model(smashed)
+                rain_prob = torch.sigmoid(rain_logit).item()
+                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= 0.5 else 0.0
+                pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
 
                 total_loss += criterion(pred, y).item()
                 total_batches += 1
                 all_targets.append(target_val)
-                all_preds.append(pred.item())
+                all_preds.append(pred_val)
 
     if total_batches == 0:
         print(f"  [ERROR] Client {client_id}: No test samples evaluated.")
@@ -285,6 +289,8 @@ def evaluate():
     seq_len     = cfg.get("model", {}).get("seq_len",     24)
     input_size  = cfg.get("model", {}).get("input_size",   5)
     hidden_size = cfg.get("model", {}).get("hidden_size", 64)
+    head_width  = cfg.get("model", {}).get("server_head_width", 64)
+    head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
     device      = torch.device(args.device)
     print(f"[INFO] Test Window : last {test_days} days  |  seq_len={seq_len}  |  device={device}")
 
@@ -306,7 +312,12 @@ def evaluate():
         server_round  = "N/A"
         print("[INFO] Server: legacy checkpoint (bare state_dict)")
 
-    server_model = ServerHead(hidden_size=hidden_size, output_size=1).to(device)
+    server_model = ServerHead(
+        hidden_size=hidden_size,
+        output_size=1,
+        head_width=head_width,
+        dropout=head_dropout,
+    ).to(device)
     server_model.load_state_dict(server_state)
     server_model.eval()
     print(f"[INFO] Server model loaded and set to eval mode.")

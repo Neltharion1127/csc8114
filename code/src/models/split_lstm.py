@@ -44,20 +44,28 @@ class ServerHead(nn.Module):
     It takes the abstract 'smashed activations' from the clients over the network
     and finishes the predictive calculation.
     """
-    def __init__(self, hidden_size=64, output_size=1):
+    def __init__(self, hidden_size=64, output_size=1, head_width=64, dropout=0.1):
         super(ServerHead, self).__init__()
-        
-        # Back to a more robust MLP structure
-        self.regressor = nn.Sequential(
-            nn.Linear(hidden_size, 32),
-            nn.LeakyReLU(0.1), # Allows gradients to flow even when input < 0
-            nn.Linear(32, output_size),
+
+        self.backbone = nn.Sequential(
+            nn.Linear(hidden_size, head_width),
+            nn.LayerNorm(head_width),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(head_width, head_width),
+            nn.SiLU(),
         )
-        
+        self.rain_classifier = nn.Linear(head_width, 1)
+        self.rain_regressor = nn.Linear(head_width, output_size)
+
     def forward(self, smashed_activation):
         """
         smashed_activation shape: (batch_size, hidden_size)
-        output shape: (batch_size, output_size) -> predicted rainfall amount
+        returns:
+          rain_logit: unnormalized rain/no-rain score
+          rain_amount: predicted rainfall amount in transformed space
         """
-        prediction = self.regressor(smashed_activation)
-        return prediction
+        features = self.backbone(smashed_activation)
+        rain_logit = self.rain_classifier(features)
+        rain_amount = self.rain_regressor(features)
+        return rain_logit, rain_amount

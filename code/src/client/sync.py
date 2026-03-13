@@ -1,4 +1,5 @@
 import io
+import time
 
 import torch
 
@@ -20,13 +21,18 @@ def fed_avg_sync(stub, client_id: int, client_model: ClientLSTM) -> ClientLSTM:
     )
 
     print(f"[CLIENT {client_id}] Waiting for global aggregation...")
+    wait_start = time.time()
     sync_res = stub.Synchronize(sync_req)
+    wait_elapsed_s = time.time() - wait_start
 
     if sync_res.global_weights:
         global_buffer = io.BytesIO(sync_res.global_weights)
         global_state_dict = torch.load(global_buffer, weights_only=True, map_location="cpu")
         client_model.load_state_dict(global_state_dict)
-        print(f"[CLIENT {client_id}] Successfully loaded Global Model Round {sync_res.round_number}")
+        print(
+            f"[CLIENT {client_id}] Successfully loaded Global Model Round {sync_res.round_number} "
+            f"(sync_wait={wait_elapsed_s:.2f}s)"
+        )
     else:
         print(f"[CLIENT {client_id}] Failed to get global weights.")
 

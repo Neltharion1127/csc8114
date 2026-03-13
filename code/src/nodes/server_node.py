@@ -14,21 +14,29 @@ from src.server.reporting import ServerReporter
 from src.server.scheduler import CompressionScheduler
 
 from src.shared.common import cfg, project_root
+from src.shared.runtime import resolve_device, set_global_seed
 from src.shared.serialization import bytes_to_tensor
 
 class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     """gRPC servicer for federated split learning."""
 
     def __init__(self):
-        self.hidden_size = cfg.get("model", {}).get("hidden_size", 64)
+        model_cfg = cfg.get("model", {})
+        self.hidden_size = model_cfg.get("hidden_size", 64)
+        self.server_head_width = model_cfg.get("server_head_width", 64)
+        self.server_head_dropout = model_cfg.get("server_head_dropout", 0.1)
         lr = cfg.get("training", {}).get("lr", 0.001)
-        use_gpu = cfg.get("training", {}).get("use_gpu", False)
-        self.device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
-        print(f"[SERVER] Using device: {self.device} (use_gpu={use_gpu})")
+        self.seed = set_global_seed(cfg.get("training", {}).get("seed", 42), role="server")
+        self.device = resolve_device()
+        print(f"[SERVER] Using device: {self.device}")
 
-        self.server_model = ServerHead(hidden_size=self.hidden_size, output_size=1).to(self.device)
+        self.server_model = ServerHead(
+            hidden_size=self.hidden_size,
+            output_size=1,
+            head_width=self.server_head_width,
+            dropout=self.server_head_dropout,
+        ).to(self.device)
         self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=lr)
-        self.criterion = torch.nn.MSELoss()
 
         self.num_clients = cfg.get("federated", {}).get("num_clients", 3)
         self.sync_lock = threading.Lock()
@@ -37,6 +45,10 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self._reg_lock = threading.Lock()
         self._client_name_to_id: dict[str, int] = {}
         self._assigned_ids: set[int] = set()
+        self._registered_clients: set[int] = set()
+        self._completion_lock = threading.Lock()
+        self._completed_clients: set[int] = set()
+        self._shutdown_event = threading.Event()
 
         self.session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
@@ -94,6 +106,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             f"[SERVER] Client registered — name: {client_name} | requested_id: {requested_id or 'auto'} "
             f"| assigned_id: {assigned_id} | session: {self.session_id}"
         )
+        self._registered_clients.add(assigned_id)
         return fsl_pb2.RegisterResponse(
             client_id=assigned_id,
             total_clients=self.num_clients,
@@ -112,7 +125,6 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                 device=self.device,
                 server_model=self.server_model,
                 optimizer=self.optimizer,
-                criterion=self.criterion,
                 sync_lock=self.sync_lock,
                 current_round=self.fedavg.current_round,
                 assigned_compression=assigned_compression,
@@ -150,6 +162,66 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             context.set_details(str(e))
             context.set_code(grpc.StatusCode.INTERNAL)
             return fsl_pb2.SyncResponse()
+
+    def NotifyCompletion(self, request, context):
+        """Record client completion and emit a server-side all-finished signal."""
+        if request.session_id != self.session_id:
+            print(
+                f"[SERVER] Ignoring completion from client {request.client_id}: "
+                f"session mismatch ({request.session_id} != {self.session_id})"
+            )
+            return fsl_pb2.CompletionResponse(
+                acknowledged=False,
+                completed_clients=len(self._completed_clients),
+                total_clients=self.num_clients,
+            )
+
+        with self._completion_lock:
+            if request.client_id not in self._registered_clients:
+                print(
+                    f"[SERVER] Ignoring completion from unregistered client {request.client_id} "
+                    f"(session={self.session_id})"
+                )
+                return fsl_pb2.CompletionResponse(
+                    acknowledged=False,
+                    completed_clients=len(self._completed_clients),
+                    total_clients=self.num_clients,
+                )
+
+            if request.client_id in self._completed_clients:
+                completed = len(self._completed_clients)
+                print(
+                    f"[SERVER] Duplicate completion ignored for client {request.client_id} "
+                    f"(completed={completed}/{self.num_clients})"
+                )
+                return fsl_pb2.CompletionResponse(
+                    acknowledged=True,
+                    completed_clients=completed,
+                    total_clients=self.num_clients,
+                )
+
+            self._completed_clients.add(request.client_id)
+            completed = len(self._completed_clients)
+
+        print(
+            f"[SERVER] Client {request.client_id} finished training | "
+            f"epochs={request.completed_epochs} steps={request.total_steps} | "
+            f"completed={completed}/{self.num_clients}"
+        )
+        if completed == self.num_clients and len(self._registered_clients) >= self.num_clients:
+            print(f"[SERVER] ALL CLIENTS FINISHED | session={self.session_id}")
+            self.flush_logs()
+            self._shutdown_event.set()
+
+        return fsl_pb2.CompletionResponse(
+            acknowledged=True,
+            completed_clients=completed,
+            total_clients=self.num_clients,
+        )
+
+    def should_shutdown(self) -> bool:
+        """Signal bootstrap loop to stop server once all clients are done."""
+        return self._shutdown_event.is_set()
 
 
 def serve():

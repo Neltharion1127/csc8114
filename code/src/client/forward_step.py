@@ -7,6 +7,8 @@ from proto import fsl_pb2
 from src.models.split_lstm import ClientLSTM
 from src.shared.common import cfg
 from src.shared.compression import compress, decompress
+from src.shared.runtime import maybe_autocast
+from src.shared.targets import transform_target_scalar
 
 
 def run_forward_step(
@@ -22,16 +24,17 @@ def run_forward_step(
     compression_mode: str,
     feature_cols: list[str],
     feat_stats: tuple | None = None,
+    device: torch.device = torch.device("cpu"),
     is_training: bool = True,
     last_latency_ms: float = 0.0,
 ) -> dict:
     """
     Runs one split-learning request/response cycle and returns the step log.
     """
-    use_gpu = cfg.get("training", {}).get("use_gpu", False)
     log_step_details = cfg.get("console", {}).get("log_step_details", False)
     profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
-    device = torch.device("mps") if (use_gpu and torch.backends.mps.is_available()) else torch.device("cpu")
+    cls_weight = float(cfg.get("training", {}).get("classification_loss_weight", 1.0))
+    reg_weight = float(cfg.get("training", {}).get("regression_loss_weight", 1.0))
 
     raw_data = df[feature_cols].iloc[target_idx - 24:target_idx].values
     if feat_stats:
@@ -40,22 +43,27 @@ def run_forward_step(
 
     raw_data_tensor = torch.tensor(raw_data, dtype=torch.float32, device=device)
     input_tensor = raw_data_tensor.unsqueeze(0)
-    smashed_activation = client_model(input_tensor)
+    with maybe_autocast(device):
+        smashed_activation = client_model(input_tensor)
 
     start_time = time.time()
     activation_bytes = compress(smashed_activation, compression_mode)
     payload_size = len(activation_bytes)
     reported_latency_ms = last_latency_ms if profiler_enabled else 0.0
     reported_payload_bytes = payload_size if profiler_enabled else 0
+    training_target = transform_target_scalar(target_value)
 
     request = fsl_pb2.ForwardRequest(
         client_id=client_id,
         activation_data=activation_bytes,
-        true_target=target_value,
+        true_target=training_target,
         latency_ms=reported_latency_ms,
         compression_mode=compression_mode,
         is_training=is_training,
         payload_bytes=reported_payload_bytes,
+        raw_target=target_value,
+        classification_loss_weight=cls_weight,
+        regression_loss_weight=reg_weight,
     )
     phase = "TRAIN" if is_training else "TEST"
     if log_step_details:
@@ -69,6 +77,9 @@ def run_forward_step(
 
     current_loss = float(response.loss)
     prediction_val = float(response.prediction)
+    rain_probability = float(getattr(response, "rain_probability", 0.0))
+    classification_loss = float(getattr(response, "classification_loss", 0.0))
+    regression_loss = float(getattr(response, "regression_loss", 0.0))
 
     if log_step_details:
         icon = "RAIN" if target_value > 0 else "DRY"
@@ -92,6 +103,9 @@ def run_forward_step(
         "Prediction": prediction_val,
         "RainFlag": 1 if target_value > 0 else 0,
         "Loss": current_loss,
+        "RainProbability": rain_probability,
+        "ClassificationLoss": classification_loss,
+        "RegressionLoss": regression_loss,
         "LatencyMs": float(latency_ms),
         "PayloadBytes": reported_payload_bytes,
         "NextCompression": next_compression_mode,

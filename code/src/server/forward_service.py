@@ -4,9 +4,13 @@ import time
 import threading
 
 import torch
+import torch.nn.functional as F
 
 from proto import fsl_pb2
 from src.shared.compression import compress, decompress
+from src.shared.common import cfg
+from src.shared.runtime import maybe_autocast
+from src.shared.targets import inverse_target_scalar
 
 
 @dataclass
@@ -23,7 +27,6 @@ def handle_forward_request(
     device: torch.device,
     server_model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    criterion: torch.nn.Module,
     sync_lock: threading.Lock,
     current_round: int,
     assigned_compression: str,
@@ -38,11 +41,27 @@ def handle_forward_request(
 
     target = torch.tensor([[request.true_target]], dtype=torch.float32, device=device)
     is_training = getattr(request, "is_training", True)
+    raw_target_val = getattr(request, "raw_target", request.true_target)
+    rain_target = torch.tensor([[1.0 if raw_target_val > 0.1 else 0.0]], dtype=torch.float32, device=device)
+    cls_weight = float(request.classification_loss_weight) if hasattr(request, "classification_loss_weight") and request.classification_loss_weight > 0 else 1.0
+    reg_weight = float(request.regression_loss_weight) if hasattr(request, "regression_loss_weight") and request.regression_loss_weight > 0 else 1.0
+    pos_weight_value = float(cfg.get("training", {}).get("classification_positive_weight", 1.0))
+    pos_weight = torch.tensor([pos_weight_value], dtype=torch.float32, device=device)
 
     with sync_lock:
         start_comp_time = time.time()
-        prediction = server_model(smashed_activation)
-        loss = criterion(prediction, target)
+        with maybe_autocast(device):
+            rain_logit, rain_amount = server_model(smashed_activation)
+            cls_loss = F.binary_cross_entropy_with_logits(
+                rain_logit,
+                rain_target,
+                pos_weight=pos_weight,
+            )
+            if rain_target.item() > 0.5:
+                reg_loss = F.smooth_l1_loss(rain_amount, target)
+            else:
+                reg_loss = torch.zeros((), dtype=torch.float32, device=device)
+            loss = cls_weight * cls_loss + reg_weight * reg_loss
 
         if is_training:
             optimizer.zero_grad()
@@ -60,11 +79,14 @@ def handle_forward_request(
 
         comp_time = (time.time() - start_comp_time) * 1000.0
 
-    target_val = request.true_target
-    pred_val = prediction.item()
+    rain_prob = torch.sigmoid(rain_logit).item()
+    pred_val = rain_amount.item()
+    raw_pred_val = inverse_target_scalar(pred_val) if rain_prob >= 0.5 else 0.0
     loss_val = loss.item()
+    cls_loss_val = cls_loss.item()
+    reg_loss_val = reg_loss.item() if isinstance(reg_loss, torch.Tensor) else float(reg_loss)
     current_lr = optimizer.param_groups[0]["lr"]
-    rain_correct = int((target_val > 0.1) == (pred_val > 0.1))
+    rain_correct = int((raw_target_val > 0.1) == (raw_pred_val > 0.1))
     reported_latency = getattr(request, "latency_ms", 0.0)
     payload_bytes = getattr(request, "payload_bytes", 0)
 
@@ -73,7 +95,7 @@ def handle_forward_request(
         "round": current_round,
         "client_id": request.client_id,
         "is_training": int(is_training),
-        "rain_flag": int(target_val > 0.1),
+        "rain_flag": int(raw_target_val > 0.1),
         "rain_correct": rain_correct,
         "compression_mode": compression_mode,
         "next_compression": assigned_compression,
@@ -81,28 +103,42 @@ def handle_forward_request(
         "scheduler_enabled": int(scheduler_enabled),
         "reported_latency_ms": reported_latency,
         "payload_bytes": payload_bytes,
-        "target": target_val,
-        "prediction": pred_val,
+        "target": raw_target_val,
+        "prediction": raw_pred_val,
+        "target_transformed": request.true_target,
+        "prediction_transformed": pred_val,
+        "rain_probability": rain_prob,
         "loss": loss_val,
+        "classification_loss": cls_loss_val,
+        "regression_loss": reg_loss_val,
         "learning_rate": current_lr,
         "decompression_time_ms": decomp_time,
         "computation_time_ms": comp_time,
         "gradient_magnitude": grad_mag,
     }
 
-    if target_val > 0:
-        monitor_message = f"[💧] ID:{request.client_id} | Tgt:{target_val:.2f} | Loss:{loss_val:.4f}"
+    if raw_target_val > 0:
+        monitor_message = (
+            f"[💧] ID:{request.client_id} | Tgt:{raw_target_val:.2f} | "
+            f"Pred:{raw_pred_val:.2f} | P(rain):{rain_prob:.2f} | Loss:{loss_val:.4f}"
+        )
     else:
-        monitor_message = f"[☁️] ID:{request.client_id} | Loss:{loss_val:.4f}"
+        monitor_message = (
+            f"[☁️] ID:{request.client_id} | Pred:{raw_pred_val:.2f} | "
+            f"P(rain):{rain_prob:.2f} | Loss:{loss_val:.4f}"
+        )
     monitor_message = f"{monitor_message} | {compression_mode} [D:{decomp_time:.1f}ms, C:{comp_time:.1f}ms, G:{grad_mag:.3f}]"
 
     response = fsl_pb2.ForwardResponse(
         gradient_data=activation_gradient,
-        status_message=f"Success: Loss {loss_val:.4f} Pred {pred_val:.4f}",
+        status_message=f"Success: Loss {loss_val:.4f} Pred {raw_pred_val:.4f} P(rain) {rain_prob:.4f}",
         next_compression_mode=assigned_compression,
         success=True,
         loss=loss_val,
-        prediction=pred_val,
+        prediction=raw_pred_val,
+        rain_probability=rain_prob,
+        classification_loss=cls_loss_val,
+        regression_loss=reg_loss_val,
     )
 
     return ForwardPassResult(

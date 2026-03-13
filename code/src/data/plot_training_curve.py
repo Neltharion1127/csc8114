@@ -35,6 +35,7 @@ if str(project_root) not in sys.path:
 
 from src.shared.common import cfg
 from src.models.split_lstm import ClientLSTM, ServerHead
+from src.shared.targets import inverse_target_scalar
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +103,14 @@ def _eval_pair(client_state: dict, server_state: dict,
     client_model.load_state_dict(client_state)
     client_model.eval()
 
-    server_model = ServerHead(hidden_size=hidden_size, output_size=1).to(device)
+    head_width = cfg.get("model", {}).get("server_head_width", 64)
+    head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
+    server_model = ServerHead(
+        hidden_size=hidden_size,
+        output_size=1,
+        head_width=head_width,
+        dropout=head_dropout,
+    ).to(device)
     server_model.load_state_dict(server_state)
     server_model.eval()
 
@@ -140,8 +148,11 @@ def _eval_pair(client_state: dict, server_state: dict,
                 y = torch.tensor([[target_val]], dtype=torch.float32).to(device)
 
                 smashed = client_model(x)
-                pred    = server_model(smashed)
-                total_loss    += criterion(pred, y).item()
+                rain_logit, rain_amount = server_model(smashed)
+                rain_prob = torch.sigmoid(rain_logit).item()
+                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= 0.5 else 0.0
+                pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
+                total_loss += criterion(pred, y).item()
                 total_batches += 1
 
     return total_loss / total_batches if total_batches > 0 else float("nan")

@@ -11,11 +11,14 @@ package fsl;
 message ForwardRequest {
     int32 client_id = 1;        // The ID of the client sending the data
     bytes activation_data = 2;  // The serialized PyTorch tensor (smashed activation)
-    float true_target = 3;      // The actual rainfall value for Loss calculation
+    float true_target = 3;      // The target value used for loss calculation
     float latency_ms = 4;       // Measured local latency
     string compression_mode = 5; // The compression mode used
     bool is_training = 6;        // True for train pass (do backprop), False for test pass
     int32 payload_bytes = 7;     // Size of the transmitted activation in bytes
+    float raw_target = 8;        // Original rainfall value in mm, used for logging and metrics
+    float classification_loss_weight = 9;
+    float regression_loss_weight = 10;
 }
 
 // Used by a client to register with the server and get an assigned ID
@@ -38,6 +41,9 @@ message ForwardResponse {
     bool success = 4;                // Whether the server completed the request successfully
     float loss = 5;                  // Structured loss value for the current request
     float prediction = 6;            // Structured prediction for the current request
+    float rain_probability = 7;      // Structured rain probability from the classifier head
+    float classification_loss = 8;   // Structured classifier loss for the current request
+    float regression_loss = 9;       // Structured regressor loss for the current request
 }
 
 
@@ -51,6 +57,19 @@ message SyncRequest {
 message SyncResponse {
     bytes global_weights = 1;   // Serialized state_dict of the aggregated global model
     int32 round_number = 2;     // Current FL round
+}
+
+message CompletionRequest {
+    int32 client_id = 1;
+    int32 completed_epochs = 2;
+    int32 total_steps = 3;
+    string session_id = 4;  // Session claimed by client; must match current server session
+}
+
+message CompletionResponse {
+    bool acknowledged = 1;
+    int32 completed_clients = 2;
+    int32 total_clients = 3;
 }
 
 // ==========================================
@@ -68,4 +87,7 @@ service FSLService {
     
     // The aggregation function: Send local model, get global model back
     rpc Synchronize(SyncRequest) returns (SyncResponse);
+
+    // Final notification sent by a client after it has completed training
+    rpc NotifyCompletion(CompletionRequest) returns (CompletionResponse);
 }
