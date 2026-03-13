@@ -89,32 +89,37 @@ def handle_forward_request(
 
     with sync_lock:
         start_comp_time = time.time()
-        with maybe_autocast(device):
-            rain_logit, rain_amount = server_model(smashed_activation)
-            cls_loss = _classification_loss(
-                rain_logit,
-                rain_target,
-                pos_weight=pos_weight,
-            )
-            if rain_target.item() > 0.5:
-                reg_loss = F.smooth_l1_loss(rain_amount, target)
+        previous_mode = server_model.training
+        server_model.train(mode=is_training)
+        try:
+            with maybe_autocast(device):
+                rain_logit, rain_amount = server_model(smashed_activation)
+                cls_loss = _classification_loss(
+                    rain_logit,
+                    rain_target,
+                    pos_weight=pos_weight,
+                )
+                if rain_target.item() > 0.5:
+                    reg_loss = F.smooth_l1_loss(rain_amount, target)
+                else:
+                    reg_loss = torch.zeros((), dtype=torch.float32, device=device)
+                loss = cls_weight * cls_loss + reg_weight * reg_loss
+
+            if is_training:
+                optimizer.zero_grad()
+                loss.backward()
+
+                if smashed_activation.grad is None:
+                    raise ValueError("Gradient calculation failed on the smashed activation.")
+
+                grad_mag = torch.norm(smashed_activation.grad).item()
+                activation_gradient = compress(smashed_activation.grad, compression_mode)
+                optimizer.step()
             else:
-                reg_loss = torch.zeros((), dtype=torch.float32, device=device)
-            loss = cls_weight * cls_loss + reg_weight * reg_loss
-
-        if is_training:
-            optimizer.zero_grad()
-            loss.backward()
-
-            if smashed_activation.grad is None:
-                raise ValueError("Gradient calculation failed on the smashed activation.")
-
-            grad_mag = torch.norm(smashed_activation.grad).item()
-            activation_gradient = compress(smashed_activation.grad, compression_mode)
-            optimizer.step()
-        else:
-            grad_mag = 0.0
-            activation_gradient = b""
+                grad_mag = 0.0
+                activation_gradient = b""
+        finally:
+            server_model.train(mode=previous_mode)
 
         comp_time = (time.time() - start_comp_time) * 1000.0
 

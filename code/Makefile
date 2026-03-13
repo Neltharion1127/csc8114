@@ -1,7 +1,7 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion clean-native check-native-port clean
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session clean-native check-native-port clean
 
 NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 SERVER_COLOR := \033[1;34m
@@ -29,6 +29,8 @@ help:
 	@echo "  make plot-latest     - Plot latest session (training curve + server metrics)"
 	@echo "  make plot-session SESSION=<id> - Plot a specific session"
 	@echo "  make plot-confusion SESSION=<id> - Plot confusion matrices for one session"
+	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
+	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
 	@echo "  make clean-native    - Kill native server/client Python processes"
 	@echo "  make clean           - Removes all Docker containers and network caches"
 
@@ -137,6 +139,23 @@ plot-confusion:
 	fi
 	@echo "Generating confusion matrix for session $(SESSION)..."
 	@$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
+
+eval-latest:
+	@SESSION=$$(ls -1dt bestweights/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
+	if [ -z "$$SESSION" ]; then \
+		echo "No bestweights session found under bestweights/"; \
+		exit 1; \
+	fi; \
+	echo "Running evaluation for session $$SESSION..."; \
+	$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $$SESSION
+
+eval-session:
+	@if [ -z "$(SESSION)" ]; then \
+		echo "Usage: make eval-session SESSION=2026-03-13_03-19-17 [PLOT_DEVICE=cpu|mps]"; \
+		exit 1; \
+	fi
+	@echo "Running evaluation for session $(SESSION)..."
+	@$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $(SESSION)
 
 run-native-clients: run-native-client
 

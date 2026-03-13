@@ -1,4 +1,3 @@
-import os
 import sys
 import glob
 import json
@@ -48,7 +47,7 @@ def _parse_round(path: str) -> int:
         return 0
 
 
-def find_best_server() -> str:
+def find_best_server(session_id: str | None = None) -> str:
     """
     Find the most recent server model in bestweights/.
     Supports both layouts:
@@ -62,10 +61,16 @@ def find_best_server() -> str:
     if not bw_dir.exists():
         raise FileNotFoundError(f"Cannot find bestweights directory at {bw_dir}")
 
-    # Collect from both flat root and one level of subdirectories
-    flat_paths   = glob.glob(str(bw_dir / "server_head_round_*.pth"))
-    subdir_paths = glob.glob(str(bw_dir / "*" / "server_head_round_*.pth"))
-    all_paths    = flat_paths + subdir_paths
+    if session_id:
+        session_dir = bw_dir / session_id
+        if not session_dir.is_dir():
+            raise FileNotFoundError(f"Session not found under bestweights/: {session_id}")
+        all_paths = glob.glob(str(session_dir / "server_head_round_*.pth"))
+    else:
+        # Collect from both flat root and one level of subdirectories
+        flat_paths   = glob.glob(str(bw_dir / "server_head_round_*.pth"))
+        subdir_paths = glob.glob(str(bw_dir / "*" / "server_head_round_*.pth"))
+        all_paths    = flat_paths + subdir_paths
 
     if not all_paths:
         raise FileNotFoundError(
@@ -87,7 +92,7 @@ def find_best_server() -> str:
     return latest_server
 
 
-def find_matching_clients(server_path: str) -> dict[int, str]:
+def find_matching_clients(server_path: str, *, allow_cross_session_fallback: bool = False) -> dict[int, str]:
     """
     Find the best client model for every client ID.
     Searches in the same directory as the server model (flat or session subdir).
@@ -117,7 +122,7 @@ def find_matching_clients(server_path: str) -> dict[int, str]:
     primary_files = glob.glob(str(server_dir / "best_client_*_round_*_model_*.pth"))
     client_ids    = _collect_ids(primary_files)
 
-    if not client_ids:
+    if not client_ids and allow_cross_session_fallback:
         # Fallback: the entire bestweights tree
         print("\u26a0\ufe0f  No client files in server dir. Searching all of bestweights/...")
         fallback_files = (
@@ -126,6 +131,11 @@ def find_matching_clients(server_path: str) -> dict[int, str]:
         )
         client_ids = _collect_ids(fallback_files)
         search_root = None   # signal: use global search per client
+    elif not client_ids:
+        raise FileNotFoundError(
+            f"No client weights found in server session directory: {server_dir}\n"
+            "Use --allow-cross-session-fallback to scan all bestweights/ (less strict)."
+        )
     else:
         search_root = server_dir
 
@@ -239,10 +249,17 @@ def evaluate_client(
 
     total_loss, total_batches = 0.0, 0
     all_targets, all_preds = [], []
+    sensor_data_cache: dict[Path, pd.DataFrame] = {}
+    for file in client_files:
+        sensor_data_cache[file] = load_sensor_data(str(file))
+    all_combined = pd.concat(sensor_data_cache.values())
+    feat_mean = all_combined[active_features].mean().values
+    feat_std = all_combined[active_features].std().values + 1e-9
+
     with torch.no_grad():
         for file in client_files:
             sensor_id = file.stem
-            df = load_sensor_data(str(file))
+            df = sensor_data_cache[file]
             test_indices = collect_test_indices_capped(
                 df,
                 split_date,
@@ -263,6 +280,7 @@ def evaluate_client(
                     .fillna(0)
                     .values
                 )
+                features = (features - feat_mean) / feat_std
                 x = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
                 y = torch.tensor([[target_val]], dtype=torch.float32).to(device)
 
@@ -285,7 +303,20 @@ def evaluate_client(
     preds_arr   = np.array(all_preds)
     mse      = total_loss / total_batches
     mae      = float(np.mean(np.abs(targets_arr - preds_arr)))
-    accuracy = float(np.mean([is_rain(t) == is_rain(p) for t, p in zip(targets_arr, preds_arr)]) * 100)
+    y_true = np.array([1 if is_rain(t) else 0 for t in targets_arr], dtype=np.int32)
+    y_pred = np.array([1 if is_rain(p) else 0 for p in preds_arr], dtype=np.int32)
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    accuracy = float(((tp + tn) / max(1, len(y_true))) * 100.0)
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+    f1 = (
+        float(2.0 * recall * precision / (recall + precision))
+        if not np.isnan(recall) and not np.isnan(precision) and (recall + precision) > 0
+        else float("nan")
+    )
 
     return {
         "client_id":   client_id,
@@ -295,6 +326,13 @@ def evaluate_client(
         "mse":         mse,
         "mae":         mae,
         "accuracy":    accuracy,
+        "recall":      recall,
+        "precision":   precision,
+        "f1":          f1,
+        "tp":          tp,
+        "fn":          fn,
+        "fp":          fp,
+        "tn":          tn,
     }
 
 
@@ -303,6 +341,17 @@ def evaluate():
     parser.add_argument(
         "--device", type=str, default="cpu",
         help="Device to run on: 'cpu' or 'mps'"
+    )
+    parser.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        help="Evaluate a specific session ID under bestweights/ and results/ (recommended).",
+    )
+    parser.add_argument(
+        "--allow-cross-session-fallback",
+        action="store_true",
+        help="Allow searching client checkpoints across all sessions if current session lacks clients.",
     )
     args = parser.parse_args()
 
@@ -327,10 +376,14 @@ def evaluate():
     )
 
     # ── Step 1: Auto-select the latest server model ──────────────────
-    server_path = find_best_server()
+    server_path = find_best_server(session_id=args.session)
+    selected_session = Path(server_path).parent.name if Path(server_path).parent != (project_root / "bestweights") else "flat_bestweights"
 
     # ── Step 2: Find all client models from the same session ─────────
-    client_map = find_matching_clients(server_path)   # {client_id: path}
+    client_map = find_matching_clients(
+        server_path,
+        allow_cross_session_fallback=args.allow_cross_session_fallback,
+    )   # {client_id: path}
     print(f"\n[INFO] Found {len(client_map)} client model(s) to evaluate: {sorted(client_map.keys())}")
 
     # ── Step 3: Load server model once (shared across all clients) ───
@@ -375,7 +428,8 @@ def evaluate():
             all_results.append(result)
             print(f"  ✅ Client {cid} | Samples={result['samples']:,} | "
                   f"MSE={result['mse']:.4f} | MAE={result['mae']:.4f} mm | "
-                  f"Accuracy={result['accuracy']:.2f}%")
+                  f"Accuracy={result['accuracy']:.2f}% | "
+                  f"Recall={result['recall']:.3f} | Precision={result['precision']:.3f} | F1={result['f1']:.3f}")
 
     # ── Step 5: Print combined summary ─────────────────────────────────
     if not all_results:
@@ -385,29 +439,52 @@ def evaluate():
     W = 70  # table width
     print("\n" + "=" * W)
     print("\U0001f3c6  FINAL EVALUATION REPORT (14-DAY TEST SET)")
+    print(f"   Session           : {selected_session}")
     print(f"   Server checkpoint : {Path(server_path).name}  (round={server_round})")
     print("=" * W)
     hdr = (f"  {'Client':<8} {'BestRound':>10} {'TrainLoss':>10}"
-           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'Accuracy':>10}")
+           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'Accuracy':>10}  {'F1':>8}")
     sep = (f"  {'──────':<8} {'─────────':>10} {'─────────':>10}"
-           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'────────':>10}")
+           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'────────':>10}  {'──────':>8}")
     print(hdr)
     print(sep)
     for r in all_results:
         br  = str(r['best_round'])
         tl  = f"{r['train_loss']:.4f}" if not np.isnan(r['train_loss']) else "N/A"
         print(f"  {r['client_id']:<8} {br:>10} {tl:>10}"
-              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>9.2f}%")
+              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>9.2f}%  {r['f1']:>8.4f}")
 
     if len(all_results) > 1:
         avg_mse = np.mean([r["mse"]      for r in all_results])
         avg_mae = np.mean([r["mae"]      for r in all_results])
         avg_acc = np.mean([r["accuracy"] for r in all_results])
+        avg_f1  = np.mean([r["f1"] for r in all_results if not np.isnan(r["f1"])]) if any(not np.isnan(r["f1"]) for r in all_results) else float("nan")
         tot     = sum(    r["samples"]   for r in all_results)
         print(sep)
         print(f"  {'AVERAGE':<8} {'':>10} {'':>10}"
-              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>9.2f}%")
+              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>9.2f}%  {avg_f1:>8.4f}")
     print("=" * W + "\n")
+
+    results_dir = project_root / "results" / selected_session
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    report_csv = results_dir / f"evaluation_report_{selected_session}.csv"
+    pd.DataFrame(all_results).to_csv(report_csv, index=False)
+    report_json = results_dir / f"evaluation_report_{selected_session}.json"
+    summary = {
+        "session": selected_session,
+        "server_checkpoint": Path(server_path).name,
+        "server_round": server_round,
+        "device": str(device),
+        "split_date": str(split_date),
+        "eval_max_samples_per_sensor": eval_max_samples,
+        "num_clients_evaluated": len(all_results),
+        "clients": all_results,
+    }
+    with open(report_json, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"[INFO] Saved evaluation CSV : {report_csv}")
+    print(f"[INFO] Saved evaluation JSON: {report_json}")
 
 
 if __name__ == "__main__":
