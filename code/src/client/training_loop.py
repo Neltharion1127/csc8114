@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.client.data_pipeline import collect_test_indices, load_sensor_data, sample_index
+from src.client.data_pipeline import collect_test_indices_capped, load_sensor_data, sample_index
 from src.client.forward_step import run_forward_step
 from src.client.scheduler_state import SchedulerState
 from src.shared.targets import is_rain
@@ -51,10 +51,11 @@ def build_test_index_cache(
     total_eval_samples = 0
     total_eval_positive = 0
     for file_path, df in sensor_data_cache.items():
-        test_indices = collect_test_indices(df, split_date)
-        if eval_max_samples > 0 and len(test_indices) > eval_max_samples:
-            picks = np.linspace(0, len(test_indices) - 1, eval_max_samples, dtype=int)
-            test_indices = test_indices[picks]
+        test_indices = collect_test_indices_capped(
+            df,
+            split_date,
+            eval_max_samples=eval_max_samples,
+        )
         test_index_cache[file_path] = test_indices
         total_eval_samples += int(len(test_indices))
         if len(test_indices) > 0:

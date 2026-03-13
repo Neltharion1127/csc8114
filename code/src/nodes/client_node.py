@@ -11,6 +11,7 @@ import torch
 from proto import fsl_pb2
 from proto import fsl_pb2_grpc
 from src.client.checkpointing import CheckpointState, evaluate_epoch
+from src.client.data_pipeline import partition_client_files
 from src.client.reporting import print_summary, save_progress, save_results, summarize_logs, summarize_phase
 from src.client.scheduler_state import SchedulerState
 from src.client.sync import fed_avg_sync
@@ -102,10 +103,11 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
             # Step 2: Partition sensor files for this client
             all_files = sorted(glob.glob(os.path.join(project_root, data_dir, "*.parquet")))
-            chunk_size = len(all_files) // num_clients
-            start_idx = (client_id - 1) * chunk_size
-            end_idx = start_idx + chunk_size if client_id < num_clients else len(all_files)
-            client_files = all_files[start_idx:end_idx]
+            client_files = partition_client_files(
+                all_files,
+                client_id=client_id,
+                num_clients=num_clients,
+            )
             print(f"[CLIENT {client_id}] Allocated {len(client_files)}/{len(all_files)} sensors")
             if not client_files:
                 raise RuntimeError(

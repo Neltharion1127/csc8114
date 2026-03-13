@@ -2,6 +2,25 @@ import numpy as np
 import pandas as pd
 
 
+def partition_client_files(
+    all_files: list[str],
+    *,
+    client_id: int,
+    num_clients: int,
+) -> list[str]:
+    """Partition file list across clients using the same deterministic rule as training."""
+    if num_clients <= 0:
+        raise ValueError(f"num_clients must be positive, got {num_clients}")
+    if client_id <= 0:
+        raise ValueError(f"client_id must be positive, got {client_id}")
+
+    sorted_files = sorted(all_files)
+    chunk_size = len(sorted_files) // num_clients
+    start_idx = (client_id - 1) * chunk_size
+    end_idx = start_idx + chunk_size if client_id < num_clients else len(sorted_files)
+    return sorted_files[start_idx:end_idx]
+
+
 def resolve_split_pos(df: pd.DataFrame, split_date: pd.Timestamp) -> int:
     """Resolve split position robustly even when split_date is not in index."""
     try:
@@ -27,6 +46,27 @@ def collect_test_indices(
         valid_target = df["future_3h_rain"].notna().to_numpy()
         test_mask = test_mask & valid_target
     return all_indices[test_mask]
+
+
+def collect_test_indices_capped(
+    df: pd.DataFrame,
+    split_date: pd.Timestamp,
+    *,
+    eval_max_samples: int = 0,
+    min_history: int = 24,
+    horizon: int = 3,
+) -> np.ndarray:
+    """Collect deterministic test indices, with optional fixed-size cap per sensor."""
+    test_indices = collect_test_indices(
+        df,
+        split_date,
+        min_history=min_history,
+        horizon=horizon,
+    )
+    if eval_max_samples > 0 and len(test_indices) > eval_max_samples:
+        picks = np.linspace(0, len(test_indices) - 1, eval_max_samples, dtype=int)
+        test_indices = test_indices[picks]
+    return test_indices
 
 
 def load_sensor_data(file_path: str) -> pd.DataFrame:

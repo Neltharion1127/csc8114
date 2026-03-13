@@ -15,6 +15,11 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 from src.shared.common import cfg
+from src.client.data_pipeline import (
+    collect_test_indices_capped,
+    load_sensor_data,
+    partition_client_files,
+)
 from src.models.split_lstm import ClientLSTM, ServerHead
 from src.shared.targets import inverse_target_scalar, is_rain, rain_probability_threshold
 
@@ -164,7 +169,8 @@ def evaluate_client(
     client_path: str,
     server_model: nn.Module,
     device: torch.device,
-    test_days: int,
+    split_date: pd.Timestamp,
+    eval_max_samples: int,
     seq_len: int,
     input_size: int,
     hidden_size: int,
@@ -202,36 +208,55 @@ def evaluate_client(
     print(f"[Client {client_id}] Architecture: hidden={hidden_size}, layers={num_layers}")
 
     data_dir = project_root / cfg.get("data", {}).get("processed_dir", "dataset/processed")
-    client_files = sorted(data_dir.glob("NCL_*.parquet"))
+    all_files = sorted(data_dir.glob("*.parquet"))
+    if not all_files:
+        print(f"  [ERROR] No parquet files found in {data_dir}")
+        return {}
+
+    num_clients = max(1, int(cfg.get("federated", {}).get("num_clients", 1)))
+    if 1 <= client_id <= num_clients:
+        client_files = partition_client_files(
+            [str(p) for p in all_files],
+            client_id=client_id,
+            num_clients=num_clients,
+        )
+        client_files = [Path(p) for p in client_files]
+    else:
+        print(
+            f"  [WARNING] Client ID {client_id} is outside configured range 1..{num_clients}. "
+            "Falling back to full dataset for evaluation."
+        )
+        client_files = all_files
+
+    print(f"[Client {client_id}] Evaluating {len(client_files)}/{len(all_files)} sensor files")
+    if not client_files:
+        print(f"  [ERROR] Client {client_id}: assigned 0 sensor files for evaluation.")
+        return {}
+
     active_features = cfg.get("data", {}).get(
         "feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"]
     )
 
     total_loss, total_batches = 0.0, 0
     all_targets, all_preds = [], []
-    total_hours = test_days * 24
-
     with torch.no_grad():
         for file in client_files:
             sensor_id = file.stem
-            df = pd.read_parquet(file)
-
-            if "Timestamp" in df.columns:
-                df.set_index("Timestamp", inplace=True)
-                df.index = pd.to_datetime(df.index)
-            df["future_3h_rain"] = df["Rain"].shift(-3).rolling(window=3).sum()
-
-            if len(df) < total_hours + seq_len:
-                print(f"  [WARNING] Not enough data in {sensor_id} — skipped")
+            df = load_sensor_data(str(file))
+            test_indices = collect_test_indices_capped(
+                df,
+                split_date,
+                eval_max_samples=eval_max_samples,
+                min_history=seq_len,
+                horizon=3,
+            )
+            if len(test_indices) == 0:
+                print(f"  [WARNING] No valid test indices in {sensor_id} — skipped")
                 continue
 
-            test_df = df.iloc[-total_hours:].reset_index(drop=True)
-
-            for idx in range(seq_len, len(test_df) - 3):
-                if pd.isna(test_df.iloc[idx]["future_3h_rain"]):
-                    continue
-                target_val = float(test_df.iloc[idx]["future_3h_rain"])
-                window_data = test_df.iloc[idx - seq_len : idx]
+            for idx in test_indices:
+                target_val = float(df["future_3h_rain"].iloc[int(idx)])
+                window_data = df.iloc[int(idx) - seq_len : int(idx)]
                 features = (
                     window_data[active_features]
                     .apply(pd.to_numeric, errors="coerce")
@@ -287,13 +312,19 @@ def evaluate():
 
     # Config
     test_days   = cfg.get("data",  {}).get("test_days",   14)
+    end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
+    split_date  = pd.Timestamp(end_date_str).tz_localize(None) - pd.Timedelta(days=test_days)
+    eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
     seq_len     = cfg.get("model", {}).get("seq_len",     24)
     input_size  = cfg.get("model", {}).get("input_size",   5)
     hidden_size = cfg.get("model", {}).get("hidden_size", 64)
     head_width  = cfg.get("model", {}).get("server_head_width", 64)
     head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
     device      = torch.device(args.device)
-    print(f"[INFO] Test Window : last {test_days} days  |  seq_len={seq_len}  |  device={device}")
+    print(
+        f"[INFO] Split Date: {split_date} | seq_len={seq_len} | device={device} | "
+        f"per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'}"
+    )
 
     # ── Step 1: Auto-select the latest server model ──────────────────
     server_path = find_best_server()
@@ -334,7 +365,8 @@ def evaluate():
             client_path=cpath,
             server_model=server_model,
             device=device,
-            test_days=test_days,
+            split_date=split_date,
+            eval_max_samples=eval_max_samples,
             seq_len=seq_len,
             input_size=input_size,
             hidden_size=hidden_size,
