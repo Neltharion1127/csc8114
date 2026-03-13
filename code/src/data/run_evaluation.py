@@ -13,14 +13,20 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from src.shared.common import cfg
+from src.shared.common import cfg, feature_cols_from_cfg, get_nested
 from src.client.data_pipeline import (
     collect_test_indices_capped,
     load_sensor_data,
     partition_client_files,
 )
 from src.models.split_lstm import ClientLSTM, ServerHead
-from src.shared.targets import inverse_target_scalar, is_rain, rain_probability_threshold
+from src.shared.targets import (
+    inverse_target_scalar,
+    is_rain,
+    rain_probability_threshold,
+    rain_threshold_mm,
+    target_transform_mode,
+)
 
 def _parse_timestamp(path: str) -> str:
     """
@@ -45,6 +51,79 @@ def _parse_round(path: str) -> int:
         return int(parts[idx + 1])
     except (ValueError, IndexError):
         return 0
+
+
+def _find_latest_session_id() -> str:
+    bw_dir = project_root / "bestweights"
+    sessions = sorted([d for d in bw_dir.glob("20*") if d.is_dir()], key=lambda p: p.name)
+    if not sessions:
+        raise FileNotFoundError(f"No session folders found under {bw_dir}")
+    return sessions[-1].name
+
+
+def find_periodic_pair(
+    *,
+    session_id: str,
+    num_clients: int | None = None,
+    target_round: int | None = None,
+) -> tuple[int, str, dict[int, str]] | None:
+    """
+    Find a strictly paired periodic checkpoint set:
+      - server_round_<R>.pth
+      - client_<cid>_round_<R>.pth for all available clients at round R,
+        or all cid in [1..num_clients] if num_clients is provided.
+    """
+    session_dir = project_root / "bestweights" / session_id
+    periodic_dir = session_dir / "periodic"
+    if not periodic_dir.is_dir():
+        return None
+
+    server_by_round: dict[int, str] = {}
+    for p in periodic_dir.glob("server_round_*.pth"):
+        try:
+            r = int(p.stem.split("_")[-1])
+        except ValueError:
+            continue
+        server_by_round[r] = str(p)
+    if not server_by_round:
+        return None
+
+    client_by_round: dict[int, dict[int, str]] = {}
+    for p in periodic_dir.glob("client_*_round_*.pth"):
+        parts = p.stem.split("_")
+        try:
+            cid = int(parts[1])
+            rnd = int(parts[3])
+        except (IndexError, ValueError):
+            continue
+        client_by_round.setdefault(cid, {})[rnd] = str(p)
+
+    if target_round is not None:
+        candidate_rounds = [target_round]
+    else:
+        candidate_rounds = sorted(server_by_round.keys(), reverse=True)
+
+    for rnd in candidate_rounds:
+        server_path = server_by_round.get(rnd)
+        if not server_path:
+            continue
+        cmap: dict[int, str] = {}
+        if num_clients is None:
+            expected_cids = sorted(cid for cid, by_round in client_by_round.items() if rnd in by_round)
+        else:
+            expected_cids = list(range(1, num_clients + 1))
+        if not expected_cids:
+            continue
+        ok = True
+        for cid in expected_cids:
+            cpath = client_by_round.get(cid, {}).get(rnd)
+            if not cpath:
+                ok = False
+                break
+            cmap[cid] = cpath
+        if ok:
+            return rnd, server_path, cmap
+    return None
 
 
 def find_best_server(session_id: str | None = None) -> str:
@@ -174,6 +253,69 @@ def find_matching_clients(server_path: str, *, allow_cross_session_fallback: boo
     return matched
 
 
+def _metrics_from_cm(tp: int, fn: int, fp: int, tn: int) -> dict[str, float | int]:
+    total = max(1, tp + fn + fp + tn)
+    accuracy = float((tp + tn) / total * 100.0)
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+    f1 = (
+        float(2.0 * recall * precision / (recall + precision))
+        if not np.isnan(recall) and not np.isnan(precision) and (recall + precision) > 0
+        else float("nan")
+    )
+    return {
+        "accuracy": accuracy,
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+        "tp": int(tp),
+        "fn": int(fn),
+        "fp": int(fp),
+        "tn": int(tn),
+    }
+
+
+def _resolve_eval_settings(server_raw: dict | object) -> tuple[dict, str]:
+    snapshot = (
+        server_raw.get("config_snapshot")
+        if isinstance(server_raw, dict) and isinstance(server_raw.get("config_snapshot"), dict)
+        else None
+    )
+    source = "checkpoint_snapshot" if snapshot is not None else "runtime_config"
+
+    def _setting(path: tuple[str, ...], default):
+        if snapshot is not None:
+            snap_value = get_nested(snapshot, path, None)
+            if snap_value is not None:
+                return snap_value
+        return get_nested(cfg, path, default)
+
+    settings = {
+        "test_days": int(_setting(("data", "test_days"), 14)),
+        "end_date_str": str(_setting(("data_download", "end_date"), "2026-03-10T00:00:00")),
+        "eval_max_samples": max(0, int(_setting(("training", "eval_max_samples_per_sensor"), 0))),
+        "seq_len": int(_setting(("model", "seq_len"), 24)),
+        "input_size": int(_setting(("model", "input_size"), 5)),
+        "hidden_size": int(_setting(("model", "hidden_size"), 64)),
+        "head_width": int(_setting(("model", "server_head_width"), 64)),
+        "head_dropout": float(_setting(("model", "server_head_dropout"), 0.1)),
+        "num_clients": max(1, int(_setting(("federated", "num_clients"), 1))),
+        "processed_dir": str(_setting(("data", "processed_dir"), "dataset/processed")),
+        "active_features": feature_cols_from_cfg(snapshot),
+        "prob_threshold": float(rain_probability_threshold(config=snapshot)),
+        "rain_threshold": float(rain_threshold_mm(config=snapshot)),
+        "target_mode": str(target_transform_mode(config=snapshot)),
+        "config_snapshot_used": snapshot is not None,
+    }
+    server_cfg = server_raw.get("config", {}) if isinstance(server_raw, dict) else {}
+    if isinstance(server_cfg, dict) and server_cfg.get("hidden_size") is not None:
+        settings["hidden_size"] = int(server_cfg.get("hidden_size"))
+
+    split_date = pd.Timestamp(settings["end_date_str"]).tz_localize(None) - pd.Timedelta(days=settings["test_days"])
+    settings["split_date"] = split_date
+    return settings, source
+
+
 def evaluate_client(
     client_id: int,
     client_path: str,
@@ -184,13 +326,18 @@ def evaluate_client(
     seq_len: int,
     input_size: int,
     hidden_size: int,
+    num_clients: int,
+    processed_dir: str,
+    active_features: list[str],
+    prob_threshold: float,
+    rain_threshold: float,
+    target_mode: str,
 ) -> dict:
     """
     Load one client model and evaluate it against all sensor files.
     Returns a dict with mse, mae, accuracy, and sample count.
     """
     criterion = nn.MSELoss()
-    prob_threshold = rain_probability_threshold()
 
     # ── Load checkpoint (supports both new dict format and old bare state_dict) ──
     raw = torch.load(client_path, map_location="cpu", weights_only=True)
@@ -217,13 +364,12 @@ def evaluate_client(
     client_model.eval()
     print(f"[Client {client_id}] Architecture: hidden={hidden_size}, layers={num_layers}")
 
-    data_dir = project_root / cfg.get("data", {}).get("processed_dir", "dataset/processed")
+    data_dir = project_root / processed_dir
     all_files = sorted(data_dir.glob("*.parquet"))
     if not all_files:
         print(f"  [ERROR] No parquet files found in {data_dir}")
         return {}
 
-    num_clients = max(1, int(cfg.get("federated", {}).get("num_clients", 1)))
     if 1 <= client_id <= num_clients:
         client_files = partition_client_files(
             [str(p) for p in all_files],
@@ -243,12 +389,8 @@ def evaluate_client(
         print(f"  [ERROR] Client {client_id}: assigned 0 sensor files for evaluation.")
         return {}
 
-    active_features = cfg.get("data", {}).get(
-        "feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"]
-    )
-
     total_loss, total_batches = 0.0, 0
-    all_targets, all_preds = [], []
+    all_targets, all_preds, all_probs = [], [], []
     sensor_data_cache: dict[Path, pd.DataFrame] = {}
     for file in client_files:
         sensor_data_cache[file] = load_sensor_data(str(file))
@@ -287,13 +429,15 @@ def evaluate_client(
                 smashed = client_model(x)
                 rain_logit, rain_amount = server_model(smashed)
                 rain_prob = torch.sigmoid(rain_logit).item()
-                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
+                raw_pred_val = inverse_target_scalar(rain_amount.item(), mode=target_mode)
+                pred_val = raw_pred_val if rain_prob >= prob_threshold else 0.0
                 pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
 
                 total_loss += criterion(pred, y).item()
                 total_batches += 1
                 all_targets.append(target_val)
                 all_preds.append(pred_val)
+                all_probs.append(rain_prob)
 
     if total_batches == 0:
         print(f"  [ERROR] Client {client_id}: No test samples evaluated.")
@@ -303,20 +447,22 @@ def evaluate_client(
     preds_arr   = np.array(all_preds)
     mse      = total_loss / total_batches
     mae      = float(np.mean(np.abs(targets_arr - preds_arr)))
-    y_true = np.array([1 if is_rain(t) else 0 for t in targets_arr], dtype=np.int32)
-    y_pred = np.array([1 if is_rain(p) else 0 for p in preds_arr], dtype=np.int32)
-    tp = int(((y_true == 1) & (y_pred == 1)).sum())
-    fn = int(((y_true == 1) & (y_pred == 0)).sum())
-    fp = int(((y_true == 0) & (y_pred == 1)).sum())
-    tn = int(((y_true == 0) & (y_pred == 0)).sum())
-    accuracy = float(((tp + tn) / max(1, len(y_true))) * 100.0)
-    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
-    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
-    f1 = (
-        float(2.0 * recall * precision / (recall + precision))
-        if not np.isnan(recall) and not np.isnan(precision) and (recall + precision) > 0
-        else float("nan")
-    )
+    probs_arr = np.array(all_probs)
+    y_true = np.array([1 if is_rain(t, threshold=rain_threshold) else 0 for t in targets_arr], dtype=np.int32)
+
+    y_pred_cls = (probs_arr >= prob_threshold).astype(np.int32)
+    cls_tp = int(((y_true == 1) & (y_pred_cls == 1)).sum())
+    cls_fn = int(((y_true == 1) & (y_pred_cls == 0)).sum())
+    cls_fp = int(((y_true == 0) & (y_pred_cls == 1)).sum())
+    cls_tn = int(((y_true == 0) & (y_pred_cls == 0)).sum())
+    cls_metrics = _metrics_from_cm(cls_tp, cls_fn, cls_fp, cls_tn)
+
+    y_pred_op = np.array([1 if is_rain(p, threshold=rain_threshold) else 0 for p in preds_arr], dtype=np.int32)
+    op_tp = int(((y_true == 1) & (y_pred_op == 1)).sum())
+    op_fn = int(((y_true == 1) & (y_pred_op == 0)).sum())
+    op_fp = int(((y_true == 0) & (y_pred_op == 1)).sum())
+    op_tn = int(((y_true == 0) & (y_pred_op == 0)).sum())
+    op_metrics = _metrics_from_cm(op_tp, op_fn, op_fp, op_tn)
 
     return {
         "client_id":   client_id,
@@ -325,14 +471,25 @@ def evaluate_client(
         "samples":     total_batches,
         "mse":         mse,
         "mae":         mae,
-        "accuracy":    accuracy,
-        "recall":      recall,
-        "precision":   precision,
-        "f1":          f1,
-        "tp":          tp,
-        "fn":          fn,
-        "fp":          fp,
-        "tn":          tn,
+        "accuracy":    cls_metrics["accuracy"],
+        "recall":      cls_metrics["recall"],
+        "precision":   cls_metrics["precision"],
+        "f1":          cls_metrics["f1"],
+        "tp":          cls_metrics["tp"],
+        "fn":          cls_metrics["fn"],
+        "fp":          cls_metrics["fp"],
+        "tn":          cls_metrics["tn"],
+        "op_accuracy": op_metrics["accuracy"],
+        "op_recall":   op_metrics["recall"],
+        "op_precision": op_metrics["precision"],
+        "op_f1":       op_metrics["f1"],
+        "op_tp":       op_metrics["tp"],
+        "op_fn":       op_metrics["fn"],
+        "op_fp":       op_metrics["fp"],
+        "op_tn":       op_metrics["tn"],
+        "prob_threshold": prob_threshold,
+        "rain_threshold_mm": rain_threshold,
+        "target_transform": target_mode,
     }
 
 
@@ -349,6 +506,12 @@ def evaluate():
         help="Evaluate a specific session ID under bestweights/ and results/ (recommended).",
     )
     parser.add_argument(
+        "--round",
+        type=int,
+        default=None,
+        help="Evaluate a specific round. Requires a strict paired periodic checkpoint set.",
+    )
+    parser.add_argument(
         "--allow-cross-session-fallback",
         action="store_true",
         help="Allow searching client checkpoints across all sessions if current session lacks clients.",
@@ -359,31 +522,35 @@ def evaluate():
     print("   🚀 AUTO EVALUATION — ALL CLIENTS (TEST DATA)   ")
     print("=" * 55)
 
-    # Config
-    test_days   = cfg.get("data",  {}).get("test_days",   14)
-    end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
-    split_date  = pd.Timestamp(end_date_str).tz_localize(None) - pd.Timedelta(days=test_days)
-    eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
-    seq_len     = cfg.get("model", {}).get("seq_len",     24)
-    input_size  = cfg.get("model", {}).get("input_size",   5)
-    hidden_size = cfg.get("model", {}).get("hidden_size", 64)
-    head_width  = cfg.get("model", {}).get("server_head_width", 64)
-    head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
-    device      = torch.device(args.device)
-    print(
-        f"[INFO] Split Date: {split_date} | seq_len={seq_len} | device={device} | "
-        f"per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'}"
+    device = torch.device(args.device)
+
+    # ── Step 1: Select session and checkpoint pairing mode ────────────
+    selected_session = args.session or _find_latest_session_id()
+    pairing_mode = "latest_best"
+
+    paired = find_periodic_pair(
+        session_id=selected_session,
+        num_clients=None,
+        target_round=args.round,
     )
+    if paired is not None:
+        paired_round, server_path, client_map = paired
+        pairing_mode = f"periodic_round_{paired_round}"
+        print(f"[INFO] Using strict paired periodic checkpoints at round {paired_round}")
+    else:
+        if args.round is not None:
+            raise FileNotFoundError(
+                f"No strict paired periodic checkpoints found for session={selected_session}, round={args.round}."
+            )
+        # Fallback keeps backward compatibility but may be less strict.
+        server_path = find_best_server(session_id=selected_session)
+        client_map = find_matching_clients(
+            server_path,
+            allow_cross_session_fallback=args.allow_cross_session_fallback,
+        )
+        print("[WARN] Falling back to latest/best checkpoint selection (non-strict pairing).")
 
-    # ── Step 1: Auto-select the latest server model ──────────────────
-    server_path = find_best_server(session_id=args.session)
-    selected_session = Path(server_path).parent.name if Path(server_path).parent != (project_root / "bestweights") else "flat_bestweights"
-
-    # ── Step 2: Find all client models from the same session ─────────
-    client_map = find_matching_clients(
-        server_path,
-        allow_cross_session_fallback=args.allow_cross_session_fallback,
-    )   # {client_id: path}
+    # ── Step 2: Summary of selected client checkpoints ───────────────
     print(f"\n[INFO] Found {len(client_map)} client model(s) to evaluate: {sorted(client_map.keys())}")
 
     # ── Step 3: Load server model once (shared across all clients) ───
@@ -396,6 +563,26 @@ def evaluate():
         server_state  = server_raw
         server_round  = "N/A"
         print("[INFO] Server: legacy checkpoint (bare state_dict)")
+
+    eval_settings, eval_cfg_source = _resolve_eval_settings(server_raw)
+    split_date = eval_settings["split_date"]
+    seq_len = eval_settings["seq_len"]
+    input_size = eval_settings["input_size"]
+    hidden_size = eval_settings["hidden_size"]
+    head_width = eval_settings["head_width"]
+    head_dropout = eval_settings["head_dropout"]
+    eval_max_samples = eval_settings["eval_max_samples"]
+    num_clients = eval_settings["num_clients"]
+    processed_dir = eval_settings["processed_dir"]
+    active_features = eval_settings["active_features"]
+    prob_threshold = eval_settings["prob_threshold"]
+    rain_threshold = eval_settings["rain_threshold"]
+    target_mode = eval_settings["target_mode"]
+    print(
+        f"[INFO] Eval config source: {eval_cfg_source} | split_date={split_date} | "
+        f"seq_len={seq_len} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "
+        f"p(rain)>={prob_threshold:.2f} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | device={device}"
+    )
 
     server_model = ServerHead(
         hidden_size=hidden_size,
@@ -423,46 +610,55 @@ def evaluate():
             seq_len=seq_len,
             input_size=input_size,
             hidden_size=hidden_size,
+            num_clients=num_clients,
+            processed_dir=processed_dir,
+            active_features=active_features,
+            prob_threshold=prob_threshold,
+            rain_threshold=rain_threshold,
+            target_mode=target_mode,
         )
         if result:
             all_results.append(result)
             print(f"  ✅ Client {cid} | Samples={result['samples']:,} | "
                   f"MSE={result['mse']:.4f} | MAE={result['mae']:.4f} mm | "
-                  f"Accuracy={result['accuracy']:.2f}% | "
-                  f"Recall={result['recall']:.3f} | Precision={result['precision']:.3f} | F1={result['f1']:.3f}")
+                  f"ClsF1={result['f1']:.3f} | OpF1={result['op_f1']:.3f} | "
+                  f"ClsR={result['recall']:.3f} | ClsP={result['precision']:.3f}")
 
     # ── Step 5: Print combined summary ─────────────────────────────────
     if not all_results:
         print("\n[ERROR] No clients were successfully evaluated.")
         return
 
-    W = 70  # table width
+    W = 96  # table width
     print("\n" + "=" * W)
     print("\U0001f3c6  FINAL EVALUATION REPORT (14-DAY TEST SET)")
     print(f"   Session           : {selected_session}")
+    print(f"   Pairing mode      : {pairing_mode}")
     print(f"   Server checkpoint : {Path(server_path).name}  (round={server_round})")
+    print(f"   Eval cfg source   : {eval_cfg_source}")
     print("=" * W)
     hdr = (f"  {'Client':<8} {'BestRound':>10} {'TrainLoss':>10}"
-           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'Accuracy':>10}  {'F1':>8}")
+           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'ClsAcc':>8}  {'ClsF1':>8}  {'OpF1':>8}")
     sep = (f"  {'──────':<8} {'─────────':>10} {'─────────':>10}"
-           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'────────':>10}  {'──────':>8}")
+           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'──────':>8}  {'──────':>8}  {'──────':>8}")
     print(hdr)
     print(sep)
     for r in all_results:
         br  = str(r['best_round'])
         tl  = f"{r['train_loss']:.4f}" if not np.isnan(r['train_loss']) else "N/A"
         print(f"  {r['client_id']:<8} {br:>10} {tl:>10}"
-              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>9.2f}%  {r['f1']:>8.4f}")
+              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>7.2f}%  {r['f1']:>8.4f}  {r['op_f1']:>8.4f}")
 
     if len(all_results) > 1:
         avg_mse = np.mean([r["mse"]      for r in all_results])
         avg_mae = np.mean([r["mae"]      for r in all_results])
         avg_acc = np.mean([r["accuracy"] for r in all_results])
         avg_f1  = np.mean([r["f1"] for r in all_results if not np.isnan(r["f1"])]) if any(not np.isnan(r["f1"]) for r in all_results) else float("nan")
+        avg_op_f1 = np.mean([r["op_f1"] for r in all_results if not np.isnan(r["op_f1"])]) if any(not np.isnan(r["op_f1"]) for r in all_results) else float("nan")
         tot     = sum(    r["samples"]   for r in all_results)
         print(sep)
         print(f"  {'AVERAGE':<8} {'':>10} {'':>10}"
-              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>9.2f}%  {avg_f1:>8.4f}")
+              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>7.2f}%  {avg_f1:>8.4f}  {avg_op_f1:>8.4f}")
     print("=" * W + "\n")
 
     results_dir = project_root / "results" / selected_session
@@ -473,11 +669,26 @@ def evaluate():
     report_json = results_dir / f"evaluation_report_{selected_session}.json"
     summary = {
         "session": selected_session,
+        "pairing_mode": pairing_mode,
         "server_checkpoint": Path(server_path).name,
         "server_round": server_round,
         "device": str(device),
         "split_date": str(split_date),
         "eval_max_samples_per_sensor": eval_max_samples,
+        "eval_config_source": eval_cfg_source,
+        "eval_config": {
+            "num_clients": num_clients,
+            "processed_dir": processed_dir,
+            "feature_cols": active_features,
+            "seq_len": seq_len,
+            "input_size": input_size,
+            "hidden_size": hidden_size,
+            "server_head_width": head_width,
+            "server_head_dropout": head_dropout,
+            "rain_probability_threshold": prob_threshold,
+            "rain_threshold_mm": rain_threshold,
+            "target_transform": target_mode,
+        },
         "num_clients_evaluated": len(all_results),
         "clients": all_results,
     }

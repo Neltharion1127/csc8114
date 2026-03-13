@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -45,6 +46,7 @@ def evaluate_epoch(
             "num_layers": num_layers_ckpt,
             "input_size": cfg.get("model", {}).get("input_size", 5),
         },
+        "config_snapshot": copy.deepcopy(cfg),
         "session_id": session_id,
         "client_id": client_id,
     }

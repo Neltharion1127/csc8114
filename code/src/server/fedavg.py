@@ -8,6 +8,7 @@ import threading
 import torch
 
 from proto import fsl_pb2
+from src.shared.common import cfg
 from src.shared.serialization import tensor_to_bytes
 
 
@@ -104,6 +105,7 @@ class FedAvgCoordinator:
             "config": {
                 "hidden_size": self.hidden_size,
             },
+            "config_snapshot": copy.deepcopy(cfg),
             "session_id": self.session_id,
         }
         server_model_path = os.path.join(

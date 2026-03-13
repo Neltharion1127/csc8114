@@ -7,7 +7,7 @@ import torch
 from src.client.data_pipeline import collect_test_indices_capped, load_sensor_data, sample_index
 from src.client.forward_step import run_forward_step
 from src.client.scheduler_state import SchedulerState
-from src.shared.targets import is_rain
+from src.shared.targets import is_rain, rain_probability_threshold
 
 
 def preload_sensor_data(client_id: int, client_files: list[str]) -> dict[str, pd.DataFrame]:
@@ -46,6 +46,8 @@ def build_test_index_cache(
     sensor_data_cache: dict[str, pd.DataFrame],
     split_date: pd.Timestamp,
     eval_max_samples: int,
+    seq_len: int,
+    horizon: int = 3,
 ) -> tuple[dict[str, np.ndarray], int, int]:
     test_index_cache: dict[str, np.ndarray] = {}
     total_eval_samples = 0
@@ -55,6 +57,8 @@ def build_test_index_cache(
             df,
             split_date,
             eval_max_samples=eval_max_samples,
+            min_history=seq_len,
+            horizon=horizon,
         )
         test_index_cache[file_path] = test_indices
         total_eval_samples += int(len(test_indices))
@@ -83,9 +87,12 @@ def run_train_epoch(
     device: torch.device,
     local_steps: int,
     rain_sample_ratio: float,
+    seq_len: int,
     epoch: int,
     experimental_logs: list[dict],
     epoch_logs: list[dict],
+    horizon: int = 3,
+    rain_threshold: float | None = None,
 ) -> int:
     epoch_train_steps = 0
     for file_path in client_files:
@@ -101,6 +108,9 @@ def run_train_epoch(
                     split_date,
                     is_training=True,
                     rain_sample_ratio=rain_sample_ratio,
+                    min_history=seq_len,
+                    horizon=horizon,
+                    rain_threshold=rain_threshold,
                 )
                 if result is None:
                     continue
@@ -122,6 +132,7 @@ def run_train_epoch(
                     device,
                     is_training=True,
                     last_latency_ms=train_state.last_latency_ms,
+                    seq_len=seq_len,
                 )
                 train_state.update(log_entry)
                 epoch_train_steps += 1
@@ -146,12 +157,14 @@ def run_eval_epoch(
     feature_cols: list[str],
     feat_stats: tuple[np.ndarray, np.ndarray],
     device: torch.device,
+    seq_len: int,
     epoch: int,
     experimental_logs: list[dict],
     epoch_logs: list[dict],
 ) -> tuple[list[float], int, int, int, int]:
     epoch_test_losses: list[float] = []
     tp = fn = fp = tn = 0
+    prob_threshold = rain_probability_threshold()
     with torch.no_grad():
         for file_path in client_files:
             sensor_id = Path(file_path).stem
@@ -180,6 +193,7 @@ def run_eval_epoch(
                         device,
                         is_training=False,
                         last_latency_ms=test_state.last_latency_ms,
+                        seq_len=seq_len,
                     )
                     test_state.update(log_entry)
                     epoch_record = {"Epoch": epoch + 1, "Status": "TEST", "Sensor": sensor_id, **log_entry}
@@ -188,7 +202,7 @@ def run_eval_epoch(
                     if log_entry["Loss"] is not None:
                         epoch_test_losses.append(float(log_entry["Loss"]))
                     true_rain = is_rain(float(log_entry["Target"]))
-                    pred_rain = is_rain(float(log_entry["Prediction"]))
+                    pred_rain = float(log_entry.get("RainProbability", 0.0)) >= prob_threshold
                     if true_rain and pred_rain:
                         tp += 1
                     elif true_rain and not pred_rain:

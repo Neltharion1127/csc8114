@@ -8,7 +8,7 @@ from src.models.split_lstm import ClientLSTM
 from src.shared.common import cfg
 from src.shared.compression import compress, decompress
 from src.shared.runtime import maybe_autocast
-from src.shared.targets import transform_target_scalar
+from src.shared.targets import is_rain, transform_target_scalar
 
 
 def run_forward_step(
@@ -27,6 +27,7 @@ def run_forward_step(
     device: torch.device = torch.device("cpu"),
     is_training: bool = True,
     last_latency_ms: float = 0.0,
+    seq_len: int | None = None,
 ) -> dict:
     """
     Runs one split-learning request/response cycle and returns the step log.
@@ -35,8 +36,9 @@ def run_forward_step(
     profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
     cls_weight = float(cfg.get("training", {}).get("classification_loss_weight", 1.0))
     reg_weight = float(cfg.get("training", {}).get("regression_loss_weight", 1.0))
+    seq_len = int(seq_len if seq_len is not None else cfg.get("model", {}).get("seq_len", 24))
 
-    raw_data = df[feature_cols].iloc[target_idx - 24:target_idx].values
+    raw_data = df[feature_cols].iloc[target_idx - seq_len:target_idx].values
     if feat_stats:
         mean, std = feat_stats
         raw_data = (raw_data - mean) / std
@@ -82,7 +84,7 @@ def run_forward_step(
     regression_loss = float(getattr(response, "regression_loss", 0.0))
 
     if log_step_details:
-        icon = "RAIN" if target_value > 0 else "DRY"
+        icon = "RAIN" if is_rain(target_value) else "DRY"
         print(f"[{icon}] [{mode}] {sensor_id[:10]} | 3h Target: {target_value:.2f} | Loss: {current_loss:.6f}")
 
     if is_training:
@@ -101,7 +103,7 @@ def run_forward_step(
     return {
         "Target": target_value,
         "Prediction": prediction_val,
-        "RainFlag": 1 if target_value > 0 else 0,
+        "RainFlag": int(is_rain(target_value)),
         "Loss": current_loss,
         "RainProbability": rain_probability,
         "ClassificationLoss": classification_loss,

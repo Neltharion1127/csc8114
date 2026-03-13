@@ -12,6 +12,7 @@ SERVER_DEVICE ?= cpu
 CLIENT_DEVICE ?= mps
 STARTUP_TIMEOUT ?= 60
 PLOT_DEVICE ?= cpu
+AUTO_PLOT ?= 0
 UV_CACHE_DIR ?= .uv-cache
 UV := UV_CACHE_DIR=$(UV_CACHE_DIR) UV_LINK_MODE=copy uv
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
@@ -29,6 +30,7 @@ help:
 	@echo "  make plot-latest     - Plot latest session (training curve + server metrics)"
 	@echo "  make plot-session SESSION=<id> - Plot a specific session"
 	@echo "  make plot-confusion SESSION=<id> - Plot confusion matrices for one session"
+	@echo "  AUTO_PLOT=1          - Enable auto-plot after run-native/run-network (default: 0)"
 	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
 	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
 	@echo "  make clean-native    - Kill native server/client Python processes"
@@ -70,7 +72,7 @@ run-network: clean
 		(docker logs -f fsl-client-$$i 2>&1 | awk -v prefix=$$(printf "fsl-client-%d" $$i) -v color="$$color" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, prefix, reset, $$0; fflush()}') & \
 	done; \
 	wait; \
-	$(MAKE) plot-latest
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
 
 # Backward-compatible alias
 test-network: run-network
@@ -107,7 +109,7 @@ run-native-client:
 		pids="$$pids $$!"; \
 	done; \
 	wait $$pids; \
-	$(MAKE) plot-latest
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
 
 plot-latest:
 	@SESSION=$$(ls -1dt results/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
@@ -203,7 +205,7 @@ run-native:
 		pids="$$pids $$!"; \
 	done; \
 	wait $$pids; \
-	$(MAKE) plot-latest
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
 
 check-native-port:
 	@if lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P >/dev/null 2>&1; then \

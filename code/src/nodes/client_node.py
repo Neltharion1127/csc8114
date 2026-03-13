@@ -24,13 +24,11 @@ from src.client.training_loop import (
 )
 from src.models.split_lstm import ClientLSTM
 
-from src.shared.common import cfg, project_root
+from src.shared.common import cfg, feature_cols_from_cfg, project_root
 from src.shared.runtime import grpc_channel_options, resolve_device, resolve_server_address, set_global_seed
+from src.shared.targets import rain_threshold_mm
 
-FEATURE_COLS = cfg.get("data", {}).get(
-    "feature_cols",
-    ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"],
-)
+FEATURE_COLS = feature_cols_from_cfg()
 
 end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
 test_days = cfg.get("data", {}).get("test_days", 14)
@@ -136,6 +134,9 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
             local_steps = max(1, int(cfg.get("training", {}).get("local_steps", 1)))
             rain_sample_ratio = float(cfg.get("training", {}).get("rain_sample_ratio", 0.35))
+            rain_threshold = rain_threshold_mm()
+            seq_len = int(cfg.get("model", {}).get("seq_len", 24))
+            target_horizon = 3
             periodic_dir = os.path.join(session_dir, "periodic")
             os.makedirs(periodic_dir, exist_ok=True)
             os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
@@ -152,6 +153,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 sensor_data_cache=sensor_data_cache,
                 split_date=SPLIT_DATE,
                 eval_max_samples=eval_max_samples,
+                seq_len=seq_len,
+                horizon=target_horizon,
             )
 
             train_state = SchedulerState(compression_mode=compression_mode)
@@ -179,9 +182,12 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     device=device,
                     local_steps=local_steps,
                     rain_sample_ratio=rain_sample_ratio,
+                    seq_len=seq_len,
                     epoch=epoch,
                     experimental_logs=experimental_logs,
                     epoch_logs=epoch_logs,
+                    horizon=target_horizon,
+                    rain_threshold=rain_threshold,
                 )
 
                 if epoch_train_steps:
@@ -231,6 +237,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     feature_cols=FEATURE_COLS,
                     feat_stats=feat_stats,
                     device=device,
+                    seq_len=seq_len,
                     epoch=epoch,
                     experimental_logs=experimental_logs,
                     epoch_logs=epoch_logs,

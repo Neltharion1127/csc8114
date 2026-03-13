@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from src.shared.targets import is_rain
+
 
 def partition_client_files(
     all_files: list[str],
@@ -89,20 +91,32 @@ def sample_index(
     *,
     is_training: bool = True,
     rain_sample_ratio: float | None = None,
+    min_history: int = 24,
+    horizon: int = 3,
+    rain_threshold: float | None = None,
 ) -> tuple[int, str] | None:
     """Pick one train/test sample with optional rain oversampling."""
     split_pos = resolve_split_pos(df, split_date)
 
     all_indices = np.arange(len(df))
-    base_mask = (all_indices >= 24) & (all_indices < len(df) - 3)
+    base_mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
 
     if is_training:
         base_mask = base_mask & (all_indices < split_pos)
     else:
         base_mask = base_mask & (all_indices >= split_pos)
 
-    rainy_pos = all_indices[base_mask & (df["future_3h_rain"] > 0)]
-    dry_pos = all_indices[base_mask & (df["future_3h_rain"] == 0)]
+    target_arr = pd.to_numeric(df["future_3h_rain"], errors="coerce").to_numpy(dtype=float)
+    valid_target = np.isfinite(target_arr)
+    rain_mask = np.zeros_like(valid_target, dtype=bool)
+    rain_mask[valid_target] = np.array(
+        [is_rain(v, threshold=rain_threshold) for v in target_arr[valid_target]],
+        dtype=bool,
+    )
+    dry_mask = valid_target & ~rain_mask
+
+    rainy_pos = all_indices[base_mask & rain_mask]
+    dry_pos = all_indices[base_mask & dry_mask]
 
     if rain_sample_ratio is None:
         rain_sample_ratio = 0.5 if is_training else 0.0

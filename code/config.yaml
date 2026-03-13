@@ -9,6 +9,13 @@ data:
   test_days: 14
   train_ratio: 0.7
   val_ratio: 0.15
+  # Feature columns consumed by model/data pipeline (preferred location)
+  feature_cols:
+    - Temperature
+    - Humidity
+    - Pressure
+    - Wind Speed
+    - Rain
 federated:
   num_clients: 3
   rho: 1
@@ -41,25 +48,25 @@ training:
   seed: 42
   batch_size: 32
   classification_loss_weight: 1.0
-  classification_positive_weight: 1.8
+  classification_positive_weight: 1.3
   classification_loss_type: focal # weighted_bce | focal
   focal_gamma: 2.0
   focal_alpha: 0.25 # [0,1] to enable alpha balancing; negative means disabled
   rain_threshold_mm: 0.1
-  rain_probability_threshold: 0.45
+  rain_probability_threshold: 0.43
   local_steps: 10
   lr: 0.0005
-  num_rounds: 100
-  rain_sample_ratio: 0.35
+  num_rounds: 30
+  rain_sample_ratio: 0.30
   regression_loss_weight: 2.0
   target_transform: log1p
   start_delay: 8
   device: auto  # auto | cuda | mps | cpu
   mixed_precision: auto  # none | auto | bf16
   use_gpu: true # legacy switch (kept for backward compatibility)
-  checkpoint_interval: 10  # Save a periodic checkpoint every N rounds
-  early_stopping_patience: 30
-  eval_max_samples_per_sensor: 64
+  checkpoint_interval: 1  # Save a periodic checkpoint every N rounds
+  early_stopping_patience: 10
+  eval_max_samples_per_sensor: 0
 server:
   log_flush_interval: 1000
   max_workers: 10
@@ -67,7 +74,7 @@ server:
 data_download:
   start_date: "2023-01-01T00:00:00"
   end_date: "2026-3-10T00:00:00"      # up to today
-  # Feature columns used by the model/data pipeline
+  # Legacy location kept for backward compatibility (new code prefers data.feature_cols)
   feature_cols:
     - Temperature
     - Humidity

@@ -26,7 +26,7 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from src.shared.targets import rain_threshold_mm
+from src.shared.targets import rain_probability_threshold, rain_threshold_mm
 
 
 def _find_session(session_id: str | None) -> Path:
@@ -55,14 +55,37 @@ def _latest_client_logs(session_dir: Path) -> dict[int, Path]:
     return by_client
 
 
-def _confusion_counts(df: pd.DataFrame, *, threshold_mm: float) -> tuple[int, int, int, int]:
-    y_true = (df["Target"] > threshold_mm).astype(int)
-    y_pred = (df["Prediction"] > threshold_mm).astype(int)
+def _confusion_counts(
+    df: pd.DataFrame,
+    *,
+    threshold_mm: float,
+    decision: str,
+    prob_threshold: float,
+) -> tuple[int, int, int, int]:
+    y_true = (pd.to_numeric(df["Target"], errors="coerce") > threshold_mm).astype(int)
+    if decision == "probability" and "RainProbability" in df.columns:
+        probs = pd.to_numeric(df["RainProbability"], errors="coerce").fillna(0.0)
+        y_pred = (probs >= prob_threshold).astype(int)
+    else:
+        preds = pd.to_numeric(df["Prediction"], errors="coerce").fillna(0.0)
+        y_pred = (preds > threshold_mm).astype(int)
     tp = int(((y_true == 1) & (y_pred == 1)).sum())
     fn = int(((y_true == 1) & (y_pred == 0)).sum())
     fp = int(((y_true == 0) & (y_pred == 1)).sum())
     tn = int(((y_true == 0) & (y_pred == 0)).sum())
     return tp, fn, fp, tn
+
+
+def _select_scope(df: pd.DataFrame, *, scope: str) -> tuple[pd.DataFrame, int | None]:
+    if scope != "latest":
+        return df, None
+    if "Epoch" not in df.columns or df.empty:
+        return df, None
+    epoch_values = pd.to_numeric(df["Epoch"], errors="coerce").dropna()
+    if epoch_values.empty:
+        return df, None
+    latest_epoch = int(epoch_values.max())
+    return df[pd.to_numeric(df["Epoch"], errors="coerce") == latest_epoch], latest_epoch
 
 
 def _draw_cm(ax, tp: int, fn: int, fp: int, tn: int, *, title: str) -> None:
@@ -123,9 +146,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--session", type=str, default=None, help="Session folder under results/")
     parser.add_argument("--phase", type=str, default="both", choices=["TRAIN", "TEST", "both"])
+    parser.add_argument("--scope", type=str, default="latest", choices=["latest", "all"], help="Use latest epoch only or all epochs")
+    parser.add_argument(
+        "--decision",
+        type=str,
+        default="probability",
+        choices=["probability", "prediction"],
+        help="Use RainProbability or final Prediction for rain/no-rain decision.",
+    )
     parser.add_argument("--threshold-mm", type=float, default=None, help="Rain classification threshold in mm")
+    parser.add_argument("--prob-threshold", type=float, default=None, help="Probability threshold when decision=probability")
     args = parser.parse_args()
     threshold_mm = rain_threshold_mm() if args.threshold_mm is None else float(args.threshold_mm)
+    prob_threshold = rain_probability_threshold() if args.prob_threshold is None else float(args.prob_threshold)
 
     session_dir = _find_session(args.session)
     logs = _latest_client_logs(session_dir)
@@ -142,28 +175,50 @@ def main() -> None:
         for col_idx, cid in enumerate(sorted(logs)):
             df = pd.read_csv(logs[cid])
             phase_df = df[df["Status"] == phase] if "Status" in df.columns else pd.DataFrame()
+            phase_df, selected_epoch = _select_scope(phase_df, scope=args.scope)
             if phase_df.empty:
                 tp = fn = fp = tn = 0
             else:
-                tp, fn, fp, tn = _confusion_counts(phase_df, threshold_mm=threshold_mm)
+                tp, fn, fp, tn = _confusion_counts(
+                    phase_df,
+                    threshold_mm=threshold_mm,
+                    decision=args.decision,
+                    prob_threshold=prob_threshold,
+                )
             total_tp += tp
             total_fn += fn
             total_fp += fp
             total_tn += tn
-            title = f"Client {cid} - {phase}\n{_phase_metrics(tp, fn, fp, tn)}"
+            epoch_tag = f" | E{selected_epoch}" if selected_epoch is not None else ""
+            title = f"Client {cid} - {phase}{epoch_tag}\n{_phase_metrics(tp, fn, fp, tn)}"
             _draw_cm(axes[row_idx, col_idx], tp, fn, fp, tn, title=title)
-            row = {"session": session_dir.name, "phase": phase, "client_id": cid}
+            row = {
+                "session": session_dir.name,
+                "phase": phase,
+                "client_id": cid,
+                "scope": args.scope,
+                "decision": args.decision,
+                "selected_epoch": selected_epoch,
+            }
             row.update(_metric_values(tp, fn, fp, tn))
             rows.append(row)
 
         agg_title = f"ALL Clients - {phase}\n{_phase_metrics(total_tp, total_fn, total_fp, total_tn)}"
         _draw_cm(axes[row_idx, n_cols - 1], total_tp, total_fn, total_fp, total_tn, title=agg_title)
-        agg_row = {"session": session_dir.name, "phase": phase, "client_id": "ALL"}
+        agg_row = {
+            "session": session_dir.name,
+            "phase": phase,
+            "client_id": "ALL",
+            "scope": args.scope,
+            "decision": args.decision,
+            "selected_epoch": "ALL",
+        }
         agg_row.update(_metric_values(total_tp, total_fn, total_fp, total_tn))
         rows.append(agg_row)
 
     plt.suptitle(
-        f"Confusion Matrices — Session {session_dir.name} (threshold={threshold_mm:.2f}mm)",
+        f"Confusion Matrices — {session_dir.name} | scope={args.scope} | decision={args.decision} | "
+        f"rain>{threshold_mm:.2f}mm | p>={prob_threshold:.2f}",
         fontsize=13,
         fontweight="bold",
         y=1.02,
