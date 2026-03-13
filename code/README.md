@@ -128,3 +128,71 @@ Core modules:
   - `server_metrics_<session>.png`
   - `confusion_matrix_<session>.png`
   - `confusion_matrix_metrics_<session>.csv`
+
+## 7. Latest Baseline (Session `2026-03-13_21-45-05`)
+
+This is the current reference run after tightening train/val/test logic and strict checkpoint pairing.
+
+Time windows used in this run:
+- Train: `< 2026-02-10 00:00:00`
+- Validation: `[2026-02-10 00:00:00, 2026-02-24 00:00:00)`
+- Test: `>= 2026-02-24 00:00:00`
+
+Final test metrics (`results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.csv`):
+- Client 1: Recall `0.4495`, Precision `0.6106`, F1 `0.5178`
+- Client 2: Recall `0.4691`, Precision `0.6486`, F1 `0.5444`
+- Client 3: Recall `0.4710`, Precision `0.6008`, F1 `0.5280`
+- Average: Recall `0.4632`, Precision `0.6200`, F1 `0.5301`
+
+Config highlights used in this baseline (`config.yaml`):
+- `data.test_days: 14`
+- `data.val_days: 14`
+- `training.classification_loss_type: focal`
+- `training.classification_loss_weight: 2.0`
+- `training.classification_positive_weight: 1.1`
+- `training.rain_probability_threshold: 0.34`
+- `training.rain_sample_ratio: 0.15`
+- `training.regression_loss_weight: 1.0`
+
+## 8. How To Use Result Data
+
+Recommended order for analysis/reporting:
+- Use `evaluation_report_<session>.json` / `.csv` as the source of truth for final TEST metrics.
+- Use `training_log_client*.csv` for training/validation behavior and sample-level debugging.
+- Use `server_log_<session>.csv` for aggregation/system diagnostics.
+- Use `training_log_client*_meta.json` to recover exact run config and best checkpoint path.
+
+Important files for session `2026-03-13_21-45-05`:
+- `results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.json`
+- `results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.csv`
+- `results/2026-03-13_21-45-05/training_log_client1_20260313_214619.csv` (and client2/client3 equivalents)
+- `results/2026-03-13_21-45-05/server_log_2026-03-13_21-45-05.csv`
+- `bestweights/2026-03-13_21-45-05/periodic/` (strictly paired per-round checkpoints)
+
+Strict evaluation behavior:
+- `run_evaluation.py` first tries strict periodic pairing (`server_round_R` + all `client_i_round_R`).
+- If strict pairing exists, it evaluates that exact round as `pairing_mode=periodic_round_R`.
+- Classification metrics are recomputed offline by default (`cls_metric_source=offline_recomputed`) unless checkpoint metrics are explicitly marked as TEST and sample counts match.
+- Evaluation loads thresholds and related settings from the checkpoint `config_snapshot` when available, to avoid config drift.
+
+Useful commands:
+
+Evaluate latest bestweights session:
+```bash
+make eval-latest
+```
+
+Evaluate a specific session:
+```bash
+make eval-session SESSION=2026-03-13_21-45-05 PLOT_DEVICE=cpu
+```
+
+Evaluate a specific round with strict pairing:
+```bash
+python -m src.data.run_evaluation --session 2026-03-13_21-45-05 --round 30 --device cpu
+```
+
+Generate plots for a specific session:
+```bash
+make plot-session SESSION=2026-03-13_21-45-05 PLOT_DEVICE=cpu
+```
