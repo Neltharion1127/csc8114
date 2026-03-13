@@ -7,24 +7,24 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: fsl-server
-    # Run our hello world server script natively
+    gpus: all
     command: uv run python src/nodes/server_node.py
-    # Expose the gRPC port so tests from our host machine could theoreticall hit it
     ports:
       - "50051:50051"
-    # Ensure stdout prints immediately to the compose logs 
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - CUDA_VISIBLE_DEVICES=
+      - FSL_DEVICE=cuda
+      - UV_PROJECT_ENVIRONMENT=/opt/venv
       - UV_LINK_MODE=copy
+      - UV_CACHE_DIR=/root/.cache/uv
+      - UV_NO_SYNC=1
     volumes:
       - .:/app:delegated
-      - /app/.venv
       - ./results:/app/results:delegated
       - ./bestweights:/app/bestweights:delegated
+      - uv-cache:/root/.cache/uv
     healthcheck:
-      # Use python with grpc to test if the port is open and responding
       test: [ "CMD-SHELL", "uv run python -c \"import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1); s.connect(('127.0.0.1', 50051)); s.close()\" || exit 1" ]
       interval: 5s
       timeout: 3s
@@ -38,23 +38,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Run the client script that establishes the ping
-    # command: uv run python src/nodes/client_node.py
+    gpus: all
     command: uv run python src/nodes/client_node.py
-    # Don't start the client until the server container is up AND healthy
     depends_on:
       fsl-server:
         condition: service_healthy
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - CUDA_VISIBLE_DEVICES=
+      - FSL_DEVICE=cuda
+      - UV_PROJECT_ENVIRONMENT=/opt/venv
       - UV_LINK_MODE=copy
-    # For Phase 5: Map the local dataset folder into the client container
+      - UV_CACHE_DIR=/root/.cache/uv
+      - UV_NO_SYNC=1
     volumes:
       - .:/app:delegated
-      - /app/.venv
       - ./dataset:/app/dataset:delegated
       - ./results:/app/results:delegated
       - ./bestweights:/app/bestweights:delegated
+      - uv-cache:/root/.cache/uv
     working_dir: /app
+
+volumes:
+  uv-cache:

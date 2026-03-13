@@ -1,7 +1,7 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session clean-native check-native-port clean
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session clean-native check-native-port clean clean-all
 
 NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 SERVER_COLOR := \033[1;34m
@@ -34,7 +34,8 @@ help:
 	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
 	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
 	@echo "  make clean-native    - Kill native server/client Python processes"
-	@echo "  make clean           - Removes all Docker containers and network caches"
+	@echo "  make clean           - Removes Docker containers but keeps dependency/cache volumes"
+	@echo "  make clean-all       - Removes Docker containers plus named volumes/cache"
 
 # Compiles the gRPC protocol definitions
 compile-proto:
@@ -49,16 +50,16 @@ download-data:
 run-network: clean
 	@echo "Starting Split Learning with $(NUM_CLIENTS) clients..."
 	docker compose build
-# 1. 先背景啟動 Server
+# 1. 先背景啟�?Server
 	docker compose up -d fsl-server
 
-# 2. 逐個啟動 Client，明確注入 CLIENT_ID，避免和 Docker 內部 hostname 混淆
+# 2. 逐個啟�?Client，明確注�?CLIENT_ID，避免和 Docker 內部 hostname 混淆
 	@for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		echo "Starting client $$i..."; \
 		docker compose run -d --no-deps --name fsl-client-$$i -e CLIENT_ID=$$i fsl-client; \
 	done
 
-# 3. 顯示目前運行中的容器狀態
+# 3. 顯示目前運行中的容器狀�?
 	@(docker logs -f fsl-server 2>&1 | awk '{printf "$(SERVER_COLOR)%-13s$(RESET_COLOR) | %s\n", "fsl-server", $$0; fflush()}') & \
 	for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		case $$((($$i - 1) % 6)) in \
@@ -78,9 +79,12 @@ run-network: clean
 test-network: run-network
 # Cleans up the Docker environment
 clean:
-	docker compose down -v --remove-orphans
-	@echo "Cleaned up all FSL Docker containers and networks."
+	docker compose down --remove-orphans
+	@echo "Stopped FSL Docker containers and networks (cache volumes preserved)."
 
+clean-all:
+	docker compose down -v --remove-orphans
+	@echo "Cleaned up all FSL Docker containers, networks, and named volumes."
 
 run-native-server:
 	@echo "Starting native server on $(SERVER_HOST):$(SERVER_PORT) with device=$(SERVER_DEVICE)"
@@ -218,3 +222,5 @@ clean-native:
 	@pkill -f "src.nodes.client_node" 2>/dev/null || true
 	@pkill -f "src.nodes.server_node" 2>/dev/null || true
 	@echo "Killed native server/client processes (if any)."
+
+
