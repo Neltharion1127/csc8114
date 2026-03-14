@@ -47,17 +47,22 @@ message ForwardResponse {
     int32 next_rho = 10;             // Assigned synchronization interval (in local epochs) for the client
 }
 
-
 // Request sent from Client to Server during Global Sync (Federated Averaging)
 message SyncRequest {
     int32 client_id = 1;
     bytes client_weights = 2;   // Serialized state_dict of the client's local model
+    int32 base_round = 3;       // Global round the local model was based on before this sync
+    int32 local_epochs = 4;     // Local epochs trained since the last successful refresh/sync
 }
 
 // Response sent from Server back to Client during Global Sync
 message SyncResponse {
     bytes global_weights = 1;   // Serialized state_dict of the aggregated global model
-    int32 round_number = 2;     // Current FL round
+    int32 round_number = 2;     // Latest server-side global round after processing this request
+    bool accepted = 3;          // True if this client's update was included in an aggregation
+    int32 applied_round = 4;    // Round this update was applied to, or 0 if rejected
+    bool refresh_only = 5;      // True when the client should refresh without contributing its update
+    string status_message = 6;  // Human-readable explanation for logging/debugging
 }
 
 message CompletionRequest {
@@ -79,13 +84,13 @@ message CompletionResponse {
 
 // Defines the physical endpoints the Server will expose to the Clients
 service FSLService {
-    
+
     // Registration: Client registers and receives an assigned ID
     rpc Register(RegisterRequest) returns (RegisterResponse);
 
     // The core function: Send activations, get gradients back
     rpc Forward(ForwardRequest) returns (ForwardResponse);
-    
+
     // The aggregation function: Send local model, get global model back
     rpc Synchronize(SyncRequest) returns (SyncResponse);
 

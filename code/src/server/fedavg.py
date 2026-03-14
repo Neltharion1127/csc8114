@@ -1,6 +1,7 @@
 import copy
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import threading
@@ -13,6 +14,15 @@ from src.shared.common import cfg
 from src.shared.serialization import tensor_to_bytes
 
 
+@dataclass
+class PendingUpdate:
+    client_id: int
+    weights: dict[str, torch.Tensor]
+    base_round: int
+    local_epochs: int
+    arrived_at: float
+
+
 class FedAvgCoordinator:
     def __init__(
         self,
@@ -23,6 +33,8 @@ class FedAvgCoordinator:
         session_dir: str,
         periodic_dir: str,
         ckpt_interval: int,
+        min_clients_per_round: int = 2,
+        round_timeout_sec: float = 15.0,
     ):
         self.num_clients = num_clients
         self.hidden_size = hidden_size
@@ -30,8 +42,10 @@ class FedAvgCoordinator:
         self.session_dir = session_dir
         self.periodic_dir = periodic_dir
         self.ckpt_interval = ckpt_interval
+        self.min_clients_per_round = max(1, int(min_clients_per_round))
+        self.round_timeout_sec = max(0.1, float(round_timeout_sec))
 
-        self.client_weights_buffer: dict[int, dict] = {}
+        self.client_weights_buffer: dict[int, PendingUpdate] = {}
         self.global_weights = None
         self.current_round = 0
         self.lock = threading.Lock()
@@ -39,6 +53,8 @@ class FedAvgCoordinator:
         self.round_start_time: float | None = None
         self.round_error: str | None = None
         self._expected_schema: dict[str, tuple[tuple[int, ...], torch.dtype]] | None = None
+        self._active_clients: set[int] = set()
+        self._completed_clients: set[int] = set()
 
     @staticmethod
     def _validate_weights_object(local_weights: Any) -> dict[str, torch.Tensor]:
@@ -83,8 +99,68 @@ class FedAvgCoordinator:
                     f"Tensor dtype mismatch for '{key}': got {tensor.dtype} expected {expected_dtype}"
                 )
 
-    def synchronize(self, request, *, local_weights, server_model, optimizer) -> fsl_pb2.SyncResponse:
+    def register_client(self, client_id: int) -> None:
         with self.round_cond:
+            if client_id not in self._completed_clients:
+                self._active_clients.add(int(client_id))
+            self.round_cond.notify_all()
+
+    def mark_client_completed(self, client_id: int, *, server_model, optimizer) -> None:
+        with self.round_cond:
+            client_id = int(client_id)
+            self._completed_clients.add(client_id)
+            self._active_clients.discard(client_id)
+            print(
+                f"[FED AVG] Client {client_id} marked complete. "
+                f"active_clients={len(self._active_clients)}"
+            )
+            if self.client_weights_buffer and self._has_quorum_locked():
+                self._aggregate_locked(
+                    server_model=server_model,
+                    optimizer=optimizer,
+                    reason="active-set-updated",
+                )
+            self.round_cond.notify_all()
+
+    def synchronize(self, request, *, local_weights, server_model, optimizer) -> fsl_pb2.SyncResponse:
+        client_id = int(request.client_id)
+        base_round = int(getattr(request, "base_round", self.current_round))
+        local_epochs = int(getattr(request, "local_epochs", 0))
+
+        with self.round_cond:
+            if client_id not in self._completed_clients:
+                self._active_clients.add(client_id)
+
+            if base_round < self.current_round:
+                print(
+                    f"[FED AVG] Rejecting stale update from Client:{client_id} "
+                    f"(base_round={base_round}, current_round={self.current_round})"
+                )
+                return self._build_sync_response_locked(
+                    accepted=False,
+                    applied_round=0,
+                    refresh_only=True,
+                    status_message=(
+                        f"Stale update rejected: client base_round={base_round}, "
+                        f"server current_round={self.current_round}."
+                    ),
+                )
+
+            if base_round > self.current_round:
+                print(
+                    f"[FED AVG] Client:{client_id} is ahead of server state "
+                    f"(base_round={base_round}, current_round={self.current_round})"
+                )
+                return self._build_sync_response_locked(
+                    accepted=False,
+                    applied_round=0,
+                    refresh_only=self.global_weights is not None,
+                    status_message=(
+                        f"Client is ahead of server state: client base_round={base_round}, "
+                        f"server current_round={self.current_round}."
+                    ),
+                )
+
             target_round = self.current_round + 1
             now = time.time()
             if not self.client_weights_buffer:
@@ -93,64 +169,116 @@ class FedAvgCoordinator:
 
             validated_weights = self._validate_weights_object(local_weights)
             self._validate_against_schema(validated_weights)
-            self.client_weights_buffer[request.client_id] = validated_weights
+            self.client_weights_buffer[client_id] = PendingUpdate(
+                client_id=client_id,
+                weights=validated_weights,
+                base_round=base_round,
+                local_epochs=local_epochs,
+                arrived_at=now,
+            )
             barrier_elapsed_s = (now - self.round_start_time) if self.round_start_time is not None else 0.0
+            required = self._required_clients_locked()
             print(
-                f"[FED AVG] Received weights from Client:{request.client_id}. "
-                f"Buffer size: {len(self.client_weights_buffer)}/{self.num_clients} | "
-                f"barrier_elapsed={barrier_elapsed_s:.2f}s"
+                f"[FED AVG] Received weights from Client:{client_id}. "
+                f"Buffer size: {len(self.client_weights_buffer)}/{required} "
+                f"| active_clients={len(self._active_clients)} "
+                f"| base_round={base_round} local_epochs={local_epochs} "
+                f"| barrier_elapsed={barrier_elapsed_s:.2f}s"
             )
 
-            if len(self.client_weights_buffer) >= self.num_clients:
-                try:
-                    self._aggregate(
+            self._maybe_aggregate_locked(
+                server_model=server_model,
+                optimizer=optimizer,
+                reason="quorum-reached",
+            )
+
+            while self.current_round < target_round and not self.round_error:
+                remaining = self._remaining_window_locked()
+                if remaining <= 0:
+                    if self.client_weights_buffer and self.current_round < target_round:
+                        self._aggregate_locked(
+                            server_model=server_model,
+                            optimizer=optimizer,
+                            reason="timeout",
+                        )
+                    break
+                self.round_cond.wait(timeout=remaining)
+                if self.current_round < target_round and not self.round_error:
+                    self._maybe_aggregate_locked(
                         server_model=server_model,
                         optimizer=optimizer,
-                        barrier_elapsed_s=barrier_elapsed_s,
+                        reason="quorum-reached",
                     )
-                except Exception as exc:
-                    self.client_weights_buffer = {}
-                    self.round_start_time = None
-                    self.round_error = f"Aggregation failed: {exc}"
-                    self.round_cond.notify_all()
-                    raise RuntimeError(self.round_error) from exc
-                else:
-                    self.round_cond.notify_all()
-            else:
-                remaining = 60.0
-                while self.current_round < target_round and remaining > 0:
-                    if self.round_error:
-                        raise RuntimeError(self.round_error)
-                    start_wait = time.time()
-                    self.round_cond.wait(timeout=remaining)
-                    remaining -= time.time() - start_wait
 
             if self.round_error:
                 raise RuntimeError(self.round_error)
 
             if self.current_round < target_round or self.global_weights is None:
-                # Roll back this client's contribution if the round timed out, so the next
-                # synchronization round starts with a clean and correct buffer.
-                self.client_weights_buffer.pop(request.client_id, None)
-                if not self.client_weights_buffer:
-                    self.round_start_time = None
                 raise TimeoutError("Timeout waiting for global model aggregation.")
-            current_round = self.current_round
 
-        global_weights_bytes = tensor_to_bytes(self.global_weights)
+            return self._build_sync_response_locked(
+                accepted=True,
+                applied_round=self.current_round,
+                refresh_only=False,
+                status_message=(
+                    f"Accepted into aggregation round {self.current_round} "
+                    f"(active_clients={len(self._active_clients)})."
+                ),
+            )
+
+    def _active_client_count_locked(self) -> int:
+        return len(self._active_clients)
+
+    def _required_clients_locked(self) -> int:
+        active_count = self._active_client_count_locked()
+        if active_count <= 0:
+            return 1
+        return max(1, min(self.min_clients_per_round, active_count))
+
+    def _remaining_window_locked(self) -> float:
+        if self.round_start_time is None:
+            return self.round_timeout_sec
+        elapsed = time.time() - self.round_start_time
+        return max(0.0, self.round_timeout_sec - elapsed)
+
+    def _has_quorum_locked(self) -> bool:
+        return len(self.client_weights_buffer) >= self._required_clients_locked()
+
+    def _maybe_aggregate_locked(self, *, server_model, optimizer, reason: str) -> None:
+        if self.client_weights_buffer and self._has_quorum_locked():
+            self._aggregate_locked(server_model=server_model, optimizer=optimizer, reason=reason)
+
+    def _build_sync_response_locked(
+        self,
+        *,
+        accepted: bool,
+        applied_round: int,
+        refresh_only: bool,
+        status_message: str,
+    ) -> fsl_pb2.SyncResponse:
+        global_weights_bytes = tensor_to_bytes(self.global_weights) if self.global_weights is not None else b""
         return fsl_pb2.SyncResponse(
             global_weights=global_weights_bytes,
-            round_number=current_round,
+            round_number=int(self.current_round),
+            accepted=bool(accepted),
+            applied_round=int(applied_round),
+            refresh_only=bool(refresh_only),
+            status_message=status_message,
         )
 
-    def _aggregate(self, *, server_model, optimizer, barrier_elapsed_s: float) -> None:
+    def _aggregate_locked(self, *, server_model, optimizer, reason: str) -> None:
         aggregate_start = time.time()
+        pending_updates = list(self.client_weights_buffer.values())
+        client_ids = [update.client_id for update in pending_updates]
+        barrier_elapsed_s = (time.time() - self.round_start_time) if self.round_start_time is not None else 0.0
         print(
-            f"[FED AVG] Round {self.current_round + 1}: Aggregating {len(self.client_weights_buffer)} models... "
-            f"(waited {barrier_elapsed_s:.2f}s for all clients)"
+            f"[FED AVG] Round {self.current_round + 1}: Aggregating {len(pending_updates)} models "
+            f"from clients={client_ids} (active={len(self._active_clients)} "
+            f"quorum={self._required_clients_locked()} reason={reason} "
+            f"waited={barrier_elapsed_s:.2f}s)"
         )
 
-        weights_list = list(self.client_weights_buffer.values())
+        weights_list = [update.weights for update in pending_updates]
         self.global_weights = copy.deepcopy(weights_list[0])
         for key in self.global_weights.keys():
             for i in range(1, len(weights_list)):
@@ -170,6 +298,8 @@ class FedAvgCoordinator:
             },
             "config_snapshot": copy.deepcopy(cfg),
             "session_id": self.session_id,
+            "aggregated_client_ids": client_ids,
+            "aggregation_reason": reason,
         }
         server_model_path = os.path.join(
             self.session_dir,
@@ -197,11 +327,13 @@ class FedAvgCoordinator:
 
         aggregate_elapsed_s = time.time() - aggregate_start
         self.round_start_time = None
+        self.round_error = None
         print(
             f"[FED AVG] Successfully updated global model to Round {self.current_round} "
             f"(aggregate_time={aggregate_elapsed_s:.2f}s)"
         )
         print(f"[SERVER] Best ckpt: {self.session_id}/{Path(server_model_path).name}")
+        self.round_cond.notify_all()
 
     @staticmethod
     def _checkpoint_sort_key(path: Path) -> tuple[int, str]:

@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import copy
 import csv
 import json
@@ -179,7 +179,7 @@ def _run_command(cmd: list[str], *, env: dict[str, str], dry_run: bool) -> None:
 
 def _write_summary(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
+    base_fieldnames = [
         "run_id",
         "scenario_id",
         "scenario_desc",
@@ -212,6 +212,13 @@ def _write_summary(rows: list[dict[str, Any]], path: Path) -> None:
         "ended_at",
         "duration_sec",
     ]
+    extra_fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in base_fieldnames and key not in extra_fieldnames:
+                extra_fieldnames.append(key)
+
+    fieldnames = base_fieldnames + extra_fieldnames
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -433,3 +440,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

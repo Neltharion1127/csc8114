@@ -93,7 +93,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
             client_id, num_clients, session_id = reg.client_id, reg.total_clients, reg.session_id
             print(
-                f"[CLIENT] Registered — name: {client_name} | requested_id: {requested_client_id or 'auto'} "
+                f"[CLIENT] Registered 閳?name: {client_name} | requested_id: {requested_client_id or 'auto'} "
                 f"| assigned_id: {client_id} / {num_clients} | session: {session_id}"
             )
             base_seed = cfg.get("training", {}).get("seed", 42)
@@ -136,6 +136,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
             patience = cfg.get("training", {}).get("early_stopping_patience", 15)
             current_round = 0
+            model_round = 0
             ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
             local_steps = max(1, int(cfg.get("training", {}).get("local_steps", 1)))
             rain_sample_ratio = float(cfg.get("training", {}).get("rain_sample_ratio", 0.35))
@@ -230,8 +231,16 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                         f"(rho={sync_interval})..."
                     )
                     try:
-                        client_model = fed_avg_sync(stub, client_id, client_model)
-                        current_round += 1
+                        sync_result = fed_avg_sync(
+                            stub,
+                            client_id,
+                            client_model,
+                            model_round=model_round,
+                            local_epochs=sync_interval,
+                        )
+                        client_model = sync_result.client_model
+                        current_round = max(current_round, sync_result.round_number)
+                        model_round = max(model_round, sync_result.round_number)
                     except Exception as e:
                         print(f"[CLIENT {client_id}] Sync failed: {e}")
                         if "Timeout waiting for global model aggregation" in str(e):
@@ -240,10 +249,9 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                             total_steps += epoch_train_steps
                             print(
                                 f"[CLIENT {client_id}] Stopping training due to synchronization timeout "
-                                f"after epoch {epoch+1}. Other clients likely finished early."
+                                f"after epoch {epoch+1}."
                             )
                             break
-
                     if sync_timeout_triggered:
                         break
 
@@ -403,3 +411,5 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
 if __name__ == "__main__":
     run_all_client()
+
+

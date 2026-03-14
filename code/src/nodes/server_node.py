@@ -17,6 +17,7 @@ from src.shared.common import cfg, project_root
 from src.shared.runtime import resolve_device, set_global_seed
 from src.shared.serialization import bytes_to_tensor
 
+
 class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     """gRPC servicer for federated split learning."""
 
@@ -38,7 +39,10 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         ).to(self.device)
         self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=lr)
 
-        self.num_clients = cfg.get("federated", {}).get("num_clients", 3)
+        federated_cfg = cfg.get("federated", {})
+        self.num_clients = federated_cfg.get("num_clients", 3)
+        self.min_clients_per_round = federated_cfg.get("min_clients_per_round", 2)
+        self.round_timeout_sec = federated_cfg.get("round_timeout_sec", 15.0)
         self.sync_lock = threading.Lock()
 
         self._next_client_id = 1
@@ -56,8 +60,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         os.makedirs(self.session_dir, exist_ok=True)
         os.makedirs(self.periodic_dir, exist_ok=True)
         self.ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
-        print(f"[SERVER] Session ID: {self.session_id}  →  {self.session_dir}")
-        print(f"[SERVER] Periodic checkpoint every {self.ckpt_interval} rounds  →  {self.periodic_dir}")
+        print(f"[SERVER] Session ID: {self.session_id} -> {self.session_dir}")
+        print(f"[SERVER] Periodic checkpoint every {self.ckpt_interval} rounds -> {self.periodic_dir}")
         self.fedavg = FedAvgCoordinator(
             num_clients=self.num_clients,
             hidden_size=self.hidden_size,
@@ -65,6 +69,8 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             session_dir=self.session_dir,
             periodic_dir=self.periodic_dir,
             ckpt_interval=self.ckpt_interval,
+            min_clients_per_round=self.min_clients_per_round,
+            round_timeout_sec=self.round_timeout_sec,
         )
 
         scheduler_cfg = cfg.get("scheduler", {})
@@ -73,7 +79,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             enabled=scheduler_cfg.get("enabled", True),
             float16_threshold=scheduler_cfg.get("latency_threshold", 4.0),
             int8_threshold=scheduler_cfg.get("int8_latency_threshold", 10.0),
-            base_rho=cfg.get("federated", {}).get("rho", 1),
+            base_rho=federated_cfg.get("rho", 1),
             min_rho=scheduler_cfg.get("min_rho", 1),
             max_rho=scheduler_cfg.get("max_rho", 20),
             rho_step=scheduler_cfg.get("rho_step", 1),
@@ -109,10 +115,11 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                 self._next_client_id = assigned_id + 1
 
         print(
-            f"[SERVER] Client registered — name: {client_name} | requested_id: {requested_id or 'auto'} "
+            f"[SERVER] Client registered - name: {client_name} | requested_id: {requested_id or 'auto'} "
             f"| assigned_id: {assigned_id} | session: {self.session_id}"
         )
         self._registered_clients.add(assigned_id)
+        self.fedavg.register_client(assigned_id)
         return fsl_pb2.RegisterResponse(
             client_id=assigned_id,
             total_clients=self.num_clients,
@@ -210,6 +217,11 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             self._completed_clients.add(request.client_id)
             completed = len(self._completed_clients)
 
+        self.fedavg.mark_client_completed(
+            request.client_id,
+            server_model=self.server_model,
+            optimizer=self.optimizer,
+        )
         print(
             f"[SERVER] Client {request.client_id} finished training | "
             f"epochs={request.completed_epochs} steps={request.total_steps} | "
