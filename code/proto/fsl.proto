@@ -44,6 +44,7 @@ message ForwardResponse {
     float rain_probability = 7;      // Structured rain probability from the classifier head
     float classification_loss = 8;   // Structured classifier loss for the current request
     float regression_loss = 9;       // Structured regressor loss for the current request
+    int32 next_rho = 10;             // Assigned synchronization interval (in local epochs) for the client
 }
 
 

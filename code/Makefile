@@ -1,9 +1,10 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session clean-native check-native-port clean clean-all
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session matrix matrix-dry-run clean-native check-native-port clean clean-all
 
-NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
+DEFAULT_NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
+NUM_CLIENTS ?= $(DEFAULT_NUM_CLIENTS)
 SERVER_COLOR := \033[1;34m
 RESET_COLOR := \033[0m
 SERVER_HOST ?= 127.0.0.1
@@ -33,9 +34,10 @@ help:
 	@echo "  AUTO_PLOT=1          - Enable auto-plot after run-native/run-network (default: 0)"
 	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
 	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
+	@echo "  make matrix [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Run experiment matrix from config.yaml"
+	@echo "  make matrix-dry-run [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Print matrix plan only"
 	@echo "  make clean-native    - Kill native server/client Python processes"
-	@echo "  make clean           - Removes Docker containers but keeps dependency/cache volumes"
-	@echo "  make clean-all       - Removes Docker containers plus named volumes/cache"
+	@echo "  make clean           - Removes all Docker containers and network caches"
 
 # Compiles the gRPC protocol definitions
 compile-proto:
@@ -50,16 +52,16 @@ download-data:
 run-network: clean
 	@echo "Starting Split Learning with $(NUM_CLIENTS) clients..."
 	docker compose build
-# 1. 先背景啟�?Server
+# 1. 先背景啟動 Server
 	docker compose up -d fsl-server
 
-# 2. 逐個啟�?Client，明確注�?CLIENT_ID，避免和 Docker 內部 hostname 混淆
+# 2. 逐個啟動 Client，明確注入 CLIENT_ID，避免和 Docker 內部 hostname 混淆
 	@for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		echo "Starting client $$i..."; \
 		docker compose run -d --no-deps --name fsl-client-$$i -e CLIENT_ID=$$i fsl-client; \
 	done
 
-# 3. 顯示目前運行中的容器狀�?
+# 3. 顯示目前運行中的容器狀態
 	@(docker logs -f fsl-server 2>&1 | awk '{printf "$(SERVER_COLOR)%-13s$(RESET_COLOR) | %s\n", "fsl-server", $$0; fflush()}') & \
 	for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		case $$((($$i - 1) % 6)) in \
@@ -79,12 +81,9 @@ run-network: clean
 test-network: run-network
 # Cleans up the Docker environment
 clean:
-	docker compose down --remove-orphans
-	@echo "Stopped FSL Docker containers and networks (cache volumes preserved)."
-
-clean-all:
 	docker compose down -v --remove-orphans
-	@echo "Cleaned up all FSL Docker containers, networks, and named volumes."
+	@echo "Cleaned up all FSL Docker containers and networks."
+
 
 run-native-server:
 	@echo "Starting native server on $(SERVER_HOST):$(SERVER_PORT) with device=$(SERVER_DEVICE)"
@@ -163,6 +162,22 @@ eval-session:
 	@echo "Running evaluation for session $(SESSION)..."
 	@$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $(SESSION)
 
+matrix:
+	@CMD="$(PYTHON) -m src.data.run_experiment_matrix --config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml)"; \
+	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
+	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
+	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
+	echo "Running: $$CMD"; \
+	eval "$$CMD"
+
+matrix-dry-run:
+	@CMD="$(PYTHON) -m src.data.run_experiment_matrix --config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml) --dry-run"; \
+	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
+	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
+	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
+	echo "Running: $$CMD"; \
+	eval "$$CMD"
+
 run-native-clients: run-native-client
 
 run-native:
@@ -222,5 +237,3 @@ clean-native:
 	@pkill -f "src.nodes.client_node" 2>/dev/null || true
 	@pkill -f "src.nodes.server_node" 2>/dev/null || true
 	@echo "Killed native server/client processes (if any)."
-
-

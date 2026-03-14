@@ -10,12 +10,29 @@ project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-CONFIG_PATH = os.path.join(project_root, "config.yaml")
-try:
-    with open(CONFIG_PATH, "r") as f:
-        cfg = yaml.safe_load(f) or {}
-except Exception:
-    cfg = {}
+
+def _resolve_config_path() -> str:
+    """Resolve config path with optional env override."""
+    env_path = os.environ.get("FSL_CONFIG_PATH", "").strip()
+    path = env_path if env_path else os.path.join(project_root, "config.yaml")
+    if not os.path.isabs(path):
+        path = os.path.join(project_root, path)
+    return os.path.abspath(path)
+
+
+def _load_config_or_raise(path: str) -> dict:
+    """Load YAML config and fail fast on invalid/missing config."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Config root must be a mapping/dict: {path}")
+    return loaded
+
+
+CONFIG_PATH = _resolve_config_path()
+cfg = _load_config_or_raise(CONFIG_PATH)
 
 def get_config():
     """Return the loaded configuration dict."""
@@ -24,13 +41,15 @@ def get_config():
 
 def reload_config():
     """Reload configuration from disk into the module-level `cfg`."""
-    global cfg
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            cfg = yaml.safe_load(f) or {}
-    except Exception:
-        cfg = {}
+    global cfg, CONFIG_PATH
+    CONFIG_PATH = _resolve_config_path()
+    cfg = _load_config_or_raise(CONFIG_PATH)
     return cfg
+
+
+def get_config_path() -> str:
+    """Return the active config path for this process."""
+    return CONFIG_PATH
 
 
 def get_nested(config: dict | None, keys: tuple[str, ...], default=None):

@@ -19,6 +19,7 @@ services:
       - UV_LINK_MODE=copy
       - UV_CACHE_DIR=/root/.cache/uv
       - UV_NO_SYNC=1
+      - FSL_CONFIG_PATH=${FSL_CONFIG_PATH:-/app/config.yaml}
     volumes:
       - .:/app:delegated
       - ./results:/app/results:delegated
@@ -51,6 +52,7 @@ services:
       - UV_LINK_MODE=copy
       - UV_CACHE_DIR=/root/.cache/uv
       - UV_NO_SYNC=1
+      - FSL_CONFIG_PATH=${FSL_CONFIG_PATH:-/app/config.yaml}
     volumes:
       - .:/app:delegated
       - ./dataset:/app/dataset:delegated

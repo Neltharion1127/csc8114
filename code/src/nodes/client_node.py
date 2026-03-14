@@ -142,6 +142,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             rain_threshold = rain_threshold_mm()
             seq_len = int(cfg.get("model", {}).get("seq_len", 24))
             target_horizon = 3
+            base_rho = max(1, int(cfg.get("federated", {}).get("rho", 1)))
             periodic_dir = os.path.join(session_dir, "periodic")
             os.makedirs(periodic_dir, exist_ok=True)
             os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
@@ -173,8 +174,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 f"| val:[{VAL_START_DATE},{TEST_START_DATE}) | test:>={TEST_START_DATE}"
             )
 
-            train_state = SchedulerState(compression_mode=compression_mode)
-            val_state = SchedulerState(compression_mode=compression_mode)
+            train_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)
+            val_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)
 
             for epoch in range(epochs):
                 epoch_start_time = time.time()
@@ -219,95 +220,108 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                         f"train_throughput={epoch_train_steps / train_elapsed_s:.2f} steps/s"
                     )
 
-                print(f"[CLIENT {client_id}] Epoch {epoch+1} done. Synchronizing...")
-                try:
-                    client_model = fed_avg_sync(stub, client_id, client_model)
-                    current_round += 1
-                except Exception as e:
-                    print(f"[CLIENT {client_id}] Sync failed: {e}")
-                    if "Timeout waiting for global model aggregation" in str(e):
-                        sync_timeout_triggered = True
-                        completed_epochs = epoch + 1
-                        total_steps += epoch_train_steps
-                        print(
-                            f"[CLIENT {client_id}] Stopping training due to synchronization timeout "
-                            f"after epoch {epoch+1}. Other clients likely finished early."
-                        )
+                sync_interval = max(1, int(train_state.rho))
+                should_sync = ((epoch + 1) % sync_interval == 0)
+                epoch_val_losses: list[float] = []
+
+                if should_sync:
+                    print(
+                        f"[CLIENT {client_id}] Epoch {epoch+1} done. Synchronizing "
+                        f"(rho={sync_interval})..."
+                    )
+                    try:
+                        client_model = fed_avg_sync(stub, client_id, client_model)
+                        current_round += 1
+                    except Exception as e:
+                        print(f"[CLIENT {client_id}] Sync failed: {e}")
+                        if "Timeout waiting for global model aggregation" in str(e):
+                            sync_timeout_triggered = True
+                            completed_epochs = epoch + 1
+                            total_steps += epoch_train_steps
+                            print(
+                                f"[CLIENT {client_id}] Stopping training due to synchronization timeout "
+                                f"after epoch {epoch+1}. Other clients likely finished early."
+                            )
+                            break
+
+                    if sync_timeout_triggered:
                         break
 
-                if sync_timeout_triggered:
-                    break
-
-                print(f"--- [VALIDATION] Client {client_id} Epoch {epoch+1} ---")
-                client_model.eval()
-                eval_start_time = time.time()
-                epoch_val_losses, eval_metrics = run_eval_epoch(
-                    stub=stub,
-                    client_id=client_id,
-                    client_model=client_model,
-                    optimizer=optimizer,
-                    client_files=client_files,
-                    sensor_data_cache=sensor_data_cache,
-                    eval_index_cache=val_index_cache,
-                    eval_state=val_state,
-                    feature_cols=FEATURE_COLS,
-                    feat_stats=feat_stats,
-                    device=device,
-                    seq_len=seq_len,
-                    epoch=epoch,
-                    experimental_logs=experimental_logs,
-                    epoch_logs=epoch_logs,
-                    phase_label="VAL",
-                )
-
-                if epoch_val_losses:
-                    avg_val_loss = sum(epoch_val_losses) / len(epoch_val_losses)
-                    val_summary = summarize_phase(epoch_logs, "VAL")
-                    tp = int(eval_metrics["tp"])
-                    fn = int(eval_metrics["fn"])
-                    fp = int(eval_metrics["fp"])
-                    tn = int(eval_metrics["tn"])
-                    positive_count = tp + fn
-                    recall = float(eval_metrics["recall"])
-                    precision = float(eval_metrics["precision"])
-                    f1 = float(eval_metrics["f1"])
-                    selected_threshold = float(eval_metrics["selected_threshold"])
-                    default_threshold = float(eval_metrics["default_threshold"])
-                    default_recall = float(eval_metrics["default_recall"])
-                    default_precision = float(eval_metrics["default_precision"])
-                    default_f1 = float(eval_metrics["default_f1"])
-                    eval_elapsed_s = max(1e-9, time.time() - eval_start_time)
-                    print(
-                        f"[CLIENT {client_id}] Epoch {epoch+1} val summary | "
-                        f"steps={len(epoch_val_losses)} avg_loss={avg_val_loss:.4f} "
-                        f"rain_acc={val_summary['rain_acc']:.3f} "
-                        f"cls_loss={val_summary['avg_cls_loss']:.4f} "
-                        f"reg_loss={val_summary['avg_reg_loss']:.4f} "
-                        f"positive_count={positive_count} "
-                        f"recall={recall:.3f} precision={precision:.3f} f1={f1:.3f} "
-                        f"thr={selected_threshold:.3f} (default={default_threshold:.3f}, "
-                        f"default_r/p/f1={default_recall:.3f}/{default_precision:.3f}/{default_f1:.3f}) "
-                        f"cm=TP:{tp}/FN:{fn}/FP:{fp}/TN:{tn} "
-                        f"val_time={eval_elapsed_s:.2f}s "
-                        f"val_throughput={len(epoch_val_losses) / eval_elapsed_s:.2f} steps/s"
-                    )
-                    should_stop = evaluate_epoch(
+                    print(f"--- [VALIDATION] Client {client_id} Epoch {epoch+1} ---")
+                    client_model.eval()
+                    eval_start_time = time.time()
+                    epoch_val_losses, eval_metrics = run_eval_epoch(
+                        stub=stub,
                         client_id=client_id,
                         client_model=client_model,
                         optimizer=optimizer,
-                        current_round=current_round,
+                        client_files=client_files,
+                        sensor_data_cache=sensor_data_cache,
+                        eval_index_cache=val_index_cache,
+                        eval_state=val_state,
+                        feature_cols=FEATURE_COLS,
+                        feat_stats=feat_stats,
+                        device=device,
+                        seq_len=seq_len,
                         epoch=epoch,
-                        avg_val_loss=avg_val_loss,
-                        val_metrics=eval_metrics,
-                        session_id=session_id,
-                        session_dir=session_dir,
-                        periodic_dir=periodic_dir,
-                        patience=patience,
-                        ckpt_interval=ckpt_interval,
-                        state=checkpoint_state,
+                        experimental_logs=experimental_logs,
+                        epoch_logs=epoch_logs,
+                        phase_label="VAL",
                     )
-                    if should_stop:
-                        break
+
+                    if epoch_val_losses:
+                        avg_val_loss = sum(epoch_val_losses) / len(epoch_val_losses)
+                        val_summary = summarize_phase(epoch_logs, "VAL")
+                        tp = int(eval_metrics["tp"])
+                        fn = int(eval_metrics["fn"])
+                        fp = int(eval_metrics["fp"])
+                        tn = int(eval_metrics["tn"])
+                        positive_count = tp + fn
+                        recall = float(eval_metrics["recall"])
+                        precision = float(eval_metrics["precision"])
+                        f1 = float(eval_metrics["f1"])
+                        selected_threshold = float(eval_metrics["selected_threshold"])
+                        default_threshold = float(eval_metrics["default_threshold"])
+                        default_recall = float(eval_metrics["default_recall"])
+                        default_precision = float(eval_metrics["default_precision"])
+                        default_f1 = float(eval_metrics["default_f1"])
+                        eval_elapsed_s = max(1e-9, time.time() - eval_start_time)
+                        print(
+                            f"[CLIENT {client_id}] Epoch {epoch+1} val summary | "
+                            f"steps={len(epoch_val_losses)} avg_loss={avg_val_loss:.4f} "
+                            f"rain_acc={val_summary['rain_acc']:.3f} "
+                            f"cls_loss={val_summary['avg_cls_loss']:.4f} "
+                            f"reg_loss={val_summary['avg_reg_loss']:.4f} "
+                            f"positive_count={positive_count} "
+                            f"recall={recall:.3f} precision={precision:.3f} f1={f1:.3f} "
+                            f"thr={selected_threshold:.3f} (default={default_threshold:.3f}, "
+                            f"default_r/p/f1={default_recall:.3f}/{default_precision:.3f}/{default_f1:.3f}) "
+                            f"cm=TP:{tp}/FN:{fn}/FP:{fp}/TN:{tn} "
+                            f"val_time={eval_elapsed_s:.2f}s "
+                            f"val_throughput={len(epoch_val_losses) / eval_elapsed_s:.2f} steps/s"
+                        )
+                        should_stop = evaluate_epoch(
+                            client_id=client_id,
+                            client_model=client_model,
+                            optimizer=optimizer,
+                            current_round=current_round,
+                            epoch=epoch,
+                            avg_val_loss=avg_val_loss,
+                            val_metrics=eval_metrics,
+                            session_id=session_id,
+                            session_dir=session_dir,
+                            periodic_dir=periodic_dir,
+                            patience=patience,
+                            ckpt_interval=ckpt_interval,
+                            state=checkpoint_state,
+                        )
+                        if should_stop:
+                            break
+                else:
+                    print(
+                        f"[CLIENT {client_id}] Epoch {epoch+1} done. Skip synchronization "
+                        f"(rho={sync_interval}); keeping local training."
+                    )
 
                 epoch_elapsed_s = max(1e-9, time.time() - epoch_start_time)
                 epoch_steps = epoch_train_steps + len(epoch_val_losses)

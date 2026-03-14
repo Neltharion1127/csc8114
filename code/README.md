@@ -117,6 +117,9 @@ Core modules:
 - `scheduler.enabled`
 - `profiler.enabled`
 - `server.log_flush_interval`
+- `experiment_matrix.*` (batch experiment definitions and runner settings)
+- `FSL_CONFIG_PATH` (optional env var to run with an alternate YAML config)
+- `experiment_matrix.runner.backend`: `native` or `docker`
 
 ## 6. Output Directories
 
@@ -195,4 +198,24 @@ python -m src.data.run_evaluation --session 2026-03-13_21-45-05 --round 30 --dev
 Generate plots for a specific session:
 ```bash
 make plot-session SESSION=2026-03-13_21-45-05 PLOT_DEVICE=cpu
+```
+
+Dry-run matrix plan from `config.yaml`:
+```bash
+make matrix-dry-run
+```
+
+Run full matrix:
+```bash
+make matrix
+```
+
+Run selected scenarios only:
+```bash
+make matrix ONLY=M01,M10 MAX_RUNS=2
+```
+
+Run matrix on Docker backend:
+```bash
+make matrix BACKEND=docker
 ```

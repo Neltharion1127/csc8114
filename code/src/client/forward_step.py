@@ -4,11 +4,22 @@ import pandas as pd
 import torch
 
 from proto import fsl_pb2
+from src.client.latency_generator import LatencyGenerator
 from src.models.split_lstm import ClientLSTM
 from src.shared.common import cfg
 from src.shared.compression import compress, decompress
 from src.shared.runtime import maybe_autocast
 from src.shared.targets import is_rain, transform_target_scalar
+
+_LATENCY_GENERATORS: dict[int, LatencyGenerator] = {}
+
+
+def _latency_generator_for(client_id: int) -> LatencyGenerator:
+    generator = _LATENCY_GENERATORS.get(int(client_id))
+    if generator is None:
+        generator = LatencyGenerator(client_id=int(client_id))
+        _LATENCY_GENERATORS[int(client_id)] = generator
+    return generator
 
 
 def run_forward_step(
@@ -51,7 +62,18 @@ def run_forward_step(
     start_time = time.time()
     activation_bytes = compress(smashed_activation, compression_mode)
     payload_size = len(activation_bytes)
-    reported_latency_ms = last_latency_ms if profiler_enabled else 0.0
+    if profiler_enabled:
+        latency_generator = _latency_generator_for(client_id)
+        reported_latency_ms = latency_generator.next_latency_ms(
+            measured_latency_ms=last_latency_ms,
+        )
+        sleep_ms = latency_generator.suggested_sleep_ms(
+            reported_latency_ms=reported_latency_ms,
+        )
+        if sleep_ms > 0.0:
+            time.sleep(sleep_ms / 1000.0)
+    else:
+        reported_latency_ms = 0.0
     reported_payload_bytes = payload_size if profiler_enabled else 0
     training_target = transform_target_scalar(target_value)
 
@@ -97,8 +119,11 @@ def run_forward_step(
         print(f"[SERVER] Feedback processed | {response.status_message} | Latency: {latency_ms:.2f} ms")
     scheduler_enabled = cfg.get("scheduler", {}).get("enabled", True)
     next_compression_mode = compression_mode
+    next_rho = int(cfg.get("federated", {}).get("rho", 1))
     if scheduler_enabled and response.next_compression_mode:
         next_compression_mode = response.next_compression_mode
+    if scheduler_enabled and getattr(response, "next_rho", 0) > 0:
+        next_rho = int(response.next_rho)
 
     return {
         "Target": target_value,
@@ -111,6 +136,7 @@ def run_forward_step(
         "LatencyMs": float(latency_ms),
         "PayloadBytes": reported_payload_bytes,
         "NextCompression": next_compression_mode,
+        "NextRho": int(next_rho),
         "ProfilerEnabled": int(profiler_enabled),
         "SchedulerEnabled": int(scheduler_enabled),
     }

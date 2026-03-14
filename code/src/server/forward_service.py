@@ -67,6 +67,7 @@ def handle_forward_request(
     sync_lock: threading.Lock,
     current_round: int,
     assigned_compression: str,
+    assigned_rho: int,
     profiler_enabled: bool,
     scheduler_enabled: bool,
 ) -> ForwardPassResult:
@@ -146,6 +147,7 @@ def handle_forward_request(
         "rain_correct": rain_correct,
         "compression_mode": compression_mode,
         "next_compression": assigned_compression,
+        "next_rho": int(assigned_rho),
         "profiler_enabled": int(profiler_enabled),
         "scheduler_enabled": int(scheduler_enabled),
         "reported_latency_ms": reported_latency,
@@ -174,7 +176,10 @@ def handle_forward_request(
             f"[☁️] ID:{request.client_id} | Pred:{raw_pred_val:.2f} | "
             f"P(rain):{rain_prob:.2f} | Loss:{loss_val:.4f}"
         )
-    monitor_message = f"{monitor_message} | {compression_mode} [D:{decomp_time:.1f}ms, C:{comp_time:.1f}ms, G:{grad_mag:.3f}]"
+    monitor_message = (
+        f"{monitor_message} | {compression_mode}->{assigned_compression}/rho{int(assigned_rho)} "
+        f"[D:{decomp_time:.1f}ms, C:{comp_time:.1f}ms, G:{grad_mag:.3f}]"
+    )
 
     response = fsl_pb2.ForwardResponse(
         gradient_data=activation_gradient,
@@ -186,6 +191,7 @@ def handle_forward_request(
         rain_probability=rain_prob,
         classification_loss=cls_loss_val,
         regression_loss=reg_loss_val,
+        next_rho=int(assigned_rho),
     )
 
     return ForwardPassResult(

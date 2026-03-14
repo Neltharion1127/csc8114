@@ -73,6 +73,12 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             enabled=scheduler_cfg.get("enabled", True),
             float16_threshold=scheduler_cfg.get("latency_threshold", 4.0),
             int8_threshold=scheduler_cfg.get("int8_latency_threshold", 10.0),
+            base_rho=cfg.get("federated", {}).get("rho", 1),
+            min_rho=scheduler_cfg.get("min_rho", 1),
+            max_rho=scheduler_cfg.get("max_rho", 20),
+            rho_step=scheduler_cfg.get("rho_step", 1),
+            topk_multiplier=scheduler_cfg.get("topk_multiplier", 1.5),
+            latency_ema_alpha=scheduler_cfg.get("latency_ema_alpha", 0.2),
         )
         self.log_server_requests = cfg.get("console", {}).get("log_server_requests", False)
         self.profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
@@ -118,7 +124,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         try:
             client_id = getattr(request, "client_id", -1)
             reported_latency = getattr(request, "latency_ms", 0.0)
-            assigned_compression = self.scheduler.assign(client_id, reported_latency)
+            assigned_compression, assigned_rho = self.scheduler.assign(client_id, reported_latency)
             result = handle_forward_request(
                 request,
                 hidden_size=self.hidden_size,
@@ -128,6 +134,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
                 sync_lock=self.sync_lock,
                 current_round=self.fedavg.current_round,
                 assigned_compression=assigned_compression,
+                assigned_rho=assigned_rho,
                 profiler_enabled=self.profiler_enabled,
                 scheduler_enabled=self.scheduler_enabled,
             )
