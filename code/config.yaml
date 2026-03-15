@@ -263,6 +263,40 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
+    - id: M13
+      description: P4+S0 extreme latency, static int8 (200ms-class)
+      overrides:
+        profiler:
+          enabled: true
+          latency_generator:
+            base_latency_ms: 40.0
+            client_offsets_ms: [0.0, 80.0, 160.0]
+            jitter_ms: 5.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
+        scheduler:
+          enabled: false
+        compression:
+          mode: int8
+        federated:
+          rho: 1
+    - id: M14
+      description: P4+S3 extreme latency with adaptive scheduler (default int8)
+      overrides:
+        profiler:
+          enabled: true
+          latency_generator:
+            base_latency_ms: 40.0
+            client_offsets_ms: [0.0, 80.0, 160.0]
+            jitter_ms: 5.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
+        scheduler:
+          enabled: true
+        compression:
+          mode: int8
+        federated:
+          rho: 1
 training:
   seed: 42
   batch_size: 32
@@ -284,7 +318,7 @@ training:
   mixed_precision: auto  # none | auto | bf16
   use_gpu: true # legacy switch (kept for backward compatibility)
   checkpoint_interval: 1  # Save a periodic checkpoint every N rounds
-  early_stopping_patience: 10
+  early_stopping_patience: 30
   eval_max_samples_per_sensor: 0
 server:
   log_flush_interval: 1000

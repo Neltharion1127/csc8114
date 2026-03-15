@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.client.data_pipeline import collect_eval_indices_capped, load_sensor_data, sample_index
+from src.client.data_pipeline import (
+    collect_eval_indices_capped,
+    load_sensor_data,
+    resolve_split_pos,
+    sample_index,
+)
 from src.client.forward_step import run_forward_step
 from src.client.scheduler_state import SchedulerState
 from src.shared.targets import is_rain, rain_probability_threshold
@@ -86,13 +91,44 @@ def compute_feature_stats(
     client_id: int,
     sensor_data_cache: dict[str, pd.DataFrame],
     feature_cols: list[str],
+    train_end_date: pd.Timestamp | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    print(f"[CLIENT {client_id}] Calculating feature statistics for normalization...")
-    all_combined = pd.concat(sensor_data_cache.values())
+    print(
+        f"[CLIENT {client_id}] Calculating feature statistics for normalization "
+        f"(train_only={train_end_date is not None})..."
+    )
+    train_frames: list[pd.DataFrame] = []
+    train_rows = 0
+    for df in sensor_data_cache.values():
+        if train_end_date is None:
+            train_df = df
+        elif isinstance(df.index, pd.DatetimeIndex):
+            timestamps = pd.to_datetime(df.index)
+            if timestamps.tz is not None:
+                timestamps = timestamps.tz_convert(None)
+            split_ts = pd.Timestamp(train_end_date)
+            if split_ts.tzinfo is not None:
+                split_ts = split_ts.tz_convert(None)
+            train_df = df.loc[timestamps < split_ts]
+        else:
+            split_pos = resolve_split_pos(df, pd.Timestamp(train_end_date))
+            train_df = df.iloc[:split_pos]
+
+        if not train_df.empty:
+            train_frames.append(train_df)
+            train_rows += int(len(train_df))
+
+    if not train_frames:
+        raise RuntimeError(
+            f"Client {client_id} has 0 rows in train window for feature normalization. "
+            "Check split dates and dataset timestamps."
+        )
+
+    all_combined = pd.concat(train_frames)
     feat_mean = all_combined[feature_cols].mean().values
     feat_std = all_combined[feature_cols].std().values + 1e-9
+    print(f"[CLIENT {client_id}] Normalization stats rows={train_rows}")
     return feat_mean, feat_std
-
 
 def build_eval_index_cache(
     *,

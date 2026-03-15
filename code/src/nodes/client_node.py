@@ -93,7 +93,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
             client_id, num_clients, session_id = reg.client_id, reg.total_clients, reg.session_id
             print(
-                f"[CLIENT] Registered 閳?name: {client_name} | requested_id: {requested_client_id or 'auto'} "
+                f"[CLIENT] Registered name: {client_name} | requested_id: {requested_client_id or 'auto'} "
                 f"| assigned_id: {client_id} / {num_clients} | session: {session_id}"
             )
             base_seed = cfg.get("training", {}).get("seed", 42)
@@ -152,6 +152,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 client_id=client_id,
                 sensor_data_cache=sensor_data_cache,
                 feature_cols=FEATURE_COLS,
+                train_end_date=VAL_START_DATE,
             )
 
             eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
@@ -411,5 +412,3 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
 if __name__ == "__main__":
     run_all_client()
-
-
