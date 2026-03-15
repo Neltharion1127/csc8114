@@ -41,10 +41,25 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 xxxxxxxxx
 
 
-\section{Proposed System}
+\section{Related Work}
 \label{sec:system}
 
-xxxxxxx
+2. Related Work
+This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions:
+(1) communication-efficient Federated / Split Learning,
+(2) adaptive scheduling and system-level optimisation, and
+(3) machine learning methods for rainfall prediction in resource-constrained environments.
+ 
+2.1 Communication-efficient Federated / Split Learning
+Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensing–based approaches dynamically adjust compression ratios to reduce bidirectional communication cost [5], while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios [6]. These methods show clear improvements in communication efficiency for conventional FL systems.
+However, the communication pattern in Federated Split Learning (FSL) differs significantly from standard FL. Instead of exchanging full model gradients, clients send intermediate activations (also called smashed activations) to the server during the forward pass, and gradients are returned during the backward pass. As neural networks become deeper, the size of these activations can increase substantially, leading to high communication overhead. Therefore, compression techniques designed for traditional FL do not always directly address the communication characteristics of FSL.
+Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions [4]. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks [8]. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability [9;10], while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments [11]. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
+ 
+2.2 Adaptive Scheduling and System-Level Optimisation
+In addition to compression and architectural changes, another research direction focuses on adaptive scheduling and system-level optimisation for distributed learning. These approaches aim to improve performance by considering device capability, network latency, and resource availability during training.
+Computation-oriented optimisation methods attempt to reduce the workload on resource-limited client devices. Techniques such as model pruning, adaptive layer reduction, and lightweight network design are widely used in edge learning scenarios. Adaptive pruning strategies dynamically adjust model complexity according to device capability to reduce computation cost [7]. Lightweight prediction models are also designed to balance accuracy and efficiency in resource-constrained environments, particularly for time-series prediction tasks such as rainfall forecasting [2].
+However, these approaches mainly optimise computational cost rather than communication overhead. Even with smaller models, clients still participate in frequent synchronisation rounds, which can lead to high cumulative communication cost in distributed systems. In real IoT environments, network latency, bandwidth variation, and device heterogeneity may further increase training time and reduce system stability. Therefore, latency-aware training, resource-aware scheduling, and adaptive communication control are increasingly considered necessary for practical distributed learning systems.
+
 \subsection{System Design}
 
 xxxxxxxx
