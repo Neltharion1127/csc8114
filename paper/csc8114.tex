@@ -6,28 +6,29 @@
 \usepackage{amsmath}              % Math environments
 \usepackage{graphicx}             % Include images: \includegraphics{}
 \usepackage{url}                  % Line-breakable URLs
-\usepackage{lipsum}               % Lorem Ipsum text generation
 \usepackage[colorlinks=true,
             allcolors=black]{hyperref}  % Clickable links, but black text
-
+\usepackage{caption}
+\usepackage{subcaption}
 % ---- Title & Authors ----
-\title{Your Generic Paper Title}
+\title{Efficient Federated Split Learning: Synergizing Activation Quantization and Adaptive Synchronization}
 
-\author{\IEEEauthorblockN{Baoyi Liu, Cindy Lin, Guanghua Liu, Jiale Liu, Mingyuan Shao, Wenjie Ding, Zhuolun Li}
+\author{\IEEEauthorblockN{Baoyi Liu, Guanghua Liu, Jiale Liu, Mingyuan Shao, Wenjie Ding, Yi Sin Lin, Zhuolun Li}
 \IEEEauthorblockA{School of Computing, Newcastle University, Newcastle upon Tyne, United Kingdom \\
-Email: \{11111111, 2222222, 33333333, 44444444, 5555555, 6666666, 7777777\}@newcastle.ac.uk}}
+Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@newcastle.ac.uk}}
+
 % ==================================================================
 \begin{document}
 \maketitle
 
 % ---- Abstract ----
 \begin{abstract}
-  xxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxx
 \end{abstract}
 
 % ---- Keywords (optional) ----
 \begin{IEEEkeywords}
-  keyword one, keyword two, keyword three
+  1
 \end{IEEEkeywords}
 
 % ==================================================================
@@ -36,46 +37,85 @@ Email: \{11111111, 2222222, 33333333, 44444444, 5555555, 6666666, 7777777\}@newc
 
 \section{Introduction}
 \label{sec:intro}
-% Introduce the problem, motivation, and contributions.
-latex
-This is an example citation~\cite{10078005,2024ITWC...23.7362C}.
-\lipsum[2]
 
-\section{Related Work}
-\label{sec:related}
-% Survey existing literature and position your work.
-\lipsum[3]
-Recent work~\cite{10050151} shows that...
-\lipsum[4]
+xxxxxxxxx
 
-\section{Methodology}
-\label{sec:method}
-% Describe your approach / system design.
-\lipsum[5-6]
 
-\section{Implementation}
-\label{sec:impl}
-% Implementation details, tools, frameworks used.
-\lipsum[7]
+\section{Proposed System}
+\label{sec:system}
 
-\section{Evaluation}
-\label{sec:eval}
-% Experiments, metrics, results.
-\lipsum[8]
+xxxxxxx
+\subsection{System Design}
 
-\section{Discussion}
-\label{sec:discussion}
-% Interpret results, limitations, future work.
-\lipsum[9]
+xxxxxxxx
+\subsubsection{Activation Compression (Spatial Optimization)}
 
-\section{Conclusion}
-\label{sec:conclusion}
-% Summarize findings and contributions.
-\lipsum[10]
+
+\section{High-level design}
+\label{sec:design}
+xxxxxxxxxxx
+\subsection{System Overview}
+
+xxxxxxxxxxx
+
+
+\begin{enumerate}
+xxxxxxxx
+\end{enumerate}
+
+
+
+
+\subsection{Design Rationale}
+
+
+
 
 % ---- References ----
 % Compile order: pdflatex -> bibtex -> pdflatex -> pdflatex
+
 \bibliographystyle{IEEEtran}
 \bibliography{IEEEabrv,refs}
+
+
+\appendix
+\section{Team Contribution Table}
+
+\begin{center}
+\begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
+\hline
+\textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
+\hline
+
+Guanghua Liu & Introduction Writing &
+Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
+\hline
+
+Baoyi Liu & Literature Review &
+Reviewed paper \cite{10478872}. Read related papers and summarized the main ideas for the related work section. \\
+\hline
+
+Yi Sin Lin & System Design &
+Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
+\hline
+
+Mingyuan Shao & Activation Compression &
+Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
+\hline
+
+Jiale Liu & Synchronization Strategy &
+Reviewed papers \cite{2024ITWC...23.7362C} and \cite{2021arXiv210709786C}. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
+\hline
+
+Zhuolun Li & Scheduler and Profiler &
+Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
+\hline
+
+Wenjie Ding & High-level Design \& Paper Structure &
+Reviewed papers \cite{2023arXiv230205599M} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
+\hline
+
+\end{tabular}
+\end{center}
 
 \end{document}
