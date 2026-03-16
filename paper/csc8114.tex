@@ -38,7 +38,30 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 \section{Introduction}
 \label{sec:intro}
 
-xxxxxxxxx
+1.1 Background
+With the rapid deployment of Internet of Things (IoT) sensing networks in smart city infrastructures, large volumes of environmental data—such as rainfall, temperature, and humidity—can be continuously collected by geographically distributed sensors. These datasets provide important resources for data-driven urban rainfall prediction and environmental monitoring. However, the distributed nature of IoT data makes traditional centralized machine learning approaches less suitable for real-world deployments, as raw sensor data must be frequently transmitted to cloud servers for model training. This process may introduce privacy concerns and generate substantial communication costs, particularly in bandwidth-constrained and unstable IoT networks.
+To address these limitations, distributed learning paradigms such as Federated Learning (FL) and Federated Split Learning (FSL) have been proposed. FL enables multiple clients to collaboratively train a shared model without directly sharing raw data, while FSL further reduces the computational burden on edge devices by splitting the neural network between clients and a central server. In this framework, clients compute only the early layers of the model and transmit intermediate activations to the server, which completes the remaining training process. While this hybrid architecture improves both privacy preservation and computational efficiency, it also introduces new communication challenges in distributed IoT environments.
+
+1.2 Motivation
+Despite these advantages, communication overhead remains one of the major challenges in practical FSL deployments for real-world IoT scenarios. In traditional FL systems, communication mainly occurs through model parameter updates exchanged between clients and servers [5]. In contrast, FSL requires the transmission of intermediate activations and gradients during each training step, which can significantly increase communication frequency and data volume.
+In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronization intervals as fixed parameters, resulting in frequent communication events that further increase network traffic [6].
+These observations suggest that communication efficiency in FSL is influenced by two key factors: the size of transmitted activations and the frequency of synchronization between clients and the server. However, these two dimensions are often studied independently in existing literature, and few studies systematically investigate their combined impact on communication cost, convergence behaviour, and model performance in real-world IoT environments.
+Furthermore, rainfall prediction in real-world IoT environments presents additional challenges, including data imbalance caused by the rarity of heavy rainfall events and unstable network conditions among distributed sensors. These factors further motivate the need for communication-efficient and robust distributed learning frameworks.
+1.3 Problem Statement
+Based on the above observations, the key research problem addressed in this work is how to reduce communication overhead in federated split learning systems while maintaining acceptable rainfall prediction performance.
+To address this gap, this work proposes a communication-efficient Federated Split Learning system for rainfall prediction using historical weather data collected from multiple locations around Newcastle upon Tyne through the Open-Meteo Historical Weather API. The proposed system introduces two complementary optimization strategies together with an adaptive control mechanism.
+First, a spatial optimization mechanism compresses smashed activations using quantization and Top-k sparsification techniques to reduce transmission size. Second, a temporal optimization mechanism introduces a tunable synchronization interval ρ to regulate the frequency of global model aggregation. In addition, an adaptive scheduler dynamically adjusts these parameters based on runtime network conditions such as latency and bandwidth reported by clients. By jointly controlling communication size and frequency while adapting to network heterogeneity, the framework aims to reduce communication overhead while maintaining stable model convergence.
+
+1.4 Contributions
+The main contributions of this work are summarized as follows:
+1.A communication-efficient federated split learning framework for rainfall prediction using distributed IoT weather data.
+2.A dual optimization strategy that reduces communication overhead through activation compression (quantization and Top-k sparsification) and tunable synchronization intervals.
+3.An adaptive scheduling mechanism that dynamically adjusts communication parameters based on runtime network conditions such as latency and bandwidth.
+4.A systematic experimental evaluation that analyzes the trade-off between communication efficiency and prediction performance.
+
+1.5 Paper Organization
+The remainder of this paper is organised as follows. Section II reviews related work. Section III presents the proposed system design. Section IV describes the experimental setup. Section V discusses the evaluation results. Finally, Section VI concludes the paper.
+
 
 
 \section{Related Work}
