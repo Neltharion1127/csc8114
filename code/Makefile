@@ -1,7 +1,7 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session matrix matrix-dry-run clean-native check-native-port clean clean-all
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session eval-batch matrix matrix-dry-run clean-native check-native-port clean clean-all
 
 DEFAULT_NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 NUM_CLIENTS ?= $(DEFAULT_NUM_CLIENTS)
@@ -34,6 +34,7 @@ help:
 	@echo "  AUTO_PLOT=1          - Enable auto-plot after run-native/run-network (default: 0)"
 	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
 	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
+	@echo "  make eval-batch [FORCE_THRESHOLD=0.34] [REPORT_TAG=fixedthr034] - Batch run evaluation over sessions"
 	@echo "  make matrix [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Run experiment matrix from config.yaml"
 	@echo "  make matrix-dry-run [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Print matrix plan only"
 	@echo "  make clean-native    - Kill native server/client Python processes"
@@ -161,6 +162,17 @@ eval-session:
 	fi
 	@echo "Running evaluation for session $(SESSION)..."
 	@$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $(SESSION)
+
+eval-batch:
+	@CMD="$(PYTHON) -m src.data.batch_run_evaluation --sessions-root $(if $(SESSIONS_ROOT),$(SESSIONS_ROOT),bestweights) --device $(PLOT_DEVICE)"; \
+	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
+	if [ -n "$(LIMIT)" ]; then CMD="$$CMD --limit $(LIMIT)"; fi; \
+	if [ -n "$(FORCE_THRESHOLD)" ]; then CMD="$$CMD --force-prob-threshold $(FORCE_THRESHOLD)"; fi; \
+	if [ -n "$(REPORT_TAG)" ]; then CMD="$$CMD --report-tag $(REPORT_TAG)"; fi; \
+	if [ "$(CONTINUE_ON_ERROR)" = "1" ]; then CMD="$$CMD --continue-on-error"; fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then CMD="$$CMD --dry-run"; fi; \
+	echo "Running: $$CMD"; \
+	eval "$$CMD"
 
 matrix:
 	@CMD="$(PYTHON) -m src.data.run_experiment_matrix --config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml)"; \
