@@ -161,6 +161,37 @@ To improve robustness under sparse rainfall conditions, the system uses a joint 
 
 
 
+## 4.4 Experiment Matrix and Optimization Taxonomy
+
+To evaluate the cross-layer optimization efficiency of our FSL framework, scenarios are categorized into five profiles and four optimization paradigms.
+
+| Network Profile | Scenario ID | Latency Config (Base/Offset/Jitter) | Optimization Category | Compression Mode | Sync Interval ($\rho$) | Adaptive Scheduler |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **No Latency** | **M01** | 0 / 0 / 0 ms | **Static Baseline** | Float32 | 1 (Fixed) | Disabled |
+| | **M02** | 0 / 0 / 0 ms | **Adaptive Control** | Dynamic | **Dynamic** | **Enabled** |
+| **Light** | **M03** | 1.5 / 9.0 / 0.8 ms | **Static Baseline** | Float32 | 1 (Fixed) | Disabled |
+| | **M04** | 1.5 / 9.0 / 0.8 ms | **Adaptive** | Dynamic | **Dynamic** | **Enabled** |
+| **Medium** | **M05** | 3.0 / 14.0 / 1.2 ms | **Static Baseline** | Float32 | 1 (Fixed) | Disabled |
+| | **M06** | 3.0 / 14.0 / 1.2 ms | **Compression Only** | **INT8 (Static)** | 1 (Fixed) | Disabled |
+| | **M07** | 3.0 / 14.0 / 1.2 ms | **Compression Only** | **Top-K (Static)** | 1 (Fixed) | Disabled |
+| | **M08** | 3.0 / 14.0 / 1.2 ms | **Sync (Rho) Focus** | Float32 | **3 (Fixed)** | Disabled |
+| | **M10** | 3.0 / 14.0 / 1.2 ms | **Full Adaptive** | **Dynamic** | **Dynamic** | **Enabled** |
+| **Burst** | **M11** | 3.0ms + 20ms Burst | **Static Baseline** | Float32 | 1 (Fixed) | Disabled |
+| | **M12** | 3.0ms + 20ms Burst | **Full Adaptive** | **Dynamic** | **Dynamic** | **Enabled** |
+| **Extreme** | **M13** | 40.0 / 160.0 / 5.0 ms | **Compression Only** | **INT8 (Static)** | 1 (Fixed) | Disabled |
+| | **M14** | 40.0 / 160.0 / 5.0 ms | **Full Adaptive** | **Dynamic** | **Dynamic** | **Enabled** |
+
+### Parameter Definitions:
+- **Latency Config**: Parameters $(L_{base}, L_{offset}, L_{jitter})$ used to simulate network conditions.
+- **Dynamic Compression**: Automatic switching between `Float32`, `Float16`, `INT8`, and `Top-K` based on real-time network pressure.
+- **Dynamic Sync ($\rho$)**: Represents the number of local steps before global weight synchronization, scaling from 1 up to **20** in extreme cases.
+- **Burst Latency**: A transient 20ms surge added every 50 steps to simulate peak congestion.
+
+### Limitations and Scope:
+Due to constraints in time and computational resources, this setup cannot encompass all real-world edge cases. However, these 14 scenarios represent the most common challenges in global IoT deployments, providing a scientifically sound foundation for evaluating the system's adaptive robustness.
+
+
+
 % ---- References ----
 % Compile order: pdflatex -> bibtex -> pdflatex -> pdflatex
 
