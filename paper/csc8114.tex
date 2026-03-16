@@ -158,21 +158,11 @@ Due to this extreme class imbalance, relying solely on accuracy as the evaluatio
 
 4.2 Task Definition and Prediction Framework
 
-To address the numerical discontinuity caused by the large number of zero values in rainfall data, this study formulates the prediction task as a multi-task learning problem rather than a single regression task, and implements it within a Federated Split Learning (FSL) framework.
+To address the large number of zero values in rainfall data, this study formulates rainfall prediction as a multi-task learning problem within a Federated Split Learning (FSL) framework. Instead of using a single regression task, the model jointly performs rainfall event classification and rainfall intensity regression.
 
-In the overall pipeline, each client first uses a Client-LSTM to extract local temporal features and then compresses the intermediate representation into smashed activations, which are transmitted to the server. After receiving these activations, the server adopts a dual-headed output architecture to jointly perform two prediction tasks. The first is event classification, which determines whether a rainfall event will occur within the next three hours. The second is intensity regression, which predicts the accumulated rainfall amount over the same forecast horizon.
+In the prediction pipeline, each client uses a Client-LSTM to extract local temporal features and sends smashed activations to the server. The server then applies a dual-headed architecture: one head predicts whether rainfall will occur within the next 3 hours, while the other estimates the accumulated rainfall amount over the same period.
 
-For the classification task, Focal Loss is incorporated so that the gradient can focus more on difficult transition points and minority rainfall samples. For the regression task, the accumulated rainfall values after log1p transformation are modeled to reduce the impact of distributional skewness on regression stability. The main purpose of this multi-task design is to use the classification task as semantic guidance for the regression task, enabling the model to remain sensitive to rainfall events and maintain numerical prediction capability even under long dry periods with many zero-valued samples.
-
-In addition, the system introduces a joint decision mechanism: the regression output is only activated when the predicted rainfall probability from the classifier exceeds 0.34; otherwise, the final output is forced to 0. This mechanism effectively suppresses false regression fluctuations caused by noise in dry conditions and further improves the robustness of the overall prediction framework on sparse rainfall data.
-
-4.3 System Configuration and Deployment Architecture
-
-This study implements a self-built Federated Split Learning (FSL) prototype system to simulate a real-world multi-node collaborative rainfall prediction scenario. The overall architecture consists of one central server and three parallel clients. Each client corresponds to a different geographical subset of data, thereby forming a typical non-IID distributed data environment.
-
-At the deployment level, the system uses Docker containerization to simulate independent edge nodes, while gRPC is employed as the communication protocol between clients and the server. To better reflect practical IoT and edge-computing scenarios, the system also includes a latency generator that can inject base delay, random jitter, and node-specific offset, allowing heterogeneous network conditions to be simulated during communication.
-
-From the perspective of data challenges, because rainfall samples account for only a small proportion of the total data, the model can easily fall into a pseudo-optimal solution of always predicting no rain, and may also suffer from insufficient gradient signals during FedAvg-based or cross-node collaborative updates. To address this natural sparsity, this study proposes a dual-layer synergy strategy. The first layer is client-side rain sampling ratio-based active reweighting, where the sampling proportion of rainfall samples is increased locally so that the model can encounter these rare but high-information events more frequently. The second layer is server-side cost-sensitive loss design, which integrates weighted BCE and Focal Loss to increase the contribution of minority-class samples during gradient updates. This helps the model maintain sensitivity and robustness to rainfall events during federated aggregation.
+To improve robustness under sparse rainfall conditions, the system uses a joint decision mechanism. The regression output is only activated when the predicted rainfall probability is higher than 0.34; otherwise, the final prediction is set to 0. This design helps reduce false rainfall outputs caused by noise and improves prediction stability on highly imbalanced data.
 
 
 
