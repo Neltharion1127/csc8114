@@ -28,6 +28,15 @@ from src.shared.targets import (
     target_transform_mode,
 )
 
+
+def _normalize_report_tag(tag: str) -> str:
+    raw = str(tag).strip()
+    if not raw:
+        return ""
+    safe = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in raw)
+    return safe.strip("_")
+
+
 def _parse_timestamp(path: str) -> str:
     """
     Extract the trailing timestamp token from any model filename.
@@ -330,6 +339,7 @@ def evaluate_client(
     processed_dir: str,
     active_features: list[str],
     prob_threshold: float,
+    force_prob_threshold: float | None,
     rain_threshold: float,
     target_mode: str,
 ) -> dict:
@@ -365,9 +375,15 @@ def evaluate_client(
         saved_round  = "N/A"
         saved_loss   = float("nan")
         print(f"\n[Client {client_id}] \U0001f4c4 Legacy checkpoint (bare state_dict)")
-    effective_prob_threshold = (
-        client_prob_threshold if client_prob_threshold is not None else prob_threshold
-    )
+    if force_prob_threshold is not None:
+        effective_prob_threshold = float(force_prob_threshold)
+        prob_threshold_source = "forced_cli"
+    elif client_prob_threshold is not None:
+        effective_prob_threshold = client_prob_threshold
+        prob_threshold_source = "client_checkpoint"
+    else:
+        effective_prob_threshold = prob_threshold
+        prob_threshold_source = "config"
 
     num_layers = sum(1 for k in state_dict if k.startswith("lstm.weight_ih_l"))
     client_model = ClientLSTM(
@@ -471,7 +487,7 @@ def evaluate_client(
     cls_metrics = _metrics_from_cm(cls_tp, cls_fn, cls_fp, cls_tn)
     cls_source = "offline_recomputed"
     selected_cls = cls_metrics
-    if isinstance(checkpoint_cls_metrics, dict):
+    if force_prob_threshold is None and isinstance(checkpoint_cls_metrics, dict):
         try:
             ck_phase = str(checkpoint_cls_metrics.get("phase", "")).strip().upper()
             ck_tp = int(checkpoint_cls_metrics.get("tp", 0))
@@ -525,7 +541,7 @@ def evaluate_client(
         "op_fp":       op_metrics["fp"],
         "op_tn":       op_metrics["tn"],
         "prob_threshold": effective_prob_threshold,
-        "prob_threshold_source": "client_checkpoint" if client_prob_threshold is not None else "config",
+        "prob_threshold_source": prob_threshold_source,
         "rain_threshold_mm": rain_threshold,
         "target_transform": target_mode,
     }
@@ -554,7 +570,27 @@ def evaluate():
         action="store_true",
         help="Allow searching client checkpoints across all sessions if current session lacks clients.",
     )
+    parser.add_argument(
+        "--force-prob-threshold",
+        type=float,
+        default=None,
+        help="Force one shared probability threshold in [0,1] for all clients (ignores checkpoint threshold).",
+    )
+    parser.add_argument(
+        "--report-tag",
+        type=str,
+        default="",
+        help="Optional suffix for output report files (e.g. fixedthr034).",
+    )
     args = parser.parse_args()
+    forced_prob_threshold = None
+    if args.force_prob_threshold is not None:
+        forced_prob_threshold = float(args.force_prob_threshold)
+        if not (0.0 <= forced_prob_threshold <= 1.0):
+            raise ValueError("--force-prob-threshold must be in [0, 1].")
+    report_tag = _normalize_report_tag(args.report_tag)
+    if args.report_tag and not report_tag:
+        raise ValueError("Invalid --report-tag: must contain at least one alphanumeric character.")
 
     print("\n" + "=" * 55)
     print("   🚀 AUTO EVALUATION — ALL CLIENTS (TEST DATA)   ")
@@ -624,11 +660,21 @@ def evaluate():
                 f"Strict periodic pairing requires all clients {expected_clients}, "
                 f"but found {sorted(client_map.keys())} in {pairing_mode}."
             )
+    threshold_text = (
+        f"p(rain)>={forced_prob_threshold:.2f} (forced)"
+        if forced_prob_threshold is not None
+        else f"p(rain)>={prob_threshold:.2f}"
+    )
     print(
         f"[INFO] Eval config source: {eval_cfg_source} | split_date={split_date} | "
         f"seq_len={seq_len} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "
-        f"p(rain)>={prob_threshold:.2f} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | device={device}"
+        f"{threshold_text} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | device={device}"
     )
+    if forced_prob_threshold is not None:
+        print(
+            f"[INFO] Forced probability threshold active: p(rain)>={forced_prob_threshold:.2f} "
+            "(checkpoint thresholds ignored)"
+        )
 
     server_model = ServerHead(
         hidden_size=hidden_size,
@@ -660,6 +706,7 @@ def evaluate():
             processed_dir=processed_dir,
             active_features=active_features,
             prob_threshold=prob_threshold,
+            force_prob_threshold=forced_prob_threshold,
             rain_threshold=rain_threshold,
             target_mode=target_mode,
         )
@@ -682,6 +729,8 @@ def evaluate():
     print(f"   Pairing mode      : {pairing_mode}")
     print(f"   Server checkpoint : {Path(server_path).name}  (round={server_round})")
     print(f"   Eval cfg source   : {eval_cfg_source}")
+    if forced_prob_threshold is not None:
+        print(f"   Forced threshold  : {forced_prob_threshold:.2f}")
     print("=" * W)
     hdr = (f"  {'Client':<8} {'BestRound':>10} {'TrainLoss':>10}"
            f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'ClsAcc':>8}  {'ClsF1':>8}  {'OpF1':>8}")
@@ -710,14 +759,20 @@ def evaluate():
     results_dir = project_root / "results" / selected_session
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    report_csv = results_dir / f"evaluation_report_{selected_session}.csv"
+    report_stem = f"evaluation_report_{selected_session}"
+    if report_tag:
+        report_stem = f"{report_stem}_{report_tag}"
+
+    report_csv = results_dir / f"{report_stem}.csv"
     pd.DataFrame(all_results).to_csv(report_csv, index=False)
-    report_json = results_dir / f"evaluation_report_{selected_session}.json"
+    report_json = results_dir / f"{report_stem}.json"
     summary = {
         "session": selected_session,
         "pairing_mode": pairing_mode,
         "server_checkpoint": Path(server_path).name,
         "server_round": server_round,
+        "report_tag": report_tag,
+        "forced_prob_threshold": forced_prob_threshold,
         "device": str(device),
         "split_date": str(split_date),
         "eval_max_samples_per_sensor": eval_max_samples,
@@ -731,7 +786,12 @@ def evaluate():
             "hidden_size": hidden_size,
             "server_head_width": head_width,
             "server_head_dropout": head_dropout,
-            "rain_probability_threshold": prob_threshold,
+            "rain_probability_threshold": (
+                forced_prob_threshold if forced_prob_threshold is not None else prob_threshold
+            ),
+            "rain_probability_threshold_source": (
+                "forced_cli" if forced_prob_threshold is not None else "config_or_checkpoint"
+            ),
             "rain_threshold_mm": rain_threshold,
             "target_transform": target_mode,
         },
