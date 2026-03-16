@@ -69,25 +69,51 @@ However, rainfall prediction remains a challenging task due to data imbalance, t
 Across the three research directions above, a common limitation can be observed. Most existing studies optimise only one aspect of the system, such as compression, model structure, or distributed architecture, without jointly considering data representation precision, activation size, and synchronisation frequency. As a result, the interaction between communication cost, model convergence, and system scalability remains insufficiently explored, particularly for rainfall prediction systems deployed in real IoT environments. 
 
 To address these limitations, this work proposes a communication-efficient Federated Split Learning framework that jointly optimises activation compression and synchronisation frequency. By integrating spatial compression, temporal communication control, and adaptive scheduling mechanisms, the proposed approach aims to improve the practicality of rainfall prediction systems in real-world IoT sensing networks. 
-\subsection{System Design}
+
+
+% todo: delete this !!!!!
+\cite{10478872}
+\cite{10.3389/frwa.2024.1378598}
+\subsection{}
 
 xxxxxxxx
 \subsubsection{Activation Compression (Spatial Optimization)}
 
 
-\section{High-level design}
-\label{sec:design}
-xxxxxxxxxxx
-\subsection{System Overview}
+\section{Methodology}
+\label{sec:Methodology}
+\subsection{Split Learning Architecture}
+Our system follows a federated split learning (FSL) architecture for rainfall prediction. Each client performs local sequence encoding, while the server completes prediction from transmitted smashed activations. This design reduces edge-side computation and preserves end-to-end trainability through activation and gradient exchange. For temporal modeling, we use a two-layer LSTM-based split model: the client-side encoder maps each weather window to a fixed-length representation, and the server-side head performs joint rain-occurrence classification and rainfall-amount regression.
 
-xxxxxxxxxxx
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.46\textwidth}{\centering
+System architecture placeholder
+}}
+\caption{Overview of the proposed split learning pipeline.}
+\label{fig:split_arch}
+\end{figure}
 
+\subsubsection{Client-side Encoder}
+Each client encodes a 24-step weather window with 5 features into a fixed-length smashed activation and sends only this intermediate representation to the server, instead of raw sequences. This preserves data locality and keeps the transmitted payload stable, which directly supports our communication-oriented compression and adaptive scheduling strategy.
 
-\begin{enumerate}
-xxxxxxxx
-\end{enumerate}
+\subsubsection{Server-side Prediction Head}
+Beyond the standard split-learning pipeline, we introduce a shared multi-task server head that jointly models rain occurrence (classification) and rainfall amount (regression) from each smashed activation. This design is expected to improve task supervision under rainfall imbalance by activating the regression loss only for rainy samples, while keeping the transmitted cut-layer representation unchanged. Therefore, prediction quality can be improved without increasing per-step communication payload, and the server can still return cut-layer gradients for end-to-end split optimization under centralized supervision.
 
+\subsubsection{Activation and Gradient Transfer}
+For each forward step, the client sends compressed activation bytes and metadata (e.g., latency and payload statistics), and the server returns gradient bytes plus control signals for the next step. After local updates, model synchronization is executed periodically according to synchronization interval $\rho$. Therefore, communication overhead in our FSL system consists of two coupled components: per-step activation/gradient round trips and periodic parameter synchronization, which motivates the adaptive scheduling and compression strategies described in the following subsections.
 
+\subsection{Communication Bottleneck Analysis}
+In our federated split learning system, communication cost mainly comes from two parts.
+First, in each training step, the client sends smashed activations to the server and receives gradients back. This happens very frequently, so latency and payload size quickly accumulate.
+Second, clients still need periodic model synchronization with the server every $\rho$ local epochs, which adds extra upload and download traffic.
+
+Therefore, communication efficiency depends on both data size and communication frequency. In unstable IoT networks, reducing only model complexity is not enough. We need to jointly control activation payloads and synchronization intervals, which motivates our compression and adaptive scheduling design.
+
+\subsection{Adaptive Scheduler}
+1
+\subsection{Compression Strategies}
+2
 
 
 \subsection{Design Rationale}
@@ -102,44 +128,44 @@ xxxxxxxx
 \bibliography{IEEEabrv,refs}
 
 
-\appendix
-\section{Team Contribution Table}
+% \appendix
+% \section{Team Contribution Table}
 
-\begin{center}
-\begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
-\hline
-\textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
-\hline
+% \begin{center}
+% \begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
+% \hline
+% \textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
+% \hline
 
-Guanghua Liu & Introduction Writing &
-Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
-\hline
+% Guanghua Liu & Introduction Writing &
+% Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
+% \hline
 
-Baoyi Liu & Literature Review &
-Reviewed paper \cite{10478872}. Read related papers and summarized the main ideas for the related work section. \\
-\hline
+% Baoyi Liu & Literature Review &
+% Reviewed paper \cite{10478872}. Read related papers and summarized the main ideas for the related work section. \\
+% \hline
 
-Yi Sin Lin & System Design &
-Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
-\hline
+% Yi Sin Lin & System Design &
+% Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
+% \hline
 
-Mingyuan Shao & Activation Compression &
-Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
-\hline
+% Mingyuan Shao & Activation Compression &
+% Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
+% \hline
 
-Jiale Liu & Synchronization Strategy &
-Reviewed papers \cite{2024ITWC...23.7362C} and \cite{2021arXiv210709786C}. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
-\hline
+% Jiale Liu & Synchronization Strategy &
+% Reviewed papers \cite{2024ITWC...23.7362C} and \cite{2021arXiv210709786C}. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
+% \hline
 
-Zhuolun Li & Scheduler and Profiler &
-Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
-\hline
+% Zhuolun Li & Scheduler and Profiler &
+% Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
+% \hline
 
-Wenjie Ding & High-level Design \& Paper Structure &
-Reviewed papers \cite{2023arXiv230205599M} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
-\hline
+% Wenjie Ding & High-level Design \& Paper Structure &
+% Reviewed papers \cite{2023arXiv230205599M} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
+% \hline
 
-\end{tabular}
-\end{center}
+% \end{tabular}
+% \end{center}
 
 \end{document}
