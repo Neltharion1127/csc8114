@@ -196,7 +196,123 @@ Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & Dynamic & Dynamic (1-20)
 \end{tabular}
 \end{table*}
 
+\section{Results and Analysis}
+\label{sec:Res}
+This section evaluates the proposed communication-efficient FSL framework using the experiment matrix described in Section \ref{subsec:matrix}. We report results 10 random seeds and summarize each metric as mean $\pm$ standard deviation to reflect both performance and stability. Since rainfall events are relatively sparse, Macro-F1 is treated as the primary classification metric, while Micro-F1 and Accuracy are reported as complementary indicators. In addition, we analyze communication and system behavior using average payload size, reported latency, training duration, and server aggregation rounds.
 
+The analysis is organized by research questions: (RQ1) overall performance versus baseline, (RQ2) the effect of compression strategies, (RQ3) the impact of synchronization interval $\rho$, (RQ4) adaptive behavior under medium, burst, and extreme latency profiles, and (RQ5) the final accuracy--efficiency trade-off. Unless otherwise stated, comparisons are made within matched latency settings to isolate the effect of each design component.
+
+\subsection{Overall Performance vs Baseline}
+Table \ref{tab:overall-baseline} reports the core performance and communication indicators under 10 seeds.
+
+\begin{table*}[t]
+\centering
+\caption{Overall performance vs baseline (10 seeds, mean $\pm$ std).}
+\label{tab:overall-baseline}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{|l|l|c|c|c|c|c|c|c|}
+\hline
+\textbf{RQ} & \textbf{Scenario} & \textbf{Macro-F1} & \textbf{Micro-F1} & \textbf{Accuracy} & \textbf{Payload (Bytes)} & \textbf{Latency (ms)} & \textbf{Duration (s)} & \textbf{Server Round} \\
+\hline
+RQ1 & M01 (No-latency baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M05 (Medium baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M09 (Adaptive compression only) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M10 (Medium full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M12 (Burst full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M14 (Extreme full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table*}
+\subsection{Impact of Compression}
+Table \ref{tab:compression-impact} isolates the effect of static compression modes under the same medium-latency profile.
+
+\begin{table}[t]
+\centering
+\caption{Impact of compression strategies under medium latency (10 seeds, mean $\pm$ std).}
+\label{tab:compression-impact}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{Macro-F1} & \textbf{Recall} & \textbf{Precision} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} \\
+\hline
+M05 (Float32) & TBD & TBD & TBD & TBD & TBD \\
+M06 (INT8) & TBD & TBD & TBD & TBD & TBD \\
+M07 (Top-k) & TBD & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Impact of Synchronisation Interval}
+Table \ref{tab:rho-impact} summarizes the trade-off introduced by increasing the synchronization interval.
+
+\begin{table}[t]
+\centering
+\caption{Impact of synchronization interval $\rho$ under medium latency (10 seeds, mean $\pm$ std).}
+\label{tab:rho-impact}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{$\rho$ Setting} & \textbf{Macro-F1} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} & \textbf{Server Round} \\
+\hline
+M05 (Baseline) & 1 (fixed) & TBD & TBD & TBD & TBD \\
+M08 ($\rho$ focus) & 3 (fixed) & TBD & TBD & TBD & TBD \\
+M10 (Adaptive) & Dynamic (1--20) & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Adaptive Strategy under Variable Latency}
+Table \ref{tab:adaptive-latency} reports adaptive behavior under medium, burst, and extreme latency conditions.
+
+\begin{table}[t]
+\centering
+\caption{Adaptive strategy under variable latency (10 seeds, aggregated mode/rho behavior).}
+\label{tab:adaptive-latency}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{Avg Latency (ms)} & \textbf{Modes Seen} & \textbf{$\rho$ Seen} & \textbf{Mode Switch Rate (\%)} \\
+\hline
+M10 (Medium adaptive) & TBD & TBD & TBD & TBD \\
+M12 (Burst adaptive) & TBD & TBD & TBD & TBD \\
+M14 (Extreme adaptive) & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Trade-off Discussion}
+Table \ref{tab:pairwise-tradeoff} provides pairwise comparisons for key trade-off questions.
+
+\begin{table*}[t]
+\centering
+\caption{Pairwise trade-off summary across key scenario pairs (10 seeds).}
+\label{tab:pairwise-tradeoff}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|l|}
+\hline
+\textbf{Comparison} & \textbf{$\Delta$ Macro-F1} & \textbf{$\Delta$ Payload (\%)} & \textbf{$\Delta$ Duration (\%)} & \textbf{Win-rate} & \textbf{Interpretation} \\
+\hline
+M05 $\rightarrow$ M09 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M10 & TBD & TBD & TBD & TBD/10 & TBD \\
+M11 $\rightarrow$ M12 & TBD & TBD & TBD & TBD/10 & TBD \\
+M13 $\rightarrow$ M14 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M06 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M07 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M08 & TBD & TBD & TBD & TBD/10 & TBD \\
+\hline
+\end{tabular}
+}
+\end{table*}
+
+\section{Discussion}
+\label{sec:Discussion}
+\subsection{Imbalance task}
+
+
+\section{Conclusion}
+\label{sec:Conclusion}
+\subsection{Imbalance task}
 
 
 % ---- References ----
