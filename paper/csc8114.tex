@@ -173,6 +173,15 @@ In addition to the distributed learning pipeline, the system includes a latency 
 
 To evaluate the cross-layer optimization efficiency of our FSL framework, scenarios are categorized into five profiles and four optimization paradigms.
 
+The experiments aim to isolate the impact of individual components and assess the performance of the full adaptive system.
+
+First, a baseline experiment (M01) is conducted under ideal conditions with no additional latency, using standard federated split learning with full-precision (float32) communication and synchronous updates.
+
+Second, component-level experiments analyze individual optimization techniques. These include studying the effect of network latency under static settings, as well as evaluating communication strategies such as activation compression (e.g., int8 and top-k) and reduced synchronization frequency (ρ). Each component is tested independently to understand its contribution.
+
+Third, adaptive strategy experiments evaluate the proposed scheduler under more realistic scenarios, including light, medium, burst, and extreme latency. The scheduler dynamically adjusts compression and synchronization based on network conditions.
+
+All configurations are evaluated in terms of prediction performance, communication cost, and robustness, enabling a comparison between static and adaptive approaches.
 \begin{table*}[t]
 \centering
 \caption{Experiment scenarios and optimization taxonomy.}
