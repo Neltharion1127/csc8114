@@ -174,25 +174,26 @@ We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, 
 \resizebox{\textwidth}{!}{
 \begin{tabular}{|l|c|l|l|l|c|c|}
 \hline
-\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Config (Base/Offset/Jitter)} & \textbf{Optimization Category} & \textbf{Initial/Static Compression} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
+\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Profile (ms)} & \textbf{Optimization Strategy} & \textbf{Compression Policy} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
 \hline
-No Latency & M01 & 0 / 0 / 0 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-No Latency & M02 & 0 / 0 / 0 ms & Adaptive Control & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+No Latency & M01 & 0 / 0 / 0 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+No Latency & M02 & 0 / 0 / 0 & Adaptive Control & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Light & M03 & 1.5 / 9.0 / 0.8 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Light & M04 & 1.5 / 9.0 / 0.8 ms & Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Light & M03 & 1.5 / 9.0 / 0.8 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Light & M04 & 1.5 / 9.0 / 0.8 & Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Medium & M05 & 3.0 / 14.0 / 1.2 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Medium & M06 & 3.0 / 14.0 / 1.2 ms & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
-Medium & M07 & 3.0 / 14.0 / 1.2 ms & Static Mode Test & Top-K (Fixed, 0.5) & 1 (Fixed) & Disabled \\
-Medium & M08 & 3.0 / 14.0 / 1.2 ms & Static Sync Test & Float32 & 3 (Fixed) & Disabled \\
-Medium & M10 & 3.0 / 14.0 / 1.2 ms & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Medium & M05 & 3.0 / 14.0 / 1.2 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Medium & M06 & 3.0 / 14.0 / 1.2 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Medium & M07 & 3.0 / 14.0 / 1.2 & Static Mode Test & Top-K (Fixed, 0.5) & 1 (Fixed) & Disabled \\
+Medium & M08 & 3.0 / 14.0 / 1.2 & Static Sync Test & Float32 (Fixed) & 3 (Fixed) & Disabled \\
+Medium & M09 & 3.0 / 14.0 / 1.2 & Compression Focus & \textit{Starts at} Float32 & 1 (Fixed) & Enabled \\
+Medium & M10 & 3.0 / 14.0 / 1.2 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Burst & M11 & 3.0 / 14.0 / 20.0 ms (burst) & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Burst & M12 & 3.0 / 14.0 / 20.0 ms (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Burst & M11 & 3.0 / 14.0 / 20.0 (burst) & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Burst & M12 & 3.0 / 14.0 / 20.0 (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Extreme & M13 & 40.0 / 160.0 / 5.0 ms & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
-Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Extreme & M13 & 40.0 / 160.0 / 5.0 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 \end{tabular}
 }
