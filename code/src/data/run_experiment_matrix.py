@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import copy
 import csv
 import json
@@ -93,6 +93,10 @@ def _safe_float(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
 
+def _rho_sort_key(value: Any) -> tuple[int, int | str]:
+    value_str = str(value).strip()
+    return (0, int(value_str)) if value_str.isdigit() else (1, value_str)
+
 
 def _read_eval_metrics(eval_json_path: Path) -> dict[str, Any]:
     report = json.loads(eval_json_path.read_text(encoding="utf-8"))
@@ -151,6 +155,9 @@ def _read_server_metrics(session_dir: Path) -> dict[str, Any]:
     compression_modes = set()
     rho_values = set()
     for row in rows:
+        # Defend against occasional duplicated header rows in CSV append mode.
+        if row.get("next_rho") == "next_rho" or row.get("timestamp") == "timestamp":
+            continue
         if row.get("reported_latency_ms", "") != "":
             latencies.append(_safe_float(row["reported_latency_ms"]))
         if row.get("payload_bytes", "") != "":
@@ -165,7 +172,7 @@ def _read_server_metrics(session_dir: Path) -> dict[str, Any]:
         "avg_reported_latency_ms": _mean(latencies) if latencies else 0.0,
         "avg_payload_bytes": _mean(payloads) if payloads else 0.0,
         "compression_modes_seen": "|".join(sorted(compression_modes)),
-        "rho_values_seen": "|".join(sorted(rho_values, key=lambda v: int(v) if v.isdigit() else v)),
+        "rho_values_seen": "|".join(sorted(rho_values, key=_rho_sort_key)),
     }
 
 
