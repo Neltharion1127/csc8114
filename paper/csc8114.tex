@@ -156,44 +156,46 @@ To normalize the high variance in rainfall intensity, the regression target is p
 \label{subsec:deployment}
 The platform is implemented as a containerized environment using \textbf{Docker} and \textbf{gRPC} to simulate the orchestration and communication overhead of a distributed edge network. The experiments were executed on a dedicated hardware suite featuring an NVIDIA RTX 4090 Laptop GPU and 64GB of RAM to maintain sufficient compute throughput for parallel execution of all nodes.
 
-The adaptive scheduler is initialized with the following empirical control settings derived from our configuration system:
+The adaptive scheduler is initialized with empirical control settings derived from our configuration system. It is important to note that \textbf{all communication parameters defined below serve as baseline or initial states}; the system dynamically escalates optimization levels during runtime based on EMA-smoothed latency:
 \begin{itemize}
     \item \textbf{Network Smoothing}: Latency estimation utilizes an Exponential Moving Average (EMA) with a smoothing factor $\alpha_{ema} = 0.2$ to mitigate stochastic RTT noise.
-    \item \textbf{Decision Thresholds}: Communication optimization is triggered sequentially, with activation compression initiated at 4.0ms and aggressive 8-bit quantization at 10.0ms.
-    \item \textbf{Synchronization Limits}: To balance convergence stability and efficiency, the synchronization interval $\rho$ is allowed to scale dynamicallty within the range $[1, 20]$.
+    \item \textbf{Hierarchical Compression Thresholds}: Communication optimization is triggered at three levels: \textbf{Float16} at 4.0ms, \textbf{INT8} at 10.0ms, and \textbf{Top-K} (density 0.5) at 15.0ms (calculated as 1.5$\times$ the INT8 threshold).
+    \item \textbf{Dynamic Synchronization Interval}: The synchronization interval $\rho$ follows a step-wise growth logic (\textit{rho\_step} = 1). As network severity increases, $\rho$ scales from its base value up to a maximum safety limit of 20, reducing global aggregation frequency to preserve local compute autonomy.
 \end{itemize}
 
 \subsection{Experiment Matrix and Optimization Taxonomy}
 \label{subsec:matrix}
-We formulated an experiment matrix consisting of 14 scenarios (M01--M14) to systematically decouple the performance impact of our proposed strategies. These scenarios are organized into five network profiles, ranging from ideal conditions to extreme connectivity links. As detailed in Table \ref{tab:experiment-matrix}, our taxonomy classifies each experiment as a baseline, a component-specific test (e.g., Compression Only or Sync Focus), or a full adaptive implementation. This rigorous structure allows us to isolate the benefits of static strategies versus the performance gains of profiling-driven dynamic adjustment.
+We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, to systematically decouple the performance impact of our proposed strategies. As detailed in the 'Scheduler' column of Table \ref{tab:experiment-matrix}, we differentiate between trials where the adaptive scheduler is disabled and those where it is enabled. Disabling the scheduler defines a static configuration where parameters are held fixed to measure their individual impact. Conversely, enabling the scheduler creates an adaptive configuration where the system dynamically manages transitions between compression modes and synchronization intervals starting from a full-precision baseline. This mapping allows us to isolate the benefits of basic static strategies versus the performance gains of profiling-driven dynamic adjustment.
 
 \begin{table*}[t]
 \centering
 \caption{Experiment scenarios and optimization taxonomy.}
 \label{tab:experiment-matrix}
+\resizebox{\textwidth}{!}{
 \begin{tabular}{|l|c|l|l|l|c|c|}
 \hline
-\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Config (Base/Offset/Jitter)} & \textbf{Optimization Category} & \textbf{Compression} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
+\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Config (Base/Offset/Jitter)} & \textbf{Optimization Category} & \textbf{Initial/Static Compression} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
 \hline
 No Latency & M01 & 0 / 0 / 0 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-No Latency & M02 & 0 / 0 / 0 ms & Adaptive Control & Dynamic & Dynamic (1-20) & Enabled \\
+No Latency & M02 & 0 / 0 / 0 ms & Adaptive Control & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 Light & M03 & 1.5 / 9.0 / 0.8 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Light & M04 & 1.5 / 9.0 / 0.8 ms & Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+Light & M04 & 1.5 / 9.0 / 0.8 ms & Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 Medium & M05 & 3.0 / 14.0 / 1.2 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Medium & M06 & 3.0 / 14.0 / 1.2 ms & Compression Only & INT8 (Static) & 1 (Fixed) & Disabled \\
-Medium & M07 & 3.0 / 14.0 / 1.2 ms & Compression Only & Top-K (Static, 0.5) & 1 (Fixed) & Disabled \\
-Medium & M08 & 3.0 / 14.0 / 1.2 ms & Sync ($\rho$) Focus & Float32 & 3 (Fixed) & Disabled \\
-Medium & M10 & 3.0 / 14.0 / 1.2 ms & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+Medium & M06 & 3.0 / 14.0 / 1.2 ms & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Medium & M07 & 3.0 / 14.0 / 1.2 ms & Static Mode Test & Top-K (Fixed, 0.5) & 1 (Fixed) & Disabled \\
+Medium & M08 & 3.0 / 14.0 / 1.2 ms & Static Sync Test & Float32 & 3 (Fixed) & Disabled \\
+Medium & M10 & 3.0 / 14.0 / 1.2 ms & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 Burst & M11 & 3.0 / 14.0 / 20.0 ms (burst) & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Burst & M12 & 3.0 / 14.0 / 20.0 ms (burst) & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+Burst & M12 & 3.0 / 14.0 / 20.0 ms (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Extreme & M13 & 40.0 / 160.0 / 5.0 ms & Compression Only & INT8 (Static) & 1 (Fixed) & Disabled \\
-Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+Extreme & M13 & 40.0 / 160.0 / 5.0 ms & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 \end{tabular}
+}
 \end{table*}
 
 \section{Results and Analysis}
