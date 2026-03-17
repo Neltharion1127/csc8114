@@ -137,86 +137,65 @@ We design a rule-based adaptive scheduler that adjusts both compression mode and
 \subsection{Compression Strategies}
 We apply activation/gradient compression to both smashed activations and cut-layer gradients using four communication modes: float32, float16, int8, and top-k (implemented as top-k mode). Compression is evaluated in both static and adaptive settings: in static settings, one mode is fixed for the whole run, while in adaptive settings, the scheduler dynamically switches modes according to latency conditions. This design reduces payload size while allowing the system to balance communication efficiency and training stability under varying network conditions.
 
-\section{Experimentl Setup}
+\section{Experimental Setup}
+\label{sec:experiments}
 
-\subsection{Dataset Characteristics and Sparsity Analysis}
-The experiments are conducted on hourly rainfall-related meteorological observations collected from 12 geographically distributed sensor locations in Newcastle upon Tyne, United Kingdom. The dataset spans from January 2023 to March 2026, and each station provides a continuous time series of local weather conditions. In the current implementation, the model consumes five variables, namely Temperature, Humidity, Pressure, Wind Speed, and Rain.
+\subsection{Data Acquisition and Preprocessing}
+\label{subsec:dataset}
+To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the \textbf{Open-Meteo Historical Weather API}. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation.
 
-To preserve the temporal dependency of rainfall dynamics, the data are processed using a sliding-window strategy. For each sample, the model takes the previous 24 hours of multivariate observations as input. The dataset is split chronologically to avoid temporal leakage: the most recent 14 days are used for testing, the preceding 14 days are used for validation, and all earlier observations are used for training. This setting is consistent with realistic forecasting scenarios, where future rainfall must be predicted solely from historical records.
+For temporal modeling, we applied a 24-hour sliding-window strategy to capture the preceding meteorological context. The dataset is split chronologically, dedicating the final 14 days for testing and the preceding 14 days for validation to ensure unbiased performance evaluation. As shown in our statistical analysis, the dataset exhibits significant sparsity, with rainy events ($>0.1$mm) accounting for approximately 20.8\% of total observations. To address this class imbalance, our evaluation focuses on \textbf{Recall and F1-score} as primary metrics for event detection, alongside Mean Squared Error (MSE) and Mean Absolute Error (MAE) for assessing intensity regression accuracy.
 
-A key characteristic of this dataset is its strong sparsity and class imbalance. According to our statistics, actual rainfall events account for only about 20.8\% of all hourly observations, while the remaining nearly 80\% correspond to dry periods. This highly imbalanced distribution makes rainfall prediction particularly challenging, since a naive model biased toward predicting no-rain can still achieve apparently high accuracy while providing little practical warning value.
+\subsection{Multi-task Training and Configuration}
+\label{subsec:training}
+The multi-task learning framework described in Section \ref{sec:Methodology} is optimized using a consistent hyperparameter suite to ensure that performance variations across scenarios are attributable solely to communication strategies. We employ the Adam optimizer with a learning rate of $0.0005$ and a batch size of 32. The training process is executed for 30 global rounds, with each client performing 10 local iterations per round before a synchronization decision is triggered.
 
-For this reason, accuracy alone is insufficient to evaluate system performance. In this work, Recall and F1-score are treated as the primary classification metrics, because they better reflect the model's ability to detect rare rainfall events. In addition, Mean Squared Error (MSE) and Mean Absolute Error (MAE) are used to assess the precision of rainfall amount prediction. This metric design allows us to evaluate both event detection capability and numerical forecasting quality under sparse rainfall conditions.
+To normalize the high variance in rainfall intensity, the regression target is processed using a $\log(1+x)$ transformation. The joint objective function is weighted to prioritize rain event detection, assigning a coefficient of $2.0$ to the Focal Loss ($\gamma=2.0$, $\alpha=0.25$) and $1.0$ to the regression loss. During inference, we apply a classification-guided gating rule with a probability threshold of $0.34$; rainfall intensity is only predicted when the classifier identifies a high-probability event, thereby reducing false alarms in dry environments.
 
-\subsection{Task Definition and Prediction Framework}
-To address the discontinuity and zero inflation caused by sparse rainfall observations, we formulate the prediction problem as a multi-task learning task within the federated split learning framework. The model jointly performs rainfall event classification and rainfall intensity regression from the same historical weather sequence.
+\subsection{System Implementation and Control Settings}
+\label{subsec:deployment}
+The platform is implemented as a containerized environment using \textbf{Docker} and \textbf{gRPC} to simulate the orchestration and communication overhead of a distributed edge network. The experiments were executed on a dedicated hardware suite featuring an NVIDIA RTX 4090 Laptop GPU and 64GB of RAM to maintain sufficient compute throughput for parallel execution of all nodes.
 
-The first task is event classification, which determines whether rainfall will occur in the target prediction horizon. Since positive rainfall samples are much rarer than negative samples, the classification branch adopts focal loss to place more training emphasis on difficult and minority cases. In the current configuration, the focal loss uses $\gamma=2.0$ and $\alpha=0.25$, with a classification loss weight of 2.0. A rainfall amount above 0.1 mm is treated as a positive event for the classification target.
-
-The second task is rainfall intensity regression, which estimates the rainfall amount associated with the prediction target. To reduce the influence of skewed rainfall distribution and occasional heavy rainfall peaks, the regression target is transformed using $\log(1+x)$. The regression branch is optimized jointly with the classification branch, with a regression loss weight of 1.0. This design improves learning stability on sparse and long-tailed rainfall data.
-
-To further suppress noisy non-zero outputs during dry periods, the final prediction follows a gated decision rule. Specifically, the system outputs a non-zero rainfall estimate only when the predicted rainfall probability exceeds a threshold of 0.34; otherwise, the prediction is forced to zero. This classification-guided regression strategy is intended to better align the forecasting output with the characteristics of real rainfall events and reduce false alarms in dry environments.
-
-\subsection{System Configuration and Deployment Architecture}
-The proposed system is implemented as a prototype federated split learning (FSL) platform. The deployment consists of one central server and three parallel clients, where the data are partitioned by sensor locations to preserve the naturally heterogeneous and non-IID characteristics of geographically distributed weather observations. This setting reflects a realistic IoT sensing scenario in which each edge node only has access to its own local data.
-
-To emulate distributed edge deployment, the system is containerized with Docker and the communication between clients and server is implemented using gRPC. The experiments are conducted on a Windows-based machine with a WSL environment, equipped with 64 GB RAM and an NVIDIA RTX 4090 Laptop GPU. This environment enables reproducible distributed execution while maintaining sufficient compute capacity for repeated experimental runs.
-
-The model itself follows a split architecture. On the client side, a two-layer LSTM encoder is used to process the input sequence, with hidden size 64, dropout 0.3, and sequence length 24. On the server side, a lightweight prediction head with width 64 and dropout 0.1 performs the joint classification and regression tasks. The training process uses a batch size of 32, learning rate 0.0005, 30 global rounds, and 10 local steps per client before synchronization decisions are applied.
-
-In addition to the distributed learning pipeline, the system includes a latency generator to simulate heterogeneous IoT communication conditions. The generator injects a configurable base latency, random jitter, and client-specific offset, thereby reproducing the variability commonly observed in real-world edge networks. This component is essential for evaluating whether the proposed communication-efficient strategies remain effective under unstable network conditions.
-
-
-
+The adaptive scheduler is initialized with the following empirical control settings derived from our configuration system:
+\begin{itemize}
+    \item \textbf{Network Smoothing}: Latency estimation utilizes an Exponential Moving Average (EMA) with a smoothing factor $\alpha_{ema} = 0.2$ to mitigate stochastic RTT noise.
+    \item \textbf{Decision Thresholds}: Communication optimization is triggered sequentially, with activation compression initiated at 4.0ms and aggressive 8-bit quantization at 10.0ms.
+    \item \textbf{Synchronization Limits}: To balance convergence stability and efficiency, the synchronization interval $\rho$ is allowed to scale dynamicallty within the range $[1, 20]$.
+\end{itemize}
 
 \subsection{Experiment Matrix and Optimization Taxonomy}
+\label{subsec:matrix}
+We formulated an experiment matrix consisting of 14 scenarios (M01--M14) to systematically decouple the performance impact of our proposed strategies. These scenarios are organized into five network profiles, ranging from ideal conditions to extreme connectivity links. As detailed in Table \ref{tab:experiment-matrix}, our taxonomy classifies each experiment as a baseline, a component-specific test (e.g., Compression Only or Sync Focus), or a full adaptive implementation. This rigorous structure allows us to isolate the benefits of static strategies versus the performance gains of profiling-driven dynamic adjustment.
 
-To evaluate the cross-layer optimization efficiency of our FSL framework, scenarios are categorized into five profiles and four optimization paradigms.
-
-The experiments aim to isolate the impact of individual components and assess the performance of the full adaptive system.
-
-First, a baseline experiment (M01) is conducted under ideal conditions with no additional latency, using standard federated split learning with full-precision (float32) communication and synchronous updates.
-
-Second, component-level experiments analyze individual optimization techniques. These include studying the effect of network latency under static settings, as well as evaluating communication strategies such as activation compression (e.g., int8 and top-k) and reduced synchronization frequency (ρ). Each component is tested independently to understand its contribution.
-
-Third, adaptive strategy experiments evaluate the proposed scheduler under more realistic scenarios, including light, medium, burst, and extreme latency. The scheduler dynamically adjusts compression and synchronization based on network conditions.
-
-All configurations are evaluated in terms of prediction performance, communication cost, and robustness, enabling a comparison between static and adaptive approaches.
 \begin{table*}[t]
 \centering
 \caption{Experiment scenarios and optimization taxonomy.}
 \label{tab:experiment-matrix}
 \begin{tabular}{|l|c|l|l|l|c|c|}
 \hline
-Network Profile & Scenario ID & Latency Config (Base/Offset/Jitter) & Optimization Category & Compression Mode & Sync Interval ($\rho$) & Adaptive Scheduler \\
+\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Config (Base/Offset/Jitter)} & \textbf{Optimization Category} & \textbf{Compression} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
 \hline
 No Latency & M01 & 0 / 0 / 0 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-No Latency & M02 & 0 / 0 / 0 ms & Adaptive Control & Dynamic & Dynamic & Enabled \\
+No Latency & M02 & 0 / 0 / 0 ms & Adaptive Control & Dynamic & Dynamic (1-20) & Enabled \\
+\hline
 Light & M03 & 1.5 / 9.0 / 0.8 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Light & M04 & 1.5 / 9.0 / 0.8 ms & Adaptive & Dynamic & Dynamic & Enabled \\
+Light & M04 & 1.5 / 9.0 / 0.8 ms & Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+\hline
 Medium & M05 & 3.0 / 14.0 / 1.2 ms & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
 Medium & M06 & 3.0 / 14.0 / 1.2 ms & Compression Only & INT8 (Static) & 1 (Fixed) & Disabled \\
-Medium & M07 & 3.0 / 14.0 / 1.2 ms & Compression Only & Top-K (Static) & 1 (Fixed) & Disabled \\
-Medium & M08 & 3.0 / 14.0 / 1.2 ms & Sync (Rho) Focus & Float32 & 3 (Fixed) & Disabled \\
-Medium & M10 & 3.0 / 14.0 / 1.2 ms & Full Adaptive & Dynamic & Dynamic & Enabled \\
+Medium & M07 & 3.0 / 14.0 / 1.2 ms & Compression Only & Top-K (Static, 0.5) & 1 (Fixed) & Disabled \\
+Medium & M08 & 3.0 / 14.0 / 1.2 ms & Sync ($\rho$) Focus & Float32 & 3 (Fixed) & Disabled \\
+Medium & M10 & 3.0 / 14.0 / 1.2 ms & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+\hline
 Burst & M11 & 3.0 / 14.0 / 20.0 ms (burst) & Static Baseline & Float32 & 1 (Fixed) & Disabled \\
-Burst & M12 & 3.0 / 14.0 / 20.0 ms (burst) & Full Adaptive & Dynamic & Dynamic & Enabled \\
+Burst & M12 & 3.0 / 14.0 / 20.0 ms (burst) & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
+\hline
 Extreme & M13 & 40.0 / 160.0 / 5.0 ms & Compression Only & INT8 (Static) & 1 (Fixed) & Disabled \\
-Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & Dynamic & Dynamic & Enabled \\
+Extreme & M14 & 40.0 / 160.0 / 5.0 ms & Full Adaptive & Dynamic & Dynamic (1-20) & Enabled \\
 \hline
 \end{tabular}
 \end{table*}
 
-\subsubsection*{Parameter Definitions}
-\begin{itemize}
-  \item \textbf{Latency Config}: Parameters $(L_{base}, L_{offset}, L_{jitter})$ used to simulate network conditions.
-  \item \textbf{Dynamic Compression}: Automatic switching between Float32, Float16, INT8, and Top-K based on real-time network pressure.
-  \item \textbf{Dynamic Sync ($\rho$)}: Represents the number of local steps before global weight synchronization, scaling from 1 up to 20 in extreme cases.
-  \item \textbf{Burst Latency}: A transient 20ms surge added every 50 steps to simulate peak congestion.
-\end{itemize}
-
-\subsubsection*{Limitations and Scope}
-Due to constraints in time and computational resources, this setup cannot encompass all real-world edge cases. However, these 14 scenarios represent the most common challenges in global IoT deployments, providing a scientifically sound foundation for evaluating the system's adaptive robustness.
 
 
 
