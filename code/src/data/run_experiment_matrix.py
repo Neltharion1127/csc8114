@@ -233,6 +233,35 @@ def _write_summary(rows: list[dict[str, Any]], path: Path) -> None:
             writer.writerow(row)
 
 
+def _load_existing_summary(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return [dict(r) for r in csv.DictReader(f)]
+
+
+def _merge_rows_by_run_id(
+    existing_rows: list[dict[str, Any]],
+    new_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = list(existing_rows)
+    index_by_run_id: dict[str, int] = {}
+    for idx, row in enumerate(merged):
+        run_id = str(row.get("run_id", "")).strip()
+        if run_id:
+            index_by_run_id[run_id] = idx
+
+    for row in new_rows:
+        run_id = str(row.get("run_id", "")).strip()
+        if run_id and run_id in index_by_run_id:
+            merged[index_by_run_id[run_id]] = row
+        else:
+            if run_id:
+                index_by_run_id[run_id] = len(merged)
+            merged.append(row)
+    return merged
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run experiment matrix defined in config.yaml.")
     parser.add_argument(
@@ -312,6 +341,7 @@ def main() -> int:
     configs_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, Any]] = []
+    existing_rows = _load_existing_summary(summary_csv)
     for idx, (scenario, seed) in enumerate(plan, start=1):
         scenario_id = str(scenario.get("id", f"S{idx:02d}"))
         scenario_desc = str(scenario.get("description", ""))
@@ -435,7 +465,7 @@ def main() -> int:
         row.update(eval_metrics)
         row.update(server_metrics)
         rows.append(row)
-        _write_summary(rows, summary_csv)
+        _write_summary(_merge_rows_by_run_id(existing_rows, rows), summary_csv)
         print(f"[MATRIX] run done | status={status} | duration={duration_sec}s")
         print(f"[MATRIX] summary updated: {summary_csv}")
 
