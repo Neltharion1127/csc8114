@@ -59,7 +59,7 @@ scheduler:
   latency_ema_alpha: 0.2
 experiment_matrix:
   enabled: false
-  seeds: [42, 52, 62, 72, 82, 92, 102, 112, 122, 132] 
+  seeds: [42, 52, 62]
   runner:
     backend: native
     server_device: cpu
