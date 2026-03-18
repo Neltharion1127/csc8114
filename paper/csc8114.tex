@@ -323,6 +323,13 @@ M05 $\rightarrow$ M08 & -0.016 $\pm$ 0.064 & 0.0 $\pm$ 0.0 & -54.6 $\pm$ 12.0 & 
 \end{table*}
 Overall, the pairwise comparisons show no single strategy dominates all objectives. Compression-oriented settings provide clear payload benefits (especially M06), while larger synchronization intervals deliver the strongest runtime reduction (M08). Full adaptation is most useful under harsher latency conditions where static policies struggle, but in milder settings it may introduce extra control overhead. Therefore, practical deployment should select communication policies based on target constraints (bandwidth budget, latency stability, and acceptable accuracy drop), rather than optimizing only one metric.
 
+\subsection{Conclusion}
+This paper introduces a communication-efficient Federated Split Learning (FSL) framework tailored for rainfall prediction in distributed IoT environments. By integrating spatial compression techniques (quantization and Top-k sparsification) with temporal synchronization control, the proposed system addresses the dual challenges of activation size and communication frequency inherent in FSL deployments.
+
+The experimental evaluation, conducted across 14 diverse scenarios with 10 random seeds each, demonstrates the framework's effectiveness in balancing communication efficiency and prediction performance. Key findings include: (1) compression strategies like INT8 quantization achieve up to 73.4\% payload reduction (from 256.0 bytes in M05 to 68.0 bytes in M06) with a moderate Macro-F1 drop of 0.038 on average; (2) increasing synchronization intervals (e.g., from $\rho=1$ in M05 to $\rho=3$ in M08) reduces server aggregation rounds from 30 to 10 and training duration by 54.6\% (from 318.6s to 143.1s), though with a slight Macro-F1 decrease of 0.016; (3) adaptive scheduling dynamically adjusts policies based on runtime latency, proving most beneficial under burst and extreme network conditions (e.g., M12 shows 20.7\% payload reduction with near-neutral Macro-F1 impact, while M14 achieves 63.4\% faster training despite a 0.022 Macro-F1 drop); and (4) no single strategy dominates all objectives, with pairwise comparisons revealing that compression excels in payload reduction, synchronization intervals optimize runtime, and adaptation handles variability.
+
+Overall, the results validate the framework's potential for practical IoT applications, where communication constraints are paramount. The framework maintains acceptable Macro-F1 scores (ranging from 0.429 to 0.478 across scenarios) while significantly reducing communication overhead. Future research directions include exploring reinforcement learning-based schedulers for more adaptive policy selection, larger-scale deployments with physical edge devices to capture real-world heterogeneity, and robustness enhancements against client dropout and packet loss to further advance communication-efficient distributed learning in real-world settings.
+
 \section{Discussion}
 \label{sec:Discussion}
 \subsection{Imbalance task}
@@ -336,11 +343,10 @@ In addition, all experiments are conducted on a standard laptop environment, whe
 Therefore, the results should be interpreted as proof-of-concept rather than full real-world validation.
 \subsection{No client dropout}
 The experiments assume stable participation without client dropout, packet loss, or communication interruptions. However, such issues are common in real IoT systems due to unstable networks and device constraints. Since federated split learning depends on both activation exchange and synchronization, it can be sensitive to unreliable communication. As a result, the current evaluation may overestimate system robustness. Future work should consider more realistic scenarios, including partial participation, delayed updates, and communication failures.
-
+\subsection{Dataset location specificity}
 Finally, the dataset used in this study is collected from the Newcastle region, meaning that the learned patterns are inherently location-specific. Climate conditions, seasonal patterns, and weather dynamics can vary significantly across different regions. Therefore, the experimental findings may not directly generalize to other cities. Extending the evaluation to multiple geographic locations would be necessary to validate the robustness and generality of the proposed framework.
+
 \section{Conclusion}
-\label{sec:Conclusion}
-\subsection{Imbalance task}
 
 
 % ---- References ----
