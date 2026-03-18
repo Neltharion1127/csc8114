@@ -51,7 +51,7 @@ Furthermore, rainfall prediction in real-world IoT environments presents additio
 \subsection{Problem Statement}
 Based on the above observations, the key research problem addressed in this work is how to reduce communication overhead in federated split learning systems while maintaining acceptable rainfall prediction performance.
 To address this gap, this work proposes a communication-efficient Federated Split Learning system for rainfall prediction using historical weather data collected from multiple locations around Newcastle upon Tyne through the Open-Meteo Historical Weather API. The proposed system introduces two complementary optimization strategies together with an adaptive control mechanism.
-First, a spatial optimization mechanism compresses smashed activations using quantization and Top-k sparsification techniques to reduce transmission size. Second, a temporal optimization mechanism introduces a tunable synchronization interval $/rho$ to regulate the frequency of global model aggregation. In addition, an adaptive scheduler dynamically adjusts these parameters based on runtime network conditions such as latency and bandwidth reported by clients. By jointly controlling communication size and frequency while adapting to network heterogeneity, the framework aims to reduce communication overhead while maintaining stable model convergence.
+First, a spatial optimization mechanism compresses smashed activations using quantization and Top-k sparsification techniques to reduce transmission size. Second, a temporal optimization mechanism introduces a tunable synchronization interval $\rho$ to regulate the frequency of global model aggregation. In addition, an adaptive scheduler dynamically adjusts these parameters based on runtime network conditions such as latency and bandwidth reported by clients. By jointly controlling communication size and frequency while adapting to network heterogeneity, the framework aims to reduce communication overhead while maintaining stable model convergence.
 
 \subsection{Contributions}
 The main contributions of this work are summarised as follows:
@@ -210,23 +210,34 @@ Table \ref{tab:overall-baseline} reports the core performance and communication 
 
 \begin{table*}[t]
 \centering
-\caption{Overall performance vs baseline (10 seeds, mean $\pm$ std).}
+\caption{Overall performance across all scenarios (10 seeds, mean $\pm$ std).}
 \label{tab:overall-baseline}
 \resizebox{\textwidth}{!}{
-\begin{tabular}{|l|l|c|c|c|c|c|c|c|}
+\begin{tabular}{|l|c|c|c|c|c|c|c|c|c|}
 \hline
-\textbf{RQ} & \textbf{Scenario} & \textbf{Macro-F1} & \textbf{Micro-F1} & \textbf{Accuracy} & \textbf{Payload (Bytes)} & \textbf{Latency (ms)} & \textbf{Duration (s)} & \textbf{Server Round} \\
+\textbf{Scenario ID} & \textbf{Macro-Precision} & \textbf{Macro-Recall} & \textbf{Macro-F1} & \textbf{Micro-F1} & \textbf{Accuracy} & \textbf{Payload (Bytes)} & \textbf{Latency (ms)} & \textbf{Duration (s)} & \textbf{Server Round} \\
 \hline
-RQ1 & M01 (No-latency baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
-RQ1 & M05 (Medium baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
-RQ1 & M09 (Adaptive compression only) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
-RQ1 & M10 (Medium full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
-RQ1 & M12 (Burst full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
-RQ1 & M14 (Extreme full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+M01 & 0.502 $\pm$ 0.109 & 0.484 $\pm$ 0.118 & 0.469 $\pm$ 0.042 & 0.468 $\pm$ 0.040 & 0.778 $\pm$ 0.048 & 0.0 $\pm$ 0.0 & 0.00 $\pm$ 0.00 & 404.1 $\pm$ 167.5 & 30.0 $\pm$ 0.0 \\
+M02 & 0.408 $\pm$ 0.173 & 0.622 $\pm$ 0.234 & 0.429 $\pm$ 0.038 & 0.429 $\pm$ 0.038 & 0.652 $\pm$ 0.167 & 0.0 $\pm$ 0.0 & 0.00 $\pm$ 0.00 & 299.2 $\pm$ 29.0 & 30.0 $\pm$ 0.0 \\
+M03 & 0.581 $\pm$ 0.131 & 0.432 $\pm$ 0.155 & 0.461 $\pm$ 0.035 & 0.461 $\pm$ 0.035 & 0.795 $\pm$ 0.081 & 256.0 $\pm$ 0.0 & 5.89 $\pm$ 0.00 & 326.4 $\pm$ 42.7 & 30.0 $\pm$ 0.0 \\
+M04 & 0.516 $\pm$ 0.129 & 0.475 $\pm$ 0.139 & 0.449 $\pm$ 0.039 & 0.445 $\pm$ 0.040 & 0.757 $\pm$ 0.084 & 185.6 $\pm$ 1.3 & 4.37 $\pm$ 0.06 & 251.2 $\pm$ 31.9 & 10.4 $\pm$ 0.7 \\
+M05 & 0.548 $\pm$ 0.116 & 0.457 $\pm$ 0.116 & 0.474 $\pm$ 0.058 & 0.474 $\pm$ 0.057 & 0.796 $\pm$ 0.052 & 256.0 $\pm$ 0.0 & 10.36 $\pm$ 0.05 & 318.6 $\pm$ 41.5 & 30.0 $\pm$ 0.0 \\
+M06 & 0.533 $\pm$ 0.203 & 0.481 $\pm$ 0.207 & 0.436 $\pm$ 0.054 & 0.436 $\pm$ 0.053 & 0.752 $\pm$ 0.106 & 68.0 $\pm$ 0.0 & 10.35 $\pm$ 0.01 & 325.7 $\pm$ 43.5 & 30.0 $\pm$ 0.0 \\
+M07 & 0.481 $\pm$ 0.171 & 0.505 $\pm$ 0.157 & 0.442 $\pm$ 0.061 & 0.439 $\pm$ 0.060 & 0.744 $\pm$ 0.071 & 264.0 $\pm$ 0.0 & 10.36 $\pm$ 0.04 & 322.2 $\pm$ 41.1 & 30.0 $\pm$ 0.0 \\
+M08 & 0.449 $\pm$ 0.142 & 0.584 $\pm$ 0.214 & 0.458 $\pm$ 0.049 & 0.458 $\pm$ 0.049 & 0.710 $\pm$ 0.150 & 256.0 $\pm$ 0.0 & 10.34 $\pm$ 0.01 & 143.1 $\pm$ 35.8 & 10.0 $\pm$ 0.0 \\
+M09 & 0.461 $\pm$ 0.123 & 0.556 $\pm$ 0.150 & 0.473 $\pm$ 0.043 & 0.473 $\pm$ 0.043 & 0.740 $\pm$ 0.103 & 195.7 $\pm$ 0.1 & 10.36 $\pm$ 0.02 & 385.6 $\pm$ 98.4 & 30.0 $\pm$ 0.0 \\
+M10 & 0.472 $\pm$ 0.106 & 0.502 $\pm$ 0.159 & 0.448 $\pm$ 0.060 & 0.447 $\pm$ 0.059 & 0.753 $\pm$ 0.068 & 215.4 $\pm$ 0.1 & 7.02 $\pm$ 0.01 & 438.6 $\pm$ 25.0 & 7.0 $\pm$ 0.0 \\
+M11 & 0.481 $\pm$ 0.192 & 0.574 $\pm$ 0.268 & 0.443 $\pm$ 0.044 & 0.443 $\pm$ 0.044 & 0.695 $\pm$ 0.174 & 256.0 $\pm$ 0.0 & 10.81 $\pm$ 0.02 & 547.3 $\pm$ 60.4 & 30.0 $\pm$ 0.0 \\
+M12 & 0.480 $\pm$ 0.116 & 0.491 $\pm$ 0.160 & 0.441 $\pm$ 0.061 & 0.439 $\pm$ 0.061 & 0.747 $\pm$ 0.092 & 203.0 $\pm$ 1.0 & 7.54 $\pm$ 0.08 & 576.5 $\pm$ 220.2 & 7.0 $\pm$ 0.0 \\
+M13 & 0.459 $\pm$ 0.127 & 0.565 $\pm$ 0.135 & 0.478 $\pm$ 0.046 & 0.477 $\pm$ 0.046 & 0.736 $\pm$ 0.115 & 68.0 $\pm$ 0.0 & 119.99 $\pm$ 0.01 & 336.3 $\pm$ 38.7 & 30.0 $\pm$ 0.0 \\
+M14 & 0.479 $\pm$ 0.161 & 0.547 $\pm$ 0.204 & 0.456 $\pm$ 0.047 & 0.456 $\pm$ 0.047 & 0.728 $\pm$ 0.128 & 264.0 $\pm$ 0.0 & 119.98 $\pm$ 0.03 & 123.0 $\pm$ 34.3 & 7.0 $\pm$ 0.0 \\
 \hline
 \end{tabular}
 }
 \end{table*}
+Compared with the medium static baseline (M05), adaptive compression only (M09) keeps Macro-F1 nearly unchanged (0.473 vs 0.474) while reducing payload from 256.0 to 195.7 bytes. Full adaptive control in medium latency (M10) further reduces rounds (30 to 7) and reported latency, and we reason that the associated computational burden should theoretically decrease with fewer rounds, but introduces a larger runtime and a lower Macro-F1, indicating that adaptation overhead and more aggressive policies can trade accuracy for efficiency. Under burst latency, M12 remains close to M11 in Macro-F1 while lowering payload, showing that adaptation is more beneficial when network variability is higher. Under extreme latency, M14 shortens runtime substantially compared with M13, but with increased payload and moderate F1 degradation, reflecting a different operating point in the efficiency--accuracy trade-off.
+
+
 \subsection{Impact of Compression}
 Table \ref{tab:compression-impact} isolates the effect of static compression modes under the same medium-latency profile.
 
@@ -239,13 +250,14 @@ Table \ref{tab:compression-impact} isolates the effect of static compression mod
 \hline
 \textbf{Scenario} & \textbf{Macro-F1} & \textbf{Recall} & \textbf{Precision} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} \\
 \hline
-M05 (Float32) & TBD & TBD & TBD & TBD & TBD \\
-M06 (INT8) & TBD & TBD & TBD & TBD & TBD \\
-M07 (Top-k) & TBD & TBD & TBD & TBD & TBD \\
+M05 (Float32) & 0.474 $\pm$ 0.058 & 0.457 $\pm$ 0.116 & 0.548 $\pm$ 0.116 & 256.0 $\pm$ 0.0 & 318.6 $\pm$ 41.5 \\
+M06 (INT8) & 0.436 $\pm$ 0.054 & 0.481 $\pm$ 0.207 & 0.533 $\pm$ 0.203 & 68.0 $\pm$ 0.0 & 325.7 $\pm$ 43.5 \\
+M07 (Top-k) & 0.442 $\pm$ 0.061 & 0.505 $\pm$ 0.157 & 0.481 $\pm$ 0.171 & 264.0 $\pm$ 0.0 & 322.2 $\pm$ 41.1 \\
 \hline
 \end{tabular}
 }
 \end{table}
+Static INT8 compression (M06) provides the largest communication reduction (68.0 bytes, about 73.4\% lower than M05), but also lowers Macro-F1 by about 0.037 on average. In contrast, the Top-k setting used in M07 does not reduce payload in this setup (264.0 bytes vs 256.0 in M05), and still shows a small F1 drop. The recall--precision pattern also shifts across modes: M07 has higher recall but lower precision than M05, suggesting a tendency to detect more rainy events at the cost of more false positives.
 \subsection{Impact of Synchronisation Interval}
 Table \ref{tab:rho-impact} summarizes the trade-off introduced by increasing the synchronization interval.
 
@@ -258,13 +270,14 @@ Table \ref{tab:rho-impact} summarizes the trade-off introduced by increasing the
 \hline
 \textbf{Scenario} & \textbf{$\rho$ Setting} & \textbf{Macro-F1} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} & \textbf{Server Round} \\
 \hline
-M05 (Baseline) & 1 (fixed) & TBD & TBD & TBD & TBD \\
-M08 ($\rho$ focus) & 3 (fixed) & TBD & TBD & TBD & TBD \\
-M10 (Adaptive) & Dynamic (1--20) & TBD & TBD & TBD & TBD \\
+M05 (Baseline) & 1 (fixed) & 0.474 $\pm$ 0.058 & 256.0 $\pm$ 0.0 & 318.6 $\pm$ 41.5 & 30.0 $\pm$ 0.0 \\
+M08 ($\rho$ focus) & 3 (fixed) & 0.458 $\pm$ 0.049 & 256.0 $\pm$ 0.0 & 143.1 $\pm$ 35.8 & 10.0 $\pm$ 0.0 \\
+M10 (Adaptive) & Dynamic (1--20) & 0.448 $\pm$ 0.060 & 215.4 $\pm$ 0.1 & 438.6 $\pm$ 25.0 & 7.0 $\pm$ 0.0 \\
 \hline
 \end{tabular}
 }
 \end{table}
+Increasing $\rho$ from 1 to 3 (M05 to M08) reduces server rounds from 30 to 10 and shortens duration from 318.6s to 143.1s, with a moderate Macro-F1 decrease (0.474 to 0.458). This indicates that temporal communication control alone can significantly reduce runtime. The adaptive setting (M10) further reduces payload, but its runtime becomes longer than both M05 and M08 in this profile, showing that dynamic policy switching does not always dominate a well-chosen fixed $\rho$.
 \subsection{Adaptive Strategy under Variable Latency}
 Table \ref{tab:adaptive-latency} reports adaptive behavior under medium, burst, and extreme latency conditions.
 
@@ -277,13 +290,14 @@ Table \ref{tab:adaptive-latency} reports adaptive behavior under medium, burst, 
 \hline
 \textbf{Scenario} & \textbf{Avg Latency (ms)} & \textbf{Modes Seen} & \textbf{$\rho$ Seen} & \textbf{Mode Switch Rate (\%)} \\
 \hline
-M10 (Medium adaptive) & TBD & TBD & TBD & TBD \\
-M12 (Burst adaptive) & TBD & TBD & TBD & TBD \\
-M14 (Extreme adaptive) & TBD & TBD & TBD & TBD \\
+M10 (Medium adaptive) & 7.02 $\pm$ 0.01 & float32/float16/int8/topk & 1,2,3,4 & 0.88 $\pm$ 0.35 \\
+M12 (Burst adaptive) & 7.54 $\pm$ 0.08 & float32/float16/int8/topk & 1,2,3,4 & 3.12 $\pm$ 0.21 \\
+M14 (Extreme adaptive) & 119.98 $\pm$ 0.03 & int8/topk & 4 & 0.08 $\pm$ 0.00 \\
 \hline
 \end{tabular}
 }
 \end{table}
+The adaptive scheduler exhibits distinct behavior across latency regimes. In medium and burst profiles (M10 and M12), all four compression modes and multiple $\rho$ values are activated, confirming that the controller explores broader policy space under fluctuating conditions. The higher mode-switch rate in burst latency (3.12\%) than in medium latency (0.88\%) further indicates stronger policy responsiveness to unstable links. In extreme latency (M14), adaptation converges to a narrow strategy (int8/topk with $\rho=4$), with near-zero switching, suggesting that persistent high-latency conditions constrain feasible communication choices.
 \subsection{Trade-off Discussion}
 Table \ref{tab:pairwise-tradeoff} provides pairwise comparisons for key trade-off questions.
 
@@ -296,17 +310,18 @@ Table \ref{tab:pairwise-tradeoff} provides pairwise comparisons for key trade-of
 \hline
 \textbf{Comparison} & \textbf{$\Delta$ Macro-F1} & \textbf{$\Delta$ Payload (\%)} & \textbf{$\Delta$ Duration (\%)} & \textbf{Win-rate} & \textbf{Interpretation} \\
 \hline
-M05 $\rightarrow$ M09 & TBD & TBD & TBD & TBD/10 & TBD \\
-M05 $\rightarrow$ M10 & TBD & TBD & TBD & TBD/10 & TBD \\
-M11 $\rightarrow$ M12 & TBD & TBD & TBD & TBD/10 & TBD \\
-M13 $\rightarrow$ M14 & TBD & TBD & TBD & TBD/10 & TBD \\
-M05 $\rightarrow$ M06 & TBD & TBD & TBD & TBD/10 & TBD \\
-M05 $\rightarrow$ M07 & TBD & TBD & TBD & TBD/10 & TBD \\
-M05 $\rightarrow$ M08 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M09 & -0.000 $\pm$ 0.058 & -23.5 $\pm$ 0.0 & 23.6 $\pm$ 38.3 & 4/10 & Similar F1 with lower payload, but longer runtime. \\
+M05 $\rightarrow$ M10 & -0.026 $\pm$ 0.081 & -15.9 $\pm$ 0.0 & 39.7 $\pm$ 19.6 & 4/10 & Adaptive policy cuts payload with an F1 trade-off. \\
+M11 $\rightarrow$ M12 & -0.002 $\pm$ 0.079 & -20.7 $\pm$ 0.4 & 7.4 $\pm$ 46.0 & 4/10 & Under burst latency, payload drops while F1 stays near-neutral. \\
+M13 $\rightarrow$ M14 & -0.022 $\pm$ 0.082 & 288.2 $\pm$ 0.0 & -63.4 $\pm$ 8.4 & 4/10 & Extreme profile: much faster training with moderate F1 drop. \\
+M05 $\rightarrow$ M06 & -0.037 $\pm$ 0.056 & -73.4 $\pm$ 0.0 & 4.1 $\pm$ 21.2 & 2/10 & INT8 gives strongest payload reduction but lower F1. \\
+M05 $\rightarrow$ M07 & -0.032 $\pm$ 0.072 & 3.1 $\pm$ 0.0 & 2.8 $\pm$ 19.2 & 4/10 & Top-k here gives limited efficiency gain and slight F1 drop. \\
+M05 $\rightarrow$ M08 & -0.016 $\pm$ 0.064 & 0.0 $\pm$ 0.0 & -54.6 $\pm$ 12.0 & 4/10 & Larger $\rho$ reduces runtime with small accuracy loss. \\
 \hline
 \end{tabular}
 }
 \end{table*}
+Overall, the pairwise comparisons show no single strategy dominates all objectives. Compression-oriented settings provide clear payload benefits (especially M06), while larger synchronization intervals deliver the strongest runtime reduction (M08). Full adaptation is most useful under harsher latency conditions where static policies struggle, but in milder settings it may introduce extra control overhead. Therefore, practical deployment should select communication policies based on target constraints (bandwidth budget, latency stability, and acceptable accuracy drop), rather than optimizing only one metric.
 
 \section{Discussion}
 \label{sec:Discussion}
