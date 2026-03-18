@@ -43,8 +43,8 @@ With the rapid deployment of Internet of Things (IoT) sensing networks in smart 
 To address these limitations, distributed learning paradigms such as Federated Learning (FL) and Federated Split Learning (FSL) have been proposed. FL enables multiple clients to collaboratively train a shared model without directly sharing raw data, while FSL further reduces the computational burden on edge devices by splitting the neural network between clients and a central server. In this framework, clients compute only the early layers of the model and transmit intermediate activations to the server, which completes the remaining training process. While this hybrid architecture improves both privacy preservation and computational efficiency, it also introduces new communication challenges in distributed IoT environments.
 
 \subsection{Motivation}
-However, communication overhead remains one of the major challenges in practical FSL deployments for real-world IoT scenarios. In traditional FL systems, communication mainly occurs through model parameter updates exchanged between clients and servers [5]. In contrast, FSL requires the transmission of intermediate activations and gradients during each training step, which can significantly increase communication frequency and data volume.
-In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. While this work does not explicitly model packet loss or sensor failures, such practical constraints further highlight the importance of reducing communication overhead in distributed IoT learning frameworks. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronisation intervals as fixed parameters, resulting in frequent communication events that further increase network traffic [6].
+However, communication overhead remains one of the major challenges in practical FSL deployments for real-world IoT scenarios. In traditional FL systems, communication mainly occurs through model parameter updates exchanged between clients and servers \cite{liu2023fedcs}. In contrast, FSL requires the transmission of intermediate activations and gradients during each training step, which can significantly increase communication frequency and data volume.
+In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. While this work does not explicitly model packet loss or sensor failures, such practical constraints further highlight the importance of reducing communication overhead in distributed IoT learning frameworks. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronisation intervals as fixed parameters, resulting in frequent communication events that further increase network traffic \cite{jin2023federated}. 
 These observations suggest that communication efficiency in FSL is influenced by two key factors: the size of transmitted activations and the frequency of synchronisation between clients and the server. However, these two dimensions are often studied independently in existing literature, and few studies systematically investigate their combined impact on communication cost, convergence behaviour, and model performance in real-world IoT environments.
 Furthermore, rainfall prediction in real-world IoT environments presents additional challenges, including data imbalance caused by the rarity of heavy rainfall events and unstable network conditions among distributed sensors. These factors further motivate the need for communication-efficient and robust distributed learning frameworks. Although the proposed framework is generally applicable to a wide range of IoT-based prediction tasks, such as air quality monitoring, traffic flow prediction, and environmental forecasting, this study focuses on rainfall prediction as a representative application scenario. Rainfall prediction plays an important role in urban management, flood prevention, and early warning systems, particularly in cities where extreme weather events may cause significant disruptions. In addition, rainfall datasets collected from distributed weather sensors provide a suitable testbed for evaluating communication-efficient distributed learning methods in practical IoT environments.
 
@@ -72,11 +72,11 @@ The remainder of this paper is organised as follows. Section II reviews related 
 This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions: (1) communication-efficient Federated Split Learning, (2) adaptive scheduling and system-level optimisation, and (3) machine learning methods for rainfall prediction in resource-constrained environments.
 
 \subsection{Communication-efficient Federated Split Learning}
-Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensingâ€“based approaches dynamically adjust compression ratios to reduce bidirectional communication cost [5], while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios [6]. These methods show clear improvements in communication efficiency for conventional FL systems.
+Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensingâ€“based approaches dynamically adjust compression ratios to reduce bidirectional communication cost \cite{liu2023fedcs}, while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios \cite{jin2023federated}. These methods show clear improvements in communication efficiency for conventional FL systems.
 
 However, the communication pattern in Federated Split Learning (FSL) differs significantly from standard FL. Instead of exchanging full model gradients, clients send intermediate activations (also called smashed activations) to the server during the forward pass, and gradients are returned during the backward pass. As neural networks become deeper, the size of these activations can increase substantially, leading to high communication overhead. Therefore, compression techniques designed for traditional FL do not always directly address the communication characteristics of FSL.
 
-Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions [4]. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks [8]. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability [9], [10], while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments [11]. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
+Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions \cite{mu2023communication}. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks \cite{Chen_2021}. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability \cite{liang2025communicationandcomputationefficientsplitfederated}, \cite{liang2025communicationandcomputationefficientsplitfederated}, while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments \cite{mahmoudi2024fedcau}. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
 
 \subsection{Adaptive Scheduling and System-Level Optimisation}
 In addition to compression and architectural changes, another research direction focuses on adaptive scheduling and system-level optimisation for distributed learning. These approaches aim to improve performance by considering device capability, network latency, and resource availability during training.
@@ -397,93 +397,6 @@ Overall, the results validate the framework's potential for practical IoT applic
 
 % \end{tabular}
 % \end{center}
-[4]
-@inproceedings{mu2023communication, 
-
-  title={Communication and storage efficient federated split learning}, 
-
-  author={Mu, Yujia and Shen, Cong}, 
-
-  booktitle={ICC 2023-IEEE International Conference on Communications}, 
-
-  pages={2976--2981}, 
-
-  year={2023}, 
-
-  organization={IEEE} 
-
-} 
-
-[5] aaaaaaaaa
-
-@inproceedings{liu2023fedcs,
-  title={Fedcs: Communication-efficient federated learning with compressive sensing},
-  author={Liu, Ye and Chang, Shan and Liu, Yiqi},
-  booktitle={2022 IEEE 28th International Conference on Parallel and Distributed Systems (ICPADS)},
-  pages={17--24},
-  year={2023},
-  organization={IEEE}
-}
-
-[6]
-@article{jin2023federated,
-  title={Federated Edge Learning for Massive MIMO CSI Feedback},
-  author={Jin, Shi and Cui, Yiming and Guo, Jiajia},
-  journal={Federated Learning for Future Intelligent Wireless Networks},
-  pages={257--271},
-  year={2023},
-  publisher={Wiley Online Library}
-}
-[8]
-@inproceedings{Chen_2021, 
-
-title={Communication and Computation Reduction for Split Learning using Asynchronous Training}, 
-
-url={http://dx.doi.org/10.1109/SiPS52927.2021.00022}, 
-
-DOI={10.1109/sips52927.2021.00022}, 
-
-booktitle={2021 IEEE Workshop on Signal Processing Systems (SiPS)}, 
-
-publisher={IEEE}, 
-
-author={Chen, Xing and Li, Jingtao and Chakrabarti, Chaitali}, 
-
-year={2021}, 
-
-month=oct, pages={76–81} } 
-
-[9]
-@misc{liang2025communicationandcomputationefficientsplitfederated,
-      title={Communication-and-Computation Efficient Split Federated Learning: Gradient Aggregation and Resource Management}, 
-      author={Yipeng Liang and Qimei Chen and Guangxu Zhu and Muhammad Kaleem Awan and Hao Jiang},
-      year={2025},
-      eprint={2501.01078},
-      archivePrefix={arXiv},
-      primaryClass={cs.DC},
-      url={https://arxiv.org/abs/2501.01078}, 
-}
-[10]
-@misc{zhu2024esflefficientsplitfederated,
-      title={ESFL: Efficient Split Federated Learning over Resource-Constrained Heterogeneous Wireless Devices}, 
-      author={Guangyu Zhu and Yiqin Deng and Xianhao Chen and Haixia Zhang and Yuguang Fang and Tan F. Wong},
-      year={2024},
-      eprint={2402.15903},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2402.15903}, 
-}
-[11]
-@article{mahmoudi2024fedcau,
-  title={FedCau: A proactive stop policy for communication and computation efficient federated learning},
-  author={Mahmoudi, Afsaneh and Ghadikolaei, Hossein S and Da Silva, Jos{\'e} Mairton Barros and Fischione, Carlo},
-  journal={IEEE Transactions on Wireless Communications},
-  volume={23},
-  number={9},
-  pages={11076--11093},
-  year={2024},
-  publisher={IEEE}
-}
 
 \end{document}
 
