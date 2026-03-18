@@ -38,65 +38,66 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 \section{Introduction}
 \label{sec:intro}
 
-1.1 Background
-With the rapid deployment of Internet of Things (IoT) sensing networks in smart city infrastructures, large volumes of environmental data—such as rainfall, temperature, and humidity—can be continuously collected by geographically distributed sensors. These datasets provide important resources for data-driven urban rainfall prediction and environmental monitoring. However, the distributed nature of IoT data makes traditional centralized machine learning approaches less suitable for real-world deployments, as raw sensor data must be frequently transmitted to cloud servers for model training. This process may introduce privacy concerns and generate substantial communication costs, particularly in bandwidth-constrained and unstable IoT networks.
+\subsection{Background}
+With the rapid deployment of Internet of Things (IoT) sensing networks in smart city infrastructures, large volumes of environmental data—such as rainfall, temperature, and humidity—can be continuously collected by geographically distributed sensors. These datasets provide important resources for data-driven urban rainfall prediction and environmental monitoring. However, the distributed nature of IoT data makes traditional centralised machine learning approaches less suitable for real-world deployments, as raw sensor data must be frequently transmitted to cloud servers for model training. This process may introduce privacy concerns and generate substantial communication costs, particularly in bandwidth-constrained and unstable IoT networks.
 To address these limitations, distributed learning paradigms such as Federated Learning (FL) and Federated Split Learning (FSL) have been proposed. FL enables multiple clients to collaboratively train a shared model without directly sharing raw data, while FSL further reduces the computational burden on edge devices by splitting the neural network between clients and a central server. In this framework, clients compute only the early layers of the model and transmit intermediate activations to the server, which completes the remaining training process. While this hybrid architecture improves both privacy preservation and computational efficiency, it also introduces new communication challenges in distributed IoT environments.
 
-1.2 Motivation
+\subsection{Motivation}
 Despite these advantages, communication overhead remains one of the major challenges in practical FSL deployments for real-world IoT scenarios. In traditional FL systems, communication mainly occurs through model parameter updates exchanged between clients and servers [5]. In contrast, FSL requires the transmission of intermediate activations and gradients during each training step, which can significantly increase communication frequency and data volume.
-In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronization intervals as fixed parameters, resulting in frequent communication events that further increase network traffic [6].
-These observations suggest that communication efficiency in FSL is influenced by two key factors: the size of transmitted activations and the frequency of synchronization between clients and the server. However, these two dimensions are often studied independently in existing literature, and few studies systematically investigate their combined impact on communication cost, convergence behaviour, and model performance in real-world IoT environments.
+In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronisation intervals as fixed parameters, resulting in frequent communication events that further increase network traffic [6].
+These observations suggest that communication efficiency in FSL is influenced by two key factors: the size of transmitted activations and the frequency of synchronisation between clients and the server. However, these two dimensions are often studied independently in existing literature, and few studies systematically investigate their combined impact on communication cost, convergence behaviour, and model performance in real-world IoT environments.
 Furthermore, rainfall prediction in real-world IoT environments presents additional challenges, including data imbalance caused by the rarity of heavy rainfall events and unstable network conditions among distributed sensors. These factors further motivate the need for communication-efficient and robust distributed learning frameworks.
-1.3 Problem Statement
+
+\subsection{Problem Statement}
 Based on the above observations, the key research problem addressed in this work is how to reduce communication overhead in federated split learning systems while maintaining acceptable rainfall prediction performance.
 To address this gap, this work proposes a communication-efficient Federated Split Learning system for rainfall prediction using historical weather data collected from multiple locations around Newcastle upon Tyne through the Open-Meteo Historical Weather API. The proposed system introduces two complementary optimization strategies together with an adaptive control mechanism.
-First, a spatial optimization mechanism compresses smashed activations using quantization and Top-k sparsification techniques to reduce transmission size. Second, a temporal optimization mechanism introduces a tunable synchronization interval $\rho$ to regulate the frequency of global model aggregation. In addition, an adaptive scheduler dynamically adjusts these parameters based on runtime network conditions such as latency and bandwidth reported by clients. By jointly controlling communication size and frequency while adapting to network heterogeneity, the framework aims to reduce communication overhead while maintaining stable model convergence.
+First, a spatial optimization mechanism compresses smashed activations using quantization and Top-k sparsification techniques to reduce transmission size. Second, a temporal optimization mechanism introduces a tunable synchronization interval $/rho$ to regulate the frequency of global model aggregation. In addition, an adaptive scheduler dynamically adjusts these parameters based on runtime network conditions such as latency and bandwidth reported by clients. By jointly controlling communication size and frequency while adapting to network heterogeneity, the framework aims to reduce communication overhead while maintaining stable model convergence.
 
-1.4 Contributions
-The main contributions of this work are summarized as follows:
-1.A communication-efficient federated split learning framework for rainfall prediction using distributed IoT weather data.
-2.A dual optimization strategy that reduces communication overhead through activation compression (quantization and Top-k sparsification) and tunable synchronization intervals.
-3.An adaptive scheduling mechanism that dynamically adjusts communication parameters based on runtime network conditions such as latency and bandwidth.
-4.A systematic experimental evaluation that analyzes the trade-off between communication efficiency and prediction performance.
+\subsection{Contributions}
+The main contributions of this work are summarised as follows:
+\begin{enumerate}
+    \item A communication-efficient federated split learning framework for rainfall prediction using distributed IoT weather data.
+    \item A dual optimisation strategy that reduces communication overhead through activation compression (quantisation and Top-k sparsification) and tunable synchronisation intervals.
+    \item An adaptive scheduling mechanism that dynamically adjusts communication parameters based on runtime network conditions such as latency and bandwidth.
+    \item A systematic experimental evaluation that analyses the trade-off between communication efficiency and prediction performance.
+\end{enumerate}
 
-1.5 Paper Organization
+\subsection{Paper Organisation}
 The remainder of this paper is organised as follows. Section II reviews related work. Section III presents the proposed system design. Section IV describes the experimental setup. Section V discusses the evaluation results. Finally, Section VI concludes the paper.
 
 
 
 \section{Related Work}
-\label{sec:system}
+\label{sec:RelatedWork}
+This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions: (1) communication-efficient Federated Split Learning, (2) adaptive scheduling and system-level optimisation, and (3) machine learning methods for rainfall prediction in resource-constrained environments.
 
-2. Related Work
-This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions:
-(1) communication-efficient Federated / Split Learning,
-(2) adaptive scheduling and system-level optimisation, and
-(3) machine learning methods for rainfall prediction in resource-constrained environments.
- 
-2.1 Communication-efficient Federated / Split Learning
+\subsection{Communication-efficient Federated Split Learning}
 Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensing–based approaches dynamically adjust compression ratios to reduce bidirectional communication cost [5], while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios [6]. These methods show clear improvements in communication efficiency for conventional FL systems.
+
 However, the communication pattern in Federated Split Learning (FSL) differs significantly from standard FL. Instead of exchanging full model gradients, clients send intermediate activations (also called smashed activations) to the server during the forward pass, and gradients are returned during the backward pass. As neural networks become deeper, the size of these activations can increase substantially, leading to high communication overhead. Therefore, compression techniques designed for traditional FL do not always directly address the communication characteristics of FSL.
-Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions [4]. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks [8]. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability [9;10], while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments [11]. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
- 
-2.2 Adaptive Scheduling and System-Level Optimisation
+
+Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions [4]. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks [8]. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability [9], [10], while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments [11]. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
+
+\subsection{Adaptive Scheduling and System-Level Optimisation}
 In addition to compression and architectural changes, another research direction focuses on adaptive scheduling and system-level optimisation for distributed learning. These approaches aim to improve performance by considering device capability, network latency, and resource availability during training.
+
 Computation-oriented optimisation methods attempt to reduce the workload on resource-limited client devices. Techniques such as model pruning, adaptive layer reduction, and lightweight network design are widely used in edge learning scenarios. Adaptive pruning strategies dynamically adjust model complexity according to device capability to reduce computation cost [7]. Lightweight prediction models are also designed to balance accuracy and efficiency in resource-constrained environments, particularly for time-series prediction tasks such as rainfall forecasting [2].
+
 However, these approaches mainly optimise computational cost rather than communication overhead. Even with smaller models, clients still participate in frequent synchronisation rounds, which can lead to high cumulative communication cost in distributed systems. In real IoT environments, network latency, bandwidth variation, and device heterogeneity may further increase training time and reduce system stability. Therefore, latency-aware training, resource-aware scheduling, and adaptive communication control are increasingly considered necessary for practical distributed learning systems.
 
-2.3 Machine Learning for Rainfall Prediction in IoT Environments 
+\subsection{Machine Learning for Rainfall Prediction in IoT Environments}
+Machine learning has been widely applied to rainfall prediction and environmental sensing, especially with the increasing availability of IoT sensor data. Lightweight prediction models are often used to improve efficiency while maintaining acceptable accuracy in resource-constrained environments [2]. These methods demonstrate that machine learning can provide useful prediction capability for real-time monitoring systems.
 
-Machine learning has been widely applied to rainfall prediction and environmental sensing, especially with the increasing availability of IoT sensor data. Lightweight prediction models are often used to improve efficiency while maintaining acceptable accuracy in resource-constrained environments [2]. These methods demonstrate that machine learning can provide useful prediction capability for real-time monitoring systems. 
+However, rainfall prediction remains a challenging task due to data imbalance, temporal variability, and the difficulty of predicting extreme events. Many studies focus primarily on improving modelling accuracy, without fully considering deployment constraints such as communication cost, device heterogeneity, and distributed training requirements. In real IoT sensing networks, prediction systems must operate under limited bandwidth, unstable connections, and heterogeneous devices, which makes communication efficiency as important as model accuracy.
 
-However, rainfall prediction remains a challenging task due to data imbalance, temporal variability, and the difficulty of predicting extreme events. Many studies focus primarily on improving modelling accuracy, without fully considering deployment constraints such as communication cost, device capability, and distributed training requirements. In real IoT sensing networks, prediction systems must operate under limited bandwidth, unstable connections, and heterogeneous devices, which makes communication efficiency as important as model accuracy. 
-
-Across the three research directions above, a common limitation can be observed. Most existing studies optimise only one aspect of the system, such as compression, model structure, or distributed architecture, without jointly considering data representation precision, activation size, and synchronisation frequency. As a result, the interaction between communication cost, model convergence, and system scalability remains insufficiently explored, particularly for rainfall prediction systems deployed in real IoT environments. 
+Across the three research directions above, a common limitation can be observed. Most existing studies optimise only one aspect of the system, such as compression, model structure, or distributed architecture, without jointly considering data representation precision, activation size, and synchronisation frequency. As a result, the interaction between communication cost, model convergence, and system scalability remains insufficiently explored, particularly for rainfall prediction systems deployed in real IoT environments.
 
 To address these limitations, this work proposes a communication-efficient Federated Split Learning framework that jointly optimises activation compression and synchronisation frequency. By integrating spatial compression, temporal communication control, and adaptive scheduling mechanisms, the proposed approach aims to improve the practicality of rainfall prediction systems in real-world IoT sensing networks. 
+
 
 --------delete this before submit------
 \cite{10478872}
 \cite{10.3389/frwa.2024.1378598}
-
 
 \section{Methodology}
 \label{sec:Methodology}
@@ -125,46 +126,214 @@ For each forward step, the client sends compressed activation bytes and metadata
 \subsection{Communication Bottleneck Analysis}
 In our federated split learning system, communication cost mainly comes from two parts.
 First, in each training step, the client sends smashed activations to the server and receives gradients back. This happens very frequently, so latency and payload size quickly accumulate.
-Second, clients still need periodic model synchronization with the server every $\rho$ local epochs, which adds extra upload and download traffic.
+Second, clients still need periodic model synchronisation with the server every $\rho$ local epochs, which adds extra upload and download traffic.
 
-Therefore, communication efficiency depends on both data size and communication frequency. In unstable IoT networks, reducing only model complexity is not enough. We need to jointly control activation payloads and synchronization intervals, which motivates our compression and adaptive scheduling design.
+Therefore, communication efficiency depends on both data size and communication frequency. In unstable IoT networks, reducing only model complexity is not enough. We need to jointly control activation payloads and synchronisation intervals, which motivates our compression and adaptive scheduling design.
 
 \subsection{Adaptive Scheduler}
-We design a rule-based adaptive scheduler that adjusts both compression mode and synchronization interval ($\rho$) during training. Clients report latency statistics to the server, and the scheduler applies predefined mapping rules to select the next communication strategy. Due to time and resource constraints, latency is generated by a profiler-based simulator in our experiments, and an exponential moving average (EMA) is used to smooth short-term fluctuations and avoid frequent policy switching. The scheduler changes only communication policies while keeping the model architecture unchanged. Specifically, lower latency keeps lightweight settings (e.g., float32 with smaller $\rho$), while higher latency triggers more aggressive settings (float16/int8/top-k with larger $\rho$). For example, when latency falls in the 4--10 ms range, the scheduler assigns float16 compression and $\rho=2$ (synchronization every two local epochs).
+In alignment with the adaptive communication control strategies, we design a rule-based adaptive scheduler that adjusts both compression mode and synchronisation interval ($\rho$) during training. Clients report latency-aware statistics to the server, and the scheduler applies predefined mapping rules to select the next communication strategy. Due to time and resource constraints, latency is generated by a profiler-based simulator in our experiments, and an exponential moving average (EMA) is used to smooth short-term fluctuations and avoid frequent policy switching. The scheduler changes only communication policies while keeping the model architecture unchanged. Specifically, lower latency keeps lightweight settings (e.g., float32 with smaller $\rho$), while higher latency triggers more aggressive settings (float16/int8/top-k with larger $\rho$). For example, when latency falls in the 4--10 ms range, the scheduler assigns float16 compression and $\rho=2$ (synchronisation every two local epochs).
 
 
 \subsection{Compression Strategies}
 We apply activation/gradient compression to both smashed activations and cut-layer gradients using four communication modes: float32, float16, int8, and top-k (implemented as top-k mode). Compression is evaluated in both static and adaptive settings: in static settings, one mode is fixed for the whole run, while in adaptive settings, the scheduler dynamically switches modes according to latency conditions. This design reduces payload size while allowing the system to balance communication efficiency and training stability under varying network conditions.
 
-\section{Experimentl Setup}
-4. Experimental Setup
-4.1 Dataset Characteristics and Sparsity Analysis
+\section{Experimental Setup}
+\label{sec:experiments}
 
-This study uses hourly rainfall data collected from 12 spatially representative sensor nodes located in Newcastle upon Tyne and its surrounding areas in the United Kingdom. The data are obtained from the Open-Meteo API, whose historical weather records are based on the ERA5 high-resolution atmospheric reanalysis model. To comply with the core principle of federated learning that data should remain local, this study adopts a file-level distributed storage architecture, where each station’s data are stored independently in Apache Parquet format. This design preserves the geographical heterogeneity of different clients and creates a clearly non-IID data distribution across nodes.
+\subsection{Data Acquisition and Preprocessing}
+\label{subsec:dataset}
+To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the Open-Meteo Historical Weather API. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation.
 
-In terms of data features, the system uses hourly updated multivariate time-series data, including five core meteorological variables: Temperature, Humidity, Pressure, Wind Speed, and Rain. Among them, Temperature and Humidity are treated as thermodynamic features, Pressure and Wind Speed as dynamic features, and Rain as precipitation history. Together, these variables provide the fundamental spatiotemporal representation for capturing local climate variations and rainfall formation patterns.
+For temporal modeling, we applied a 24-hour sliding-window strategy to capture the preceding meteorological context. The dataset is split chronologically, dedicating the final 14 days for testing and the preceding 14 days for validation to ensure unbiased performance evaluation. As shown in our statistical analysis, the dataset exhibits significant sparsity, with rainy events ($>0.1$mm) accounting for approximately 20.8\% of total observations. To address this class imbalance, our evaluation focuses on Recall and F1-score as primary metrics for event detection, alongside Mean Squared Error (MSE) and Mean Absolute Error (MAE) for assessing intensity regression accuracy.
 
-During the data preprocessing stage, records with missing key features are first removed, while zero-filling is applied to Rain and Wind Speed to preserve temporal continuity. Next, a sliding window of the previous 24 hours is used as the model input, and the target is defined as the accumulated rainfall over the next 3 hours, corresponding to the short-term uncertainty of rainfall events. To improve training stability, the input features are standardized using Z-score normalization, while the output target is transformed using log1p to reduce regression instability caused by the highly skewed rainfall distribution.
+\subsection{Multi-task Training and Configuration}
+\label{subsec:training}
+The multi-task learning framework described in Section \ref{sec:Methodology} is optimized using a consistent hyperparameter suite to ensure that performance variations across scenarios are attributable solely to communication strategies. We employ the Adam optimizer with a learning rate of $0.0005$ and a batch size of 32. The training process is executed for 30 global rounds, with each client performing 10 local iterations per round before a synchronization decision is triggered.
 
-In terms of scale, the dataset covers hourly observations from January 2023 to March 2026. Statistical analysis shows that actual rainfall events in the Newcastle area account for only around 20% to 20.8% of the total observation period, while the remaining roughly 80% corresponds to no-rain conditions. This reflects a naturally sparse and severely imbalanced data distribution.
+To normalize the high variance in rainfall intensity, the regression target is processed using a $\log(1+x)$ transformation. The joint objective function is weighted to prioritize rain event detection, assigning a coefficient of $2.0$ to the Focal Loss ($\gamma=2.0$, $\alpha=0.25$) and $1.0$ to the regression loss. During inference, we apply a classification-guided gating rule with a probability threshold of $0.34$; rainfall intensity is only predicted when the classifier identifies a high-probability event, thereby reducing false alarms in dry environments.
 
-Due to this extreme class imbalance, relying solely on accuracy as the evaluation metric may lead to a misleading impression of strong model performance. For example, a model that always predicts no rain could still achieve an accuracy of around 80%, yet such a model would provide no meaningful early warning capability. Therefore, this study treats Recall and F1-score as the core classification metrics for evaluating the model’s ability to detect rare rainfall events, while Mean Squared Error (MSE) and Mean Absolute Error (MAE) are used to assess the numerical precision of rainfall intensity prediction.
+\subsection{System Configuration and Adaptive Control Settings}
+\label{subsec:deployment}
+The platform is implemented as a containerised environment using \textbf{Docker} and \textbf{gRPC} to simulate the orchestration and communication overhead of a distributed edge network. The experiments were executed on a dedicated hardware suite featuring an NVIDIA RTX 4090 Laptop GPU and 64GB of RAM to maintain sufficient compute throughput for parallel execution of all nodes.
 
-4.2 Task Definition and Prediction Framework
+In alignment with the adaptive communication control strategies discussed in Section \ref{sec:RelatedWork}, our proposed scheduler is initialized with empirical control settings derived from our configuration system. It is important to note that all parameters defined below serve as the initial state; the system dynamically escalates system-level optimisations during runtime based on EMA-smoothed latency:
+\begin{itemize}
+    \item \textbf{Network Smoothing}: Latency estimation utilises an Exponential Moving Average (EMA) with a smoothing factor $\alpha_{ema} = 0.2$ to mitigate stochastic RTT noise.
+    \item \textbf{Hierarchical Compression Thresholds}: Communication-oriented optimisation is triggered at three levels: \textbf{Float16} at 4.0ms, \textbf{INT8} at 10.0ms, and \textbf{Top-K} (density 0.5) at 15.0ms (calculated as 1.5$\times$ the INT8 threshold).
+    \item \textbf{Dynamic Synchronisation Interval}: The synchronisation interval $\rho$ follows a step-wise growth logic. As network severity increases, $\rho$ scales from its base value up to a maximum safety limit of 20, reducing synchronisation frequency to preserve local compute autonomy and reduce cumulative communication costs.
+\end{itemize}
 
-To address the large number of zero values in rainfall data, this study formulates rainfall prediction as a multi-task learning problem within a Federated Split Learning (FSL) framework. Instead of using a single regression task, the model jointly performs rainfall event classification and rainfall intensity regression.
+\subsection{Experiment Matrix and Optimisation Taxonomy}
+\label{subsec:matrix}
+We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, to systematically decouple the performance impact of our proposed latency-aware strategies. As detailed in the 'Scheduler' column of Table \ref{tab:experiment-matrix}, we differentiate between trials where the adaptive communication control is disabled and those where it is enabled. Disabling the scheduler defines a static configuration where parameters are held fixed to measure their individual impact. Conversely, enabling the scheduler creates an adaptive configuration where the system dynamically manages transitions between compression modes and synchronisation intervals starting from a full-precision baseline. This mapping allows us to isolate the benefits of basic static strategies versus the performance gains of profiling-driven dynamic adjustment.
 
-In the prediction pipeline, each client uses a Client-LSTM to extract local temporal features and sends smashed activations to the server. The server then applies a dual-headed architecture: one head predicts whether rainfall will occur within the next 3 hours, while the other estimates the accumulated rainfall amount over the same period.
+\begin{table*}[t]
+\centering
+\caption{Experiment scenarios and optimisation taxonomy.}
+\label{tab:experiment-matrix}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{|l|c|l|l|l|c|c|}
+\hline
+\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Profile (ms)} & \textbf{Optimisation Strategy} & \textbf{Compression Policy} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
+\hline
+No Latency & M01 & 0 / 0 / 0 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+No Latency & M02 & 0 / 0 / 0 & Adaptive Control & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+\hline
+Light & M03 & 1.5 / 9.0 / 0.8 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Light & M04 & 1.5 / 9.0 / 0.8 & Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+\hline
+Medium & M05 & 3.0 / 14.0 / 1.2 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Medium & M06 & 3.0 / 14.0 / 1.2 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Medium & M07 & 3.0 / 14.0 / 1.2 & Static Mode Test & Top-K (Fixed, 0.5) & 1 (Fixed) & Disabled \\
+Medium & M08 & 3.0 / 14.0 / 1.2 & Static Sync Test & Float32 (Fixed) & 3 (Fixed) & Disabled \\
+Medium & M09 & 3.0 / 14.0 / 1.2 & Compression Focus & \textit{Starts at} Float32 & 1 (Fixed) & Enabled \\
+Medium & M10 & 3.0 / 14.0 / 1.2 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+\hline
+Burst & M11 & 3.0 / 14.0 / 20.0 (burst) & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Burst & M12 & 3.0 / 14.0 / 20.0 (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+\hline
+Extreme & M13 & 40.0 / 160.0 / 5.0 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
+Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+\hline
+\end{tabular}
+}
+\end{table*}
 
-To improve robustness under sparse rainfall conditions, the system uses a joint decision mechanism. The regression output is only activated when the predicted rainfall probability is higher than 0.34; otherwise, the final prediction is set to 0. This design helps reduce false rainfall outputs caused by noise and improves prediction stability on highly imbalanced data.
+\section{Results and Analysis}
+\label{sec:Res}
+This section evaluates the proposed communication-efficient FSL framework using the experiment matrix described in Section \ref{subsec:matrix}. We report results 10 random seeds and summarize each metric as mean $\pm$ standard deviation to reflect both performance and stability. Since rainfall events are relatively sparse, Macro-F1 is treated as the primary classification metric, while Micro-F1 and Accuracy are reported as complementary indicators. In addition, we analyze communication and system behavior using average payload size, reported latency, training duration, and server aggregation rounds.
 
+The analysis is organized by research questions: (RQ1) overall performance versus baseline, (RQ2) the effect of compression strategies, (RQ3) the impact of synchronization interval $\rho$, (RQ4) adaptive behavior under medium, burst, and extreme latency profiles, and (RQ5) the final accuracy--efficiency trade-off. Unless otherwise stated, comparisons are made within matched latency settings to isolate the effect of each design component.
+
+\subsection{Overall Performance vs Baseline}
+Table \ref{tab:overall-baseline} reports the core performance and communication indicators under 10 seeds.
+
+\begin{table*}[t]
+\centering
+\caption{Overall performance vs baseline (10 seeds, mean $\pm$ std).}
+\label{tab:overall-baseline}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{|l|l|c|c|c|c|c|c|c|}
+\hline
+\textbf{RQ} & \textbf{Scenario} & \textbf{Macro-F1} & \textbf{Micro-F1} & \textbf{Accuracy} & \textbf{Payload (Bytes)} & \textbf{Latency (ms)} & \textbf{Duration (s)} & \textbf{Server Round} \\
+\hline
+RQ1 & M01 (No-latency baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M05 (Medium baseline) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M09 (Adaptive compression only) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M10 (Medium full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M12 (Burst full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+RQ1 & M14 (Extreme full adaptive) & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table*}
+\subsection{Impact of Compression}
+Table \ref{tab:compression-impact} isolates the effect of static compression modes under the same medium-latency profile.
+
+\begin{table}[t]
+\centering
+\caption{Impact of compression strategies under medium latency (10 seeds, mean $\pm$ std).}
+\label{tab:compression-impact}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{Macro-F1} & \textbf{Recall} & \textbf{Precision} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} \\
+\hline
+M05 (Float32) & TBD & TBD & TBD & TBD & TBD \\
+M06 (INT8) & TBD & TBD & TBD & TBD & TBD \\
+M07 (Top-k) & TBD & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Impact of Synchronisation Interval}
+Table \ref{tab:rho-impact} summarizes the trade-off introduced by increasing the synchronization interval.
+
+\begin{table}[t]
+\centering
+\caption{Impact of synchronization interval $\rho$ under medium latency (10 seeds, mean $\pm$ std).}
+\label{tab:rho-impact}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{$\rho$ Setting} & \textbf{Macro-F1} & \textbf{Payload (Bytes)} & \textbf{Duration (s)} & \textbf{Server Round} \\
+\hline
+M05 (Baseline) & 1 (fixed) & TBD & TBD & TBD & TBD \\
+M08 ($\rho$ focus) & 3 (fixed) & TBD & TBD & TBD & TBD \\
+M10 (Adaptive) & Dynamic (1--20) & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Adaptive Strategy under Variable Latency}
+Table \ref{tab:adaptive-latency} reports adaptive behavior under medium, burst, and extreme latency conditions.
+
+\begin{table}[t]
+\centering
+\caption{Adaptive strategy under variable latency (10 seeds, aggregated mode/rho behavior).}
+\label{tab:adaptive-latency}
+\resizebox{0.48\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Scenario} & \textbf{Avg Latency (ms)} & \textbf{Modes Seen} & \textbf{$\rho$ Seen} & \textbf{Mode Switch Rate (\%)} \\
+\hline
+M10 (Medium adaptive) & TBD & TBD & TBD & TBD \\
+M12 (Burst adaptive) & TBD & TBD & TBD & TBD \\
+M14 (Extreme adaptive) & TBD & TBD & TBD & TBD \\
+\hline
+\end{tabular}
+}
+\end{table}
+\subsection{Trade-off Discussion}
+Table \ref{tab:pairwise-tradeoff} provides pairwise comparisons for key trade-off questions.
+
+\begin{table*}[t]
+\centering
+\caption{Pairwise trade-off summary across key scenario pairs (10 seeds).}
+\label{tab:pairwise-tradeoff}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{|l|c|c|c|c|l|}
+\hline
+\textbf{Comparison} & \textbf{$\Delta$ Macro-F1} & \textbf{$\Delta$ Payload (\%)} & \textbf{$\Delta$ Duration (\%)} & \textbf{Win-rate} & \textbf{Interpretation} \\
+\hline
+M05 $\rightarrow$ M09 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M10 & TBD & TBD & TBD & TBD/10 & TBD \\
+M11 $\rightarrow$ M12 & TBD & TBD & TBD & TBD/10 & TBD \\
+M13 $\rightarrow$ M14 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M06 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M07 & TBD & TBD & TBD & TBD/10 & TBD \\
+M05 $\rightarrow$ M08 & TBD & TBD & TBD & TBD/10 & TBD \\
+\hline
+\end{tabular}
+}
+\end{table*}
+
+\section{Discussion}
+\label{sec:Discussion}
+\subsection{Imbalance task}
+Rainfall prediction is inherently affected by class imbalance, as non-rainy periods dominate while rainfall events are relatively rare. This makes event detection particularly challenging, especially for recall-oriented tasks where missing rare events is costly. Although techniques such as focal loss, class weighting, threshold tuning, and rain-aware sampling are applied, these approaches remain manually designed and require careful tuning. Consequently, the current baseline should not be considered fully optimized. Instead, it serves primarily as a reference point for evaluating communication strategies. With more systematic approaches, such as principled resampling or advanced temporal models, both predictive accuracy and robustness could be significantly improved.
+\subsection{Scheduler}
+The proposed scheduler is rule-based and relies on profiler-generated latency signals. While this design is simple, interpretable, and practical, it is inherently limited in flexibility. The mapping between latency conditions and system responses is manually specified, which restricts its ability to adapt to unseen or highly dynamic environments. In reality, the interaction between latency, communication cost, and model convergence is often complex and non-linear. Therefore, more advanced approaches, such as learning-based schedulers using reinforcement learning or adaptive control, could provide more efficient and data-driven decision-making.
+\subsection{Small-scale deployment}
+The experimental setup is relatively small-scale compared to real-world distributed systems. Although multiple random seeds are used, the system includes only three clients and is entirely implemented in a Docker-based simulation environment. While this setup enables controlled experimentation, it does not fully capture real-world heterogeneity. In particular, the lack of deployment on physical edge devices (e.g., Raspberry Pi) means that factors such as limited computation, thermal constraints, and unstable wireless connections are not considered.
+
+In addition, all experiments are conducted on a standard laptop environment, where system resources are shared with other background processes. This may introduce additional variability in runtime measurements, such as latency, due to resource contention between the main training process and other system tasks.
+Therefore, the results should be interpreted as proof-of-concept rather than full real-world validation.
+\subsection{No client dropout}
+The experiments assume stable participation without client dropout, packet loss, or communication interruptions. However, such issues are common in real IoT systems due to unstable networks and device constraints. Since federated split learning depends on both activation exchange and synchronization, it can be sensitive to unreliable communication. As a result, the current evaluation may overestimate system robustness. Future work should consider more realistic scenarios, including partial participation, delayed updates, and communication failures.
+
+Finally, the dataset used in this study is collected from the Newcastle region, meaning that the learned patterns are inherently location-specific. Climate conditions, seasonal patterns, and weather dynamics can vary significantly across different regions. Therefore, the experimental findings may not directly generalize to other cities. Extending the evaluation to multiple geographic locations would be necessary to validate the robustness and generality of the proposed framework.
+\section{Conclusion}
+\label{sec:Conclusion}
+\subsection{Imbalance task}
 
 
 % ---- References ----
 % Compile order: pdflatex -> bibtex -> pdflatex -> pdflatex
 
 \bibliographystyle{IEEEtran}
-\bibliography{IEEEabrv,refs}
+% Bibliography files are located in the paper/ directory
+\bibliography{paper/IEEEabrv,paper/refs}
 
 
 % \appendix
