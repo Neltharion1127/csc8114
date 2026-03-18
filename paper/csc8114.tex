@@ -32,7 +32,7 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 \end{IEEEkeywords}
 
 % ==================================================================
-% SECTIONS â€?each teammate can edit their own section
+% SECTIONS each teammate can edit their own section
 % ==================================================================
 
 \section{Introduction}
@@ -44,7 +44,7 @@ To address these limitations, distributed learning paradigms such as Federated L
 
 \subsection{Motivation}
 However, communication overhead remains one of the major challenges in practical FSL deployments for real-world IoT scenarios. In traditional FL systems, communication mainly occurs through model parameter updates exchanged between clients and servers \cite{liu2023fedcs}. In contrast, FSL requires the transmission of intermediate activations and gradients during each training step, which can significantly increase communication frequency and data volume.
-In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. While this work does not explicitly model packet loss or sensor failures, such practical constraints further highlight the importance of reducing communication overhead in distributed IoT learning frameworks. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronisation intervals as fixed parameters, resulting in frequent communication events that further increase network traffic \cite{jin2023federated}. 
+In real-world IoT deployments, network conditions are often unstable, with issues such as variable latency, packet loss, or sensor failures. These factors further complicate the design of communication-efficient distributed learning systems. While this work does not explicitly model packet loss or sensor failures, such practical constraints further highlight the importance of reducing communication overhead in distributed IoT learning frameworks. As neural networks become deeper and more complex, the size of transmitted activations can grow substantially. In addition, many existing systems treat synchronisation intervals as fixed parameters, resulting in frequent communication events that further increase network traffic \cite{jin2023federated}.
 These observations suggest that communication efficiency in FSL is influenced by two key factors: the size of transmitted activations and the frequency of synchronisation between clients and the server. However, these two dimensions are often studied independently in existing literature, and few studies systematically investigate their combined impact on communication cost, convergence behaviour, and model performance in real-world IoT environments.
 Furthermore, rainfall prediction in real-world IoT environments presents additional challenges, including data imbalance caused by the rarity of heavy rainfall events and unstable network conditions among distributed sensors. These factors further motivate the need for communication-efficient and robust distributed learning frameworks. Although the proposed framework is generally applicable to a wide range of IoT-based prediction tasks, such as air quality monitoring, traffic flow prediction, and environmental forecasting, this study focuses on rainfall prediction as a representative application scenario. Rainfall prediction plays an important role in urban management, flood prevention, and early warning systems, particularly in cities where extreme weather events may cause significant disruptions. In addition, rainfall datasets collected from distributed weather sensors provide a suitable testbed for evaluating communication-efficient distributed learning methods in practical IoT environments.
 
@@ -102,7 +102,7 @@ To address these limitations, this work proposes a communication-efficient Feder
 \section{Methodology}
 \label{sec:Methodology}
 \subsection{Split Learning Architecture}
-Our system follows a federated split learning (FSL) architecture for rainfall prediction. Each client performs local sequence encoding, while the server completes prediction from transmitted smashed activations. This design reduces edge-side computation and preserves end-to-end trainability through activation and gradient exchange. For temporal modeling, we use a two-layer LSTM-based split model: the client-side encoder maps each weather window to a fixed-length representation, and the server-side head performs joint rain-occurrence classification and rainfall-amount regression.
+Our system follows a federated split learning (FSL) architecture for rainfall prediction. Each client performs local sequence encoding, while the server completes prediction from transmitted smashed activations. This design reduces edge-side computation and preserves end-to-end trainability through activation and gradient exchange. For temporal modeling, the client-side \textit{ClientLSTM} (two-layer LSTM encoder) maps each weather window to a fixed-length representation, and the server-side \textit{ServerHead} performs joint rain-occurrence classification and rainfall-amount regression.
 
 \begin{figure}[t]
 \centering
@@ -142,7 +142,7 @@ We apply activation/gradient compression to both smashed activations and cut-lay
 
 \subsection{Data Acquisition and Preprocessing}
 \label{subsec:dataset}
-To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the Open-Meteo Historical Weather API. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation. 
+To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the Open-Meteo Historical Weather API. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation.
 
 To simulate a realistic federated learning environment, we implement Non-IID data partitioning by assigning distinct sets of geographic sensors to each client. Specifically, the 12 weather stations are distributed among 3 clients, ensuring that each local model is trained on data with unique spatial characteristics and local climatic patterns.
 
