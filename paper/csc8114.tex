@@ -32,7 +32,7 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 \end{IEEEkeywords}
 
 % ==================================================================
-% SECTIONS �?each teammate can edit their own section
+% SECTIONS â€?each teammate can edit their own section
 % ==================================================================
 
 \section{Introduction}
@@ -72,7 +72,7 @@ The remainder of this paper is organised as follows. Section II reviews related 
 This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions: (1) communication-efficient Federated Split Learning, (2) adaptive scheduling and system-level optimisation, and (3) machine learning methods for rainfall prediction in resource-constrained environments.
 
 \subsection{Communication-efficient Federated Split Learning}
-Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensing–based approaches dynamically adjust compression ratios to reduce bidirectional communication cost [5], while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios [6]. These methods show clear improvements in communication efficiency for conventional FL systems.
+Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensingâ€“based approaches dynamically adjust compression ratios to reduce bidirectional communication cost [5], while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios [6]. These methods show clear improvements in communication efficiency for conventional FL systems.
 
 However, the communication pattern in Federated Split Learning (FSL) differs significantly from standard FL. Instead of exchanging full model gradients, clients send intermediate activations (also called smashed activations) to the server during the forward pass, and gradients are returned during the backward pass. As neural networks become deeper, the size of these activations can increase substantially, leading to high communication overhead. Therefore, compression techniques designed for traditional FL do not always directly address the communication characteristics of FSL.
 
@@ -142,9 +142,12 @@ We apply activation/gradient compression to both smashed activations and cut-lay
 
 \subsection{Data Acquisition and Preprocessing}
 \label{subsec:dataset}
-To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the Open-Meteo Historical Weather API. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation.
+To validate the effectiveness of our adaptive framework, we conducted a case study using real-world meteorological observations retrieved from the Open-Meteo Historical Weather API. We simulated a distributed IoT sensing network by aggregating data from 12 distinct geographic coordinates across Newcastle upon Tyne, UK. Each virtual station provides a continuous time-series consisting of five core variables: Temperature, Humidity, Surface Pressure, Wind Speed, and Precipitation. 
 
-For temporal modeling, we applied a 24-hour sliding-window strategy to capture the preceding meteorological context. The dataset is split chronologically, dedicating the final 14 days for testing and the preceding 14 days for validation to ensure unbiased performance evaluation. As shown in our statistical analysis, the dataset exhibits significant sparsity, with rainy events ($>0.1$mm) accounting for approximately 20.8\% of total observations. To address this class imbalance, our evaluation focuses on Recall and F1-score as primary metrics for event detection, alongside Mean Squared Error (MSE) and Mean Absolute Error (MAE) for assessing intensity regression accuracy.
+To simulate a realistic federated learning environment, we implement Non-IID data partitioning by assigning distinct sets of geographic sensors to each client. Specifically, the 12 weather stations are distributed among 3 clients, ensuring that each local model is trained on data with unique spatial characteristics and local climatic patterns.
+
+For temporal modeling, we applied a 24-hour sliding-window strategy to capture the preceding meteorological context.
+ The dataset is split chronologically, dedicating the final 14 days for testing and the preceding 14 days for validation to ensure unbiased performance evaluation. As shown in our statistical analysis, the dataset exhibits significant sparsity, with rainy events ($>0.1$mm) accounting for approximately 20.8\% of total observations. To address this class imbalance, our evaluation focuses on Recall and F1-score as primary metrics for event detection, alongside Mean Squared Error (MSE) and Mean Absolute Error (MAE) for assessing intensity regression accuracy.
 
 \subsection{Multi-task Training and Configuration}
 \label{subsec:training}
