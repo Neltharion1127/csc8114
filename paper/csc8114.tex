@@ -32,7 +32,7 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 \end{IEEEkeywords}
 
 % ==================================================================
-% SECTIONS â€” each teammate can edit their own section
+% SECTIONS â€?each teammate can edit their own section
 % ==================================================================
 
 \section{Introduction}
@@ -323,13 +323,6 @@ M05 $\rightarrow$ M08 & -0.016 $\pm$ 0.064 & 0.0 $\pm$ 0.0 & -54.6 $\pm$ 12.0 & 
 \end{table*}
 Overall, the pairwise comparisons show no single strategy dominates all objectives. Compression-oriented settings provide clear payload benefits (especially M06), while larger synchronization intervals deliver the strongest runtime reduction (M08). Full adaptation is most useful under harsher latency conditions where static policies struggle, but in milder settings it may introduce extra control overhead. Therefore, practical deployment should select communication policies based on target constraints (bandwidth budget, latency stability, and acceptable accuracy drop), rather than optimizing only one metric.
 
-\subsection{Conclusion}
-This paper introduces a communication-efficient Federated Split Learning (FSL) framework tailored for rainfall prediction in distributed IoT environments. By integrating spatial compression techniques (quantization and Top-k sparsification) with temporal synchronization control, the proposed system addresses the dual challenges of activation size and communication frequency inherent in FSL deployments.
-
-The experimental evaluation, conducted across 14 diverse scenarios with 10 random seeds each, demonstrates the framework's effectiveness in balancing communication efficiency and prediction performance. Key findings include: (1) compression strategies like INT8 quantization achieve up to 73.4\% payload reduction (from 256.0 bytes in M05 to 68.0 bytes in M06) with a moderate Macro-F1 drop of 0.038 on average; (2) increasing synchronization intervals (e.g., from $\rho=1$ in M05 to $\rho=3$ in M08) reduces server aggregation rounds from 30 to 10 and training duration by 54.6\% (from 318.6s to 143.1s), though with a slight Macro-F1 decrease of 0.016; (3) adaptive scheduling dynamically adjusts policies based on runtime latency, proving most beneficial under burst and extreme network conditions (e.g., M12 shows 20.7\% payload reduction with near-neutral Macro-F1 impact, while M14 achieves 63.4\% faster training despite a 0.022 Macro-F1 drop); and (4) no single strategy dominates all objectives, with pairwise comparisons revealing that compression excels in payload reduction, synchronization intervals optimize runtime, and adaptation handles variability.
-
-Overall, the results validate the framework's potential for practical IoT applications, where communication constraints are paramount. The framework maintains acceptable Macro-F1 scores (ranging from 0.429 to 0.478 across scenarios) while significantly reducing communication overhead. Future research directions include exploring reinforcement learning-based schedulers for more adaptive policy selection, larger-scale deployments with physical edge devices to capture real-world heterogeneity, and robustness enhancements against client dropout and packet loss to further advance communication-efficient distributed learning in real-world settings.
-
 \section{Discussion}
 \label{sec:Discussion}
 \subsection{Imbalance task}
@@ -347,6 +340,11 @@ The experiments assume stable participation without client dropout, packet loss,
 Finally, the dataset used in this study is collected from the Newcastle region, meaning that the learned patterns are inherently location-specific. Climate conditions, seasonal patterns, and weather dynamics can vary significantly across different regions. Therefore, the experimental findings may not directly generalize to other cities. Extending the evaluation to multiple geographic locations would be necessary to validate the robustness and generality of the proposed framework.
 
 \section{Conclusion}
+This paper introduces a communication-efficient Federated Split Learning (FSL) framework tailored for rainfall prediction in distributed IoT environments. By integrating spatial compression techniques (quantization and Top-k sparsification) with temporal synchronization control, the proposed system addresses the dual challenges of activation size and communication frequency inherent in FSL deployments.
+
+The experimental evaluation across 14 scenarios (10 random seeds each) shows a consistent accuracy--efficiency trade-off rather than a single dominant policy. First, compression strategies such as INT8 quantization reduce payload by up to 73.4\% (256.0 bytes in M05 to 68.0 bytes in M06), with an average Macro-F1 reduction of about 0.038. Second, increasing the synchronization interval (from $\rho=1$ in M05 to $\rho=3$ in M08) cuts server rounds from 30 to 10 and shortens training time by 54.6\% (318.6s to 143.1s), with a moderate Macro-F1 decrease of 0.016. Third, adaptive scheduling changes policy according to runtime latency and is especially useful for reducing payload under harsher conditions (e.g., M12 shows a 20.7\% payload reduction with near-neutral Macro-F1 change), while runtime benefits are scenario-dependent (e.g., M14 is 63.4\% faster than M13 with a 0.022 Macro-F1 drop). Overall, pairwise comparisons indicate that compression mainly improves payload efficiency, larger $\rho$ mainly improves runtime, and adaptation mainly improves robustness to latency variation.
+
+Overall, the results validate the framework's potential for practical IoT applications, where communication constraints are paramount. The framework maintains acceptable Macro-F1 scores (ranging from 0.429 to 0.478 across scenarios) while significantly reducing communication overhead. Future research directions include exploring reinforcement learning-based schedulers for more adaptive policy selection, larger-scale deployments with physical edge devices to capture real-world heterogeneity, and robustness enhancements against client dropout and packet loss to further advance communication-efficient distributed learning in real-world settings.
 
 
 % ---- References ----
@@ -398,3 +396,4 @@ Finally, the dataset used in this study is collected from the Newcastle region, 
 % \end{center}
 
 \end{document}
+
