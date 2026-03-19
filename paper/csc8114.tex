@@ -24,12 +24,12 @@ Email: \{c5016854, c5003419, c5053016, c5011444, c5053577, c4032640, c5036432\}@
 
 % ---- Abstract ----
 \begin{abstract}
-  
+  Federated Split Learning (FSL) is promising for IoT rainfall prediction because it preserves data locality and reduces edge-side computation, but communication overhead remains a key deployment bottleneck. Existing studies often optimize activation compression and synchronization frequency separately, leaving their joint effect underexplored. We propose a communication-efficient FSL framework that combines activation compression (float16/int8/top-k), tunable synchronization interval control ($\rho$), and a latency-aware adaptive scheduler that jointly adjusts both components. Using real meteorological data in a non-IID 3-client setting, we evaluate 14 scenarios with 10 random seeds each. Results show a consistent accuracy-efficiency trade-off rather than a single dominant policy: stronger compression generally reduces payload but may reduce Macro-F1, while larger $\rho$ substantially reduces synchronization overhead and training time with moderate performance loss. Under harsher latency profiles, adaptive control improves operating efficiency, but its runtime and accuracy effects remain scenario-dependent. These findings suggest that practical FSL deployment should choose communication policies based on bandwidth, latency stability, and acceptable accuracy degradation, instead of optimizing a single metric.
 \end{abstract}
 
 % ---- Keywords (optional) ----
 \begin{IEEEkeywords}
-  1
+Federated Split Learning, Internet of Things, Rainfall Prediction, Activation Compression, Adaptive Synchronization, Communication Efficiency
 \end{IEEEkeywords}
 
 % ==================================================================
@@ -383,33 +383,34 @@ Overall, the results validate the framework's potential for practical IoT applic
 \textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
 \hline
 
-Guanghua Liu & Introduction Writing &
-Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
+Guanghua Liu & Related Work \& Writing &
+Reviewed FSL and communication-efficiency literature; co-authored the Related Work section and parts of the experimental setup. \\
 \hline
 
-Baoyi Liu & Literature Review &
-Reviewed paper \cite{10478872}. Read related papers and summarised the main ideas for the related work section. \\
+Baoyi Liu & Related Work \& Writing &
+Reviewed rainfall-prediction and distributed-learning studies; contributed to Related Work and experimental setup writing. \\
 \hline
 
-Yi Sin Lin & System Design &
-Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
+Yi Sin Lin & System Design \& Implementation &
+Contributed to system design, data preprocessing, and core implementation of the distributed training pipeline. \\
 \hline
 
-Mingyuan Shao & Activation Compression &
-Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
+Mingyuan Shao & Compression \& Discussion &
+Contributed to the writing of the experimental setup section and was responsible for writing the discussion section. \\
 \hline
 
-Jiale Liu & Synchronization Strategy &
-Reviewed papers \cite{2024ITWC...23.7362C} and \cite{Chen_2021}. Explained the synchronisation interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
+Jiale Liu & Introduction \& Literature Review &
+Drafted the Introduction and supported literature organization for the problem motivation and research gap. \\
 \hline
 
-Zhuolun Li & Scheduler and Profiler &
-Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
+Zhuolun Li & Experimentation \& Conclusion &
+Ran experiment scenarios, organized result outputs, and drafted the Conclusion section. \\
 \hline
 
-Wenjie Ding & High-level Design \& Paper Structure &
-Reviewed papers \cite{mu2023communication} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
+Wenjie Ding & Methodology \& Results Analysis &
+Led end-to-end system design and implementation; authored Methodology and Results/Analysis, including experiment design and trade-off interpretation. \\
 \hline
+
 
 \end{tabular}
 \end{center}
