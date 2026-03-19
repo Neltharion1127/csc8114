@@ -10,6 +10,7 @@
             allcolors=black]{hyperref}  % Clickable links, but black text
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{float}
 % ---- Title & Authors ----
 \title{Efficient Federated Split Learning: Synergizing Activation Quantization and Adaptive Synchronization}
 
@@ -88,11 +89,11 @@ The remainder of this paper is organised as follows. Section II reviews related 
 This section reviews existing studies related to communication-efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions: (1) communication-efficient Federated Split Learning, (2) adaptive scheduling and system-level optimisation, and (3) machine learning methods for rainfall prediction in resource-constrained environments.
 
 \subsection{Communication-efficient Federated Split Learning}
-Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensingâ€“based approaches dynamically adjust compression ratios to reduce bidirectional communication cost \cite{liu2023fedcs}, while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios \cite{jin2023federated}. These methods show clear improvements in communication efficiency for conventional FL systems.
+Communication-efficient learning has become an important research topic in distributed machine learning, particularly in IoT and edge environments where bandwidth is limited. In traditional Federated Learning (FL), communication cost is mainly caused by frequent gradient or parameter exchange between clients and the server. To reduce transmission overhead, many studies focus on compression-based methods. For example, compressive sensing-based approaches dynamically adjust compression ratios to reduce bidirectional communication cost \cite{liu2023fedcs}, while gradient quantisation and sparsification techniques are designed to address bandwidth constraints in wireless edge learning scenarios \cite{jin2023federated}. These methods show clear improvements in communication efficiency for conventional FL systems.
 
 However, the communication pattern in Federated Split Learning (FSL) differs significantly from standard FL. Instead of exchanging full model gradients, clients send intermediate activations (also called smashed activations) to the server during the forward pass, and gradients are returned during the backward pass. As neural networks become deeper, the size of these activations can increase substantially, leading to high communication overhead. Therefore, compression techniques designed for traditional FL do not always directly address the communication characteristics of FSL.
 
-Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions \cite{mu2023communication}. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks \cite{Chen_2021}. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability \cite{liang2025communicationandcomputationefficientsplitfederated}, \cite{liang2025communicationandcomputationefficientsplitfederated}, while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments \cite{mahmoudi2024fedcau}. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
+Recent research attempts to improve efficiency in Split Learning and Federated Split Learning through architectural and synchronisation optimisation. Dynamic split point selection allows the training workload to be adjusted between client and server to reduce communication cost under different conditions \cite{mu2023communication}. Asynchronous training mechanisms relax strict synchronisation requirements to reduce communication bottlenecks \cite{Chen_2021}. Other works redesign the learning architecture to reduce server-side state dependency and improve scalability \cite{liang2025communicationandcomputationefficientsplitfederated}, while adaptive aggregation strategies aim to balance communication cost and model convergence in distributed environments \cite{mahmoudi2024fedcau}. Although these methods improve efficiency, they often assume relatively stable network conditions or introduce additional system complexity.
 
 \subsection{Adaptive Scheduling and System-Level Optimisation}
 In addition to compression and architectural changes, another research direction focuses on adaptive scheduling and system-level optimisation for distributed learning. These approaches aim to improve performance by considering device capability, network latency, and resource availability during training \cite{liang2025communicationandcomputationefficientsplitfederated,mahmoudi2024fedcau}. 
@@ -116,14 +117,13 @@ To address these limitations, this work proposes a communication-efficient Feder
 \subsection{Split Learning Architecture}
 Our system follows a federated split learning (FSL) architecture for rainfall prediction. Each client performs local sequence encoding, while the server completes prediction from transmitted smashed activations. This design reduces edge-side computation and preserves end-to-end trainability through activation and gradient exchange. For temporal modeling, the client-side \textit{ClientLSTM} (two-layer LSTM encoder) maps each weather window to a fixed-length representation, and the server-side \textit{ServerHead} performs joint rain-occurrence classification and rainfall-amount regression.
 
-\begin{figure}[t]
-\centering
-\fbox{\parbox{0.46\textwidth}{\centering
-System architecture placeholder
-}}
-\caption{Overview of the proposed split learning pipeline.}
-\label{fig:split_arch}
-\end{figure}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.90\textwidth]{diagrams/Architecture.png}
+    \caption{Overall system architecture of the proposed FSL framework.}
+    \label{fig:split_arch}
+\end{figure*}
 
 \subsubsection{Client-side Encoder}
 Each client encodes a 24-step weather window with 5 features into a fixed-length smashed activation and sends only this intermediate representation to the server, instead of raw sequences. This preserves data locality and keeps the transmitted payload stable, which directly supports our communication-oriented compression and adaptive scheduling strategy.
@@ -169,7 +169,7 @@ To normalize the high variance in rainfall intensity, the regression target is p
 
 \subsection{System Configuration and Adaptive Control Settings}
 \label{subsec:deployment}
-The platform is implemented as a containerised environment using \textbf{Docker} and \textbf{gRPC} to simulate the orchestration and communication overhead of a distributed edge network. The experiments were executed on a dedicated hardware suite featuring an NVIDIA RTX 4090 Laptop GPU and 64GB of RAM to maintain sufficient compute throughput for parallel execution of all nodes.
+The platform is implemented as a containerised environment using \textbf{Docker} and \textbf{gRPC} to simulate the orchestration and communication overhead of a distributed edge network. The experiments were executed on a standard Laptop with NVIDIA RTX 4090 GPU and 64GB of RAM to maintain sufficient compute throughput for parallel execution of all nodes.
 
 In alignment with the adaptive communication control strategies discussed in Section \ref{sec:RelatedWork}, our proposed scheduler is initialized with empirical control settings derived from our configuration system. It is important to note that all parameters defined below serve as the initial state; the system dynamically escalates system-level optimisations during runtime based on EMA-smoothed latency:
 \begin{itemize}
@@ -180,7 +180,7 @@ In alignment with the adaptive communication control strategies discussed in Sec
 
 \subsection{Experiment Matrix and Optimisation Taxonomy}
 \label{subsec:matrix}
-We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, to systematically decouple the performance impact of our proposed latency-aware strategies. As detailed in the 'Scheduler' column of Table \ref{tab:experiment-matrix}, we differentiate between trials where the adaptive communication control is disabled and those where it is enabled. Disabling the scheduler defines a static configuration where parameters are held fixed to measure their individual impact. Conversely, enabling the scheduler creates an adaptive configuration where the system dynamically manages transitions between compression modes and synchronisation intervals starting from a full-precision baseline. This mapping allows us to isolate the benefits of basic static strategies versus the performance gains of profiling-driven dynamic adjustment.
+We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, to systematically decouple the performance impact of our proposed latency-aware strategies. As detailed in the 'Scheduler' column of Table \ref{tab:experiment-matrix}, we differentiate between trials where the adaptive communication control is disabled and those where it is enabled. Disabling the scheduler defines a static configuration where parameters are held fixed to measure their individual impact. Conversely, enabling the scheduler creates an adaptive configuration where the system dynamically manages transitions between compression modes and synchronisation intervals from a scenario-specific initial mode. This mapping allows us to isolate the benefits of basic static strategies versus the performance gains of profiling-driven dynamic adjustment.
 
 \begin{table*}[t]
 \centering
@@ -208,7 +208,7 @@ Burst & M11 & 3.0 / 14.0 / 20.0 (burst) & Static Baseline & Float32 (Fixed) & 1 
 Burst & M12 & 3.0 / 14.0 / 20.0 (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 Extreme & M13 & 40.0 / 160.0 / 5.0 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
-Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} INT8 & Dynamic (1--20) & Enabled \\
 \hline
 \end{tabular}
 }
@@ -216,12 +216,12 @@ Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} Float32 
 
 \section{Results and Analysis}
 \label{sec:Res}
-This section evaluates the proposed communication-efficient FSL framework using the experiment matrix described in Section \ref{subsec:matrix}. We report results 10 random seeds and summarize each metric as mean $\pm$ standard deviation to reflect both performance and stability. Since rainfall events are relatively sparse, Macro-F1 is treated as the primary classification metric, while Micro-F1 and Accuracy are reported as complementary indicators. In addition, we analyze communication and system behavior using average payload size, reported latency, training duration, and server aggregation rounds.
+This section evaluates the proposed communication-efficient FSL framework using the experiment matrix described in Section \ref{subsec:matrix}. We report results over 10 random seeds and summarize each metric as mean $\pm$ standard deviation to reflect both performance and stability. Since rainfall events are relatively sparse, Macro-F1 is treated as the primary classification metric, while Micro-F1 and Accuracy are reported as complementary indicators. In addition, we analyze communication and system behavior using average payload size, reported latency, training duration, and server aggregation rounds.
 
 The analysis is organized by research questions: (RQ1) overall performance versus baseline, (RQ2) the effect of compression strategies, (RQ3) the impact of synchronization interval $\rho$, (RQ4) adaptive behavior under medium, burst, and extreme latency profiles, and (RQ5) the final accuracy--efficiency trade-off. Unless otherwise stated, comparisons are made within matched latency settings to isolate the effect of each design component.
 
 \subsection{Overall Performance vs Baseline}
-Table \ref{tab:overall-baseline} reports the core performance and communication indicators under 10 seeds.
+Overall performance and communication indicators are summarized in Table \ref{tab:overall-baseline}.
 
 \begin{table*}[t]
 \centering
@@ -254,9 +254,9 @@ Compared with the medium static baseline (M05), adaptive compression only (M09) 
 
 
 \subsection{Impact of Compression}
-Table \ref{tab:compression-impact} isolates the effect of static compression modes under the same medium-latency profile.
+The effect of static compression modes is summarized in Table \ref{tab:compression-impact}.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Impact of compression strategies under medium latency (10 seeds, mean $\pm$ std).}
 \label{tab:compression-impact}
@@ -274,9 +274,9 @@ M07 (Top-k) & 0.442 $\pm$ 0.061 & 0.505 $\pm$ 0.157 & 0.481 $\pm$ 0.171 & 264.0 
 \end{table}
 Static INT8 compression (M06) provides the largest communication reduction (68.0 bytes, about 73.4\% lower than M05), but also lowers Macro-F1 by about 0.037 on average. In contrast, the Top-k setting used in M07 does not reduce payload in this setup (264.0 bytes vs 256.0 in M05), and still shows a small F1 drop. The recall--precision pattern also shifts across modes: M07 has higher recall but lower precision than M05, suggesting a tendency to detect more rainy events at the cost of more false positives.
 \subsection{Impact of Synchronisation Interval}
-Table \ref{tab:rho-impact} summarizes the trade-off introduced by increasing the synchronization interval.
+The trade-off introduced by increasing the synchronization interval is summarized in Table \ref{tab:rho-impact}.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Impact of synchronization interval $\rho$ under medium latency (10 seeds, mean $\pm$ std).}
 \label{tab:rho-impact}
@@ -292,11 +292,11 @@ M10 (Adaptive) & Dynamic (1--20) & 0.448 $\pm$ 0.060 & 215.4 $\pm$ 0.1 & 438.6 $
 \end{tabular}
 }
 \end{table}
-Increasing $\rho$ from 1 to 3 (M05 to M08) reduces server rounds from 30 to 10 and shortens duration from 318.6s to 143.1s, with a moderate Macro-F1 decrease (0.474 to 0.458). This indicates that temporal communication control alone can significantly reduce runtime. The adaptive setting (M10) further reduces payload, but its runtime becomes longer than both M05 and M08 in this profile, showing that dynamic policy switching does not always dominate a well-chosen fixed $\rho$.
+Increasing $\rho$ from 1 to 3 (M05 to M08) reduces server rounds from 30 to 10 and shortens duration from 318.6s to 143.1s, with a moderate Macro-F1 decrease (0.474 to 0.458). This indicates that temporal communication control alone can significantly reduce runtime. The adaptive setting (M10) further reduces payload, but its runtime becomes longer than both M05 and M08 in this profile, showing that dynamic policy switching did not improve runtime in this setup, likely because control/compression overhead and synchronization waiting offset the reduction in aggregation rounds.
 \subsection{Adaptive Strategy under Variable Latency}
-Table \ref{tab:adaptive-latency} reports adaptive behavior under medium, burst, and extreme latency conditions.
+Adaptive behavior under medium, burst, and extreme latency is summarized in Table \ref{tab:adaptive-latency}.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Adaptive strategy under variable latency (10 seeds, aggregated mode/rho behavior).}
 \label{tab:adaptive-latency}
@@ -312,9 +312,9 @@ M14 (Extreme adaptive) & 119.98 $\pm$ 0.03 & int8/topk & 4 & 0.08 $\pm$ 0.00 \\
 \end{tabular}
 }
 \end{table}
-The adaptive scheduler exhibits distinct behavior across latency regimes. In medium and burst profiles (M10 and M12), all four compression modes and multiple $\rho$ values are activated, confirming that the controller explores broader policy space under fluctuating conditions. The higher mode-switch rate in burst latency (3.12\%) than in medium latency (0.88\%) further indicates stronger policy responsiveness to unstable links. In extreme latency (M14), adaptation converges to a narrow strategy (int8/topk with $\rho=4$), with near-zero switching, suggesting that persistent high-latency conditions constrain feasible communication choices.
+The adaptive scheduler shows different switching patterns across latency profiles. In medium and burst settings (M10 and M12), all four compression modes and multiple $\rho$ values appear, indicating that the rule set can trigger a broad range of policies under non-stationary latency signals. The burst profile has a higher mode-switch rate (3.12\%) than the medium profile (0.88\%), suggesting stronger policy reactivity. Under extreme latency (M14), the scheduler operates with a much narrower set (int8/topk, $\rho=4$) and near-zero switching (0.08\%), which is consistent with persistently high latency and the scenario’s INT8 starting mode.
 \subsection{Trade-off Discussion}
-Table \ref{tab:pairwise-tradeoff} provides pairwise comparisons for key trade-off questions.
+Pairwise trade-offs for key scenario comparisons are summarized in Table \ref{tab:pairwise-tradeoff}.
 
 \begin{table*}[t]
 \centering
@@ -341,7 +341,8 @@ Overall, the pairwise comparisons show no single strategy dominates all objectiv
 \section{Discussion}
 \label{sec:Discussion}
 \subsection{Imbalance task}
-Rainfall prediction is inherently affected by class imbalance, as non-rainy periods dominate while rainfall events are relatively rare. This makes event detection particularly challenging, especially for recall-oriented tasks where missing rare events is costly. Although techniques such as focal loss, class weighting, threshold tuning, and rain-aware sampling are applied, these approaches remain manually designed and require careful tuning. Consequently, the current baseline should not be considered fully optimized. Instead, it serves primarily as a reference point for evaluating communication strategies. With more systematic approaches, such as principled resampling or advanced temporal models, both predictive accuracy and robustness could be significantly improved.
+Rainfall prediction is inherently affected by class imbalance, as non-rainy periods dominate while rainfall events are relatively rare. In this study, our objective is not to maximize absolute predictive accuracy, but to isolate the communication--performance trade-off under a fixed model backbone and training protocol. Accordingly, imbalance-handling components (focal/class weighting, thresholding, and rain-aware oversampling) are intentionally kept fixed across scenarios to ensure fair comparison of communication strategies rather than task-specific performance tuning. This makes event detection challenging, especially for recall-oriented settings where missing rare events is costly. Therefore, the current baseline should be interpreted as a controlled reference for communication analysis, and future work can further improve predictive performance through more systematic model and data-level optimization.
+
 \subsection{Scheduler}
 The proposed scheduler is rule-based and relies on profiler-generated latency signals. While this design is simple, interpretable, and practical, it is inherently limited in flexibility. The mapping between latency conditions and system responses is manually specified, which restricts its ability to adapt to unseen or highly dynamic environments. In reality, the interaction between latency, communication cost, and model convergence is often complex and non-linear. Therefore, more advanced approaches, such as learning-based schedulers using reinforcement learning or adaptive control, could provide more efficient and data-driven decision-making.
 \subsection{Small-scale deployment}
@@ -370,44 +371,44 @@ Overall, the results validate the framework's potential for practical IoT applic
 \bibliography{IEEEabrv,refs}
 
 
-% \appendix
-% \section{Team Contribution Table}
+\appendix
+\section{Team Contribution Table}
 
-% \begin{center}
-% \begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
-% \hline
-% \textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
-% \hline
+\begin{center}
+\begin{tabular}{|p{3.5cm}|p{3cm}|p{9cm}|}
+\hline
+\textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
+\hline
 
-% Guanghua Liu & Introduction Writing &
-% Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
-% \hline
+Guanghua Liu & Introduction Writing &
+Reviewed paper \cite{10522472}. Wrote the introduction section and explained the motivation of using Federated Split Learning for rainfall prediction. \\
+\hline
 
-% Baoyi Liu & Literature Review &
-% Reviewed paper \cite{10478872}. Read related papers and summarized the main ideas for the related work section. \\
-% \hline
+Baoyi Liu & Literature Review &
+Reviewed paper \cite{10478872}. Read related papers and summarized the main ideas for the related work section. \\
+\hline
 
-% Yi Sin Lin & System Design &
-% Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
-% \hline
+Yi Sin Lin & System Design &
+Reviewed paper \cite{10078005}. Helped design the overall system architecture and described the client--server structure. \\
+\hline
 
-% Mingyuan Shao & Activation Compression &
-% Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
-% \hline
+Mingyuan Shao & Activation Compression &
+Reviewed paper \cite{10050151}. Worked on the activation compression idea and explained quantization and sparsification. \\
+\hline
 
-% Jiale Liu & Synchronization Strategy &
-% Reviewed papers \cite{2024ITWC...23.7362C} and \cite{2021arXiv210709786C}. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
-% \hline
+Jiale Liu & Synchronization Strategy &
+Reviewed papers \cite{2024ITWC...23.7362C} and \cite{2021arXiv210709786C}. Explained the synchronization interval ($\rho$) and how reducing communication rounds can improve efficiency. \\
+\hline
 
-% Zhuolun Li & Scheduler and Profiler &
-% Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
-% \hline
+Zhuolun Li & Scheduler and Profiler &
+Reviewed papers \cite{10.3389/frwa.2024.1378598} and \cite{CHAN2023100375}. Designed and documented the Scheduler and Client Profiler modules, including the rule-based adaptation policy and per-round latency and upload-volume recording mechanism. \\
+\hline
 
-% Wenjie Ding & High-level Design \& Paper Structure &
-% Reviewed papers \cite{2023arXiv230205599M} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
-% \hline
+Wenjie Ding & High-level Design \& Paper Structure &
+Reviewed papers \cite{2023arXiv230205599M} and \cite{2026ITWC...25.1981L}. Led the writing of the High-level Design section and was responsible for the overall logical structure and coherence of the paper. \\
+\hline
 
-% \end{tabular}
-% \end{center}
+\end{tabular}
+\end{center}
 
 \end{document}
