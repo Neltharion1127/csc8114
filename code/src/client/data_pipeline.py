@@ -1,7 +1,33 @@
 import numpy as np
 import pandas as pd
 
+from src.shared.common import cfg
 from src.shared.targets import is_rain
+
+FUTURE_RAIN_COL = "future_rain"
+LEGACY_FUTURE_RAIN_COL = "future_3h_rain"
+
+
+def _resolve_target_col(df: pd.DataFrame) -> str:
+    """Return the preferred target column, with legacy fallback."""
+    if FUTURE_RAIN_COL in df.columns:
+        return FUTURE_RAIN_COL
+    if LEGACY_FUTURE_RAIN_COL in df.columns:
+        return LEGACY_FUTURE_RAIN_COL
+    raise KeyError(
+        f"Missing target column. Expected '{FUTURE_RAIN_COL}' "
+        f"(or legacy '{LEGACY_FUTURE_RAIN_COL}')."
+    )
+
+
+def resolve_horizon(horizon: int | None = None) -> int:
+    """Resolve prediction horizon from arg or config, clamped to >=1."""
+    raw = horizon if horizon is not None else cfg.get("model", {}).get("horizon", 3)
+    try:
+        resolved = int(raw)
+    except (TypeError, ValueError):
+        resolved = 3
+    return max(1, resolved)
 
 
 def partition_client_files(
@@ -38,9 +64,11 @@ def collect_eval_indices(
     start_date: pd.Timestamp | None = None,
     end_date: pd.Timestamp | None = None,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
     """Collect deterministic indices in a [start_date, end_date) time window."""
+    horizon = resolve_horizon(horizon)
+
     def _to_naive_timestamp(value: pd.Timestamp | None) -> pd.Timestamp | None:
         if value is None:
             return None
@@ -59,17 +87,23 @@ def collect_eval_indices(
         if start_ts is not None:
             mask = mask & (timestamps >= start_ts)
         if end_ts is not None:
-            mask = mask & (timestamps < end_ts)
+            # Keep labels fully inside [start, end): target at t uses rain from (t, t+horizon].
+            effective_end = end_ts - pd.Timedelta(hours=horizon)
+            mask = mask & (timestamps < effective_end)
     else:
         if start_date is not None:
             start_pos = resolve_split_pos(df, _to_naive_timestamp(start_date))
             mask = mask & (all_indices >= start_pos)
         if end_date is not None:
             end_pos = resolve_split_pos(df, _to_naive_timestamp(end_date))
-            mask = mask & (all_indices < end_pos)
+            effective_end_pos = max(0, int(end_pos) - horizon)
+            mask = mask & (all_indices < effective_end_pos)
 
-    if "future_3h_rain" in df.columns:
-        valid_target = df["future_3h_rain"].notna().to_numpy()
+    if FUTURE_RAIN_COL in df.columns:
+        valid_target = df[FUTURE_RAIN_COL].notna().to_numpy()
+        mask = mask & valid_target
+    elif LEGACY_FUTURE_RAIN_COL in df.columns:
+        valid_target = df[LEGACY_FUTURE_RAIN_COL].notna().to_numpy()
         mask = mask & valid_target
     return all_indices[mask]
 
@@ -81,7 +115,7 @@ def collect_eval_indices_capped(
     end_date: pd.Timestamp | None = None,
     eval_max_samples: int = 0,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
     """Collect deterministic eval indices in a time window, with optional fixed cap."""
     eval_indices = collect_eval_indices(
@@ -102,7 +136,7 @@ def collect_test_indices(
     split_date: pd.Timestamp,
     *,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
     """Collect deterministic test indices with valid context and non-NaN targets."""
     return collect_eval_indices(
@@ -120,7 +154,7 @@ def collect_test_indices_capped(
     *,
     eval_max_samples: int = 0,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
     """Collect deterministic test indices, with optional fixed-size cap per sensor."""
     test_indices = collect_eval_indices_capped(
@@ -134,7 +168,7 @@ def collect_test_indices_capped(
     return test_indices
 
 
-def load_sensor_data(file_path: str) -> pd.DataFrame:
+def load_sensor_data(file_path: str, *, horizon: int | None = None) -> pd.DataFrame:
     """
     Reads a single sensor parquet file, ensures a DatetimeIndex,
     and computes the future rainfall target column.
@@ -144,7 +178,8 @@ def load_sensor_data(file_path: str) -> pd.DataFrame:
         df.set_index("Timestamp", inplace=True)
         df.index = pd.to_datetime(df.index)
 
-    df["future_3h_rain"] = df["Rain"].shift(-3).rolling(window=3).sum()
+    horizon = resolve_horizon(horizon)
+    df[FUTURE_RAIN_COL] = df["Rain"].shift(-horizon).rolling(window=horizon).sum()
     return df
 
 
@@ -155,21 +190,25 @@ def sample_index(
     is_training: bool = True,
     rain_sample_ratio: float | None = None,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
     rain_threshold: float | None = None,
 ) -> tuple[int, str] | None:
     """Pick one train/test sample with optional rain oversampling."""
+    horizon = resolve_horizon(horizon)
     split_pos = resolve_split_pos(df, split_date)
 
     all_indices = np.arange(len(df))
     base_mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
 
     if is_training:
-        base_mask = base_mask & (all_indices < split_pos)
+        # Avoid split leakage: keep entire future target window inside training period.
+        train_end_exclusive = max(0, split_pos - horizon)
+        base_mask = base_mask & (all_indices < train_end_exclusive)
     else:
         base_mask = base_mask & (all_indices >= split_pos)
 
-    target_arr = pd.to_numeric(df["future_3h_rain"], errors="coerce").to_numpy(dtype=float)
+    target_col = _resolve_target_col(df)
+    target_arr = pd.to_numeric(df[target_col], errors="coerce").to_numpy(dtype=float)
     valid_target = np.isfinite(target_arr)
     rain_mask = np.zeros_like(valid_target, dtype=bool)
     rain_mask[valid_target] = np.array(

@@ -121,10 +121,13 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
             device = resolve_device()
             print(f"[CLIENT {client_id}] Using device: {device}")
+            model_cfg = cfg.get("model", {})
+            lstm_dropout = float(model_cfg.get("lstm_dropout", model_cfg.get("dropout", 0.3)))
             client_model = ClientLSTM(
-                input_size=cfg.get("model", {}).get("input_size", len(FEATURE_COLS)),
-                hidden_size=cfg.get("model", {}).get("hidden_size", 64),
-                num_layers=cfg.get("model", {}).get("num_layers", 1),
+                input_size=model_cfg.get("input_size", len(FEATURE_COLS)),
+                hidden_size=model_cfg.get("hidden_size", 64),
+                num_layers=model_cfg.get("num_layers", 1),
+                lstm_dropout=lstm_dropout,
             ).to(device)
             optimizer = torch.optim.Adam(
                 client_model.parameters(),
@@ -132,7 +135,12 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
             client_model.train()
 
-            sensor_data_cache = preload_sensor_data(client_id, client_files)
+            target_horizon = max(1, int(cfg.get("model", {}).get("horizon", 3)))
+            sensor_data_cache = preload_sensor_data(
+                client_id,
+                client_files,
+                horizon=target_horizon,
+            )
 
             patience = cfg.get("training", {}).get("early_stopping_patience", 15)
             current_round = 0
@@ -142,7 +150,6 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             rain_sample_ratio = float(cfg.get("training", {}).get("rain_sample_ratio", 0.35))
             rain_threshold = rain_threshold_mm()
             seq_len = int(cfg.get("model", {}).get("seq_len", 24))
-            target_horizon = 3
             base_rho = max(1, int(cfg.get("federated", {}).get("rho", 1)))
             periodic_dir = os.path.join(session_dir, "periodic")
             os.makedirs(periodic_dir, exist_ok=True)
@@ -173,7 +180,8 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 )
             print(
                 f"[CLIENT {client_id}] Data windows | train:<{VAL_START_DATE} "
-                f"| val:[{VAL_START_DATE},{TEST_START_DATE}) | test:>={TEST_START_DATE}"
+                f"| val:[{VAL_START_DATE},{TEST_START_DATE}) | test:>={TEST_START_DATE} "
+                f"| horizon={target_horizon}h"
             )
 
             train_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)

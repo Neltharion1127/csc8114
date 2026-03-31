@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 
 from src.client.data_pipeline import (
+    FUTURE_RAIN_COL,
     collect_eval_indices_capped,
     load_sensor_data,
     resolve_split_pos,
@@ -69,13 +70,18 @@ def _select_best_threshold(
     return best_threshold, best_metrics, default_metrics
 
 
-def preload_sensor_data(client_id: int, client_files: list[str]) -> dict[str, pd.DataFrame]:
+def preload_sensor_data(
+    client_id: int,
+    client_files: list[str],
+    *,
+    horizon: int | None = None,
+) -> dict[str, pd.DataFrame]:
     print(f"[CLIENT {client_id}] Pre-loading sensor data into memory...")
     sensor_data_cache: dict[str, pd.DataFrame] = {}
     for file_path in client_files:
         sensor_id = Path(file_path).stem
         try:
-            sensor_data_cache[file_path] = load_sensor_data(file_path)
+            sensor_data_cache[file_path] = load_sensor_data(file_path, horizon=horizon)
         except Exception as e:
             print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
     if not sensor_data_cache:
@@ -156,7 +162,7 @@ def build_eval_index_cache(
         eval_index_cache[file_path] = eval_indices
         total_eval_samples += int(len(eval_indices))
         if len(eval_indices) > 0:
-            total_eval_positive += int(df["future_3h_rain"].iloc[eval_indices].apply(is_rain).sum())
+            total_eval_positive += int(df[FUTURE_RAIN_COL].iloc[eval_indices].apply(is_rain).sum())
     print(
         f"[CLIENT {client_id}] Fixed {label.lower()} set prepared: "
         f"samples={total_eval_samples} positives={total_eval_positive} "
@@ -208,7 +214,7 @@ def run_train_epoch(
                 if result is None:
                     continue
                 target_idx, mode = result
-                target_value = float(df["future_3h_rain"].iloc[target_idx])
+                target_value = float(df[FUTURE_RAIN_COL].iloc[target_idx])
                 log_entry = run_forward_step(
                     stub,
                     client_id,
@@ -271,7 +277,7 @@ def run_eval_epoch(
                 if eval_indices is None or len(eval_indices) == 0:
                     continue
                 for target_idx in eval_indices:
-                    target_value = float(df["future_3h_rain"].iloc[target_idx])
+                    target_value = float(df[FUTURE_RAIN_COL].iloc[target_idx])
                     log_entry = run_forward_step(
                         stub,
                         client_id,

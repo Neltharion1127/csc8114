@@ -104,6 +104,7 @@ def handle_forward_request(
                     reg_loss = F.smooth_l1_loss(rain_amount, target)
                 else:
                     reg_loss = torch.zeros((), dtype=torch.float32, device=device)
+                #  total loss
                 loss = cls_weight * cls_loss + reg_weight * reg_loss
 
             if is_training:

@@ -15,6 +15,7 @@ if str(project_root) not in sys.path:
 
 from src.shared.common import cfg, feature_cols_from_cfg, get_nested
 from src.client.data_pipeline import (
+    FUTURE_RAIN_COL,
     collect_test_indices_capped,
     load_sensor_data,
     partition_client_files,
@@ -304,7 +305,9 @@ def _resolve_eval_settings(server_raw: dict | object) -> tuple[dict, str]:
         "end_date_str": str(_setting(("data_download", "end_date"), "2026-03-10T00:00:00")),
         "eval_max_samples": max(0, int(_setting(("training", "eval_max_samples_per_sensor"), 0))),
         "seq_len": int(_setting(("model", "seq_len"), 24)),
+        "horizon": max(1, int(_setting(("model", "horizon"), 3))),
         "input_size": int(_setting(("model", "input_size"), 5)),
+        "lstm_dropout": float(_setting(("model", "lstm_dropout"), _setting(("model", "dropout"), 0.3))),
         "hidden_size": int(_setting(("model", "hidden_size"), 64)),
         "head_width": int(_setting(("model", "server_head_width"), 64)),
         "head_dropout": float(_setting(("model", "server_head_dropout"), 0.1)),
@@ -333,7 +336,9 @@ def evaluate_client(
     split_date: pd.Timestamp,
     eval_max_samples: int,
     seq_len: int,
+    horizon: int,
     input_size: int,
+    lstm_dropout: float,
     hidden_size: int,
     num_clients: int,
     processed_dir: str,
@@ -387,7 +392,10 @@ def evaluate_client(
 
     num_layers = sum(1 for k in state_dict if k.startswith("lstm.weight_ih_l"))
     client_model = ClientLSTM(
-        input_size=input_size, hidden_size=hidden_size, num_layers=num_layers
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        lstm_dropout=lstm_dropout,
     ).to(device)
     client_model.load_state_dict(state_dict)
     client_model.eval()
@@ -422,7 +430,7 @@ def evaluate_client(
     all_targets, all_preds, all_probs = [], [], []
     sensor_data_cache: dict[Path, pd.DataFrame] = {}
     for file in client_files:
-        sensor_data_cache[file] = load_sensor_data(str(file))
+        sensor_data_cache[file] = load_sensor_data(str(file), horizon=horizon)
     all_combined = pd.concat(sensor_data_cache.values())
     feat_mean = all_combined[active_features].mean().values
     feat_std = all_combined[active_features].std().values + 1e-9
@@ -436,14 +444,14 @@ def evaluate_client(
                 split_date,
                 eval_max_samples=eval_max_samples,
                 min_history=seq_len,
-                horizon=3,
+                horizon=horizon,
             )
             if len(test_indices) == 0:
                 print(f"  [WARNING] No valid test indices in {sensor_id} — skipped")
                 continue
 
             for idx in test_indices:
-                target_val = float(df["future_3h_rain"].iloc[int(idx)])
+                target_val = float(df[FUTURE_RAIN_COL].iloc[int(idx)])
                 window_data = df.iloc[int(idx) - seq_len : int(idx)]
                 features = (
                     window_data[active_features]
@@ -642,7 +650,9 @@ def evaluate():
     eval_settings, eval_cfg_source = _resolve_eval_settings(server_raw)
     split_date = eval_settings["split_date"]
     seq_len = eval_settings["seq_len"]
+    horizon = eval_settings["horizon"]
     input_size = eval_settings["input_size"]
+    lstm_dropout = eval_settings["lstm_dropout"]
     hidden_size = eval_settings["hidden_size"]
     head_width = eval_settings["head_width"]
     head_dropout = eval_settings["head_dropout"]
@@ -667,7 +677,7 @@ def evaluate():
     )
     print(
         f"[INFO] Eval config source: {eval_cfg_source} | split_date={split_date} | "
-        f"seq_len={seq_len} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "
+        f"seq_len={seq_len} horizon={horizon} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "
         f"{threshold_text} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | device={device}"
     )
     if forced_prob_threshold is not None:
@@ -700,7 +710,9 @@ def evaluate():
             split_date=split_date,
             eval_max_samples=eval_max_samples,
             seq_len=seq_len,
+            horizon=horizon,
             input_size=input_size,
+            lstm_dropout=lstm_dropout,
             hidden_size=hidden_size,
             num_clients=num_clients,
             processed_dir=processed_dir,

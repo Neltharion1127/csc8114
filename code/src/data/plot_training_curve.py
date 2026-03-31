@@ -34,6 +34,7 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 from src.shared.common import cfg
+from src.client.data_pipeline import FUTURE_RAIN_COL
 from src.models.split_lstm import ClientLSTM, ServerHead
 from src.shared.targets import inverse_target_scalar, rain_probability_threshold
 
@@ -90,7 +91,7 @@ def _find_session(session_id: str | None) -> Path:
 
 def _eval_pair(client_state: dict, server_state: dict,
                hidden_size: int, device: torch.device,
-               test_days: int, seq_len: int, input_size: int) -> float:
+               test_days: int, seq_len: int, horizon: int, input_size: int, lstm_dropout: float) -> float:
     """
     Run the split-inference model on the test set.
     Returns average MSE over all test samples.
@@ -98,7 +99,10 @@ def _eval_pair(client_state: dict, server_state: dict,
     num_layers = sum(1 for k in client_state if k.startswith("lstm.weight_ih_l"))
 
     client_model = ClientLSTM(
-        input_size=input_size, hidden_size=hidden_size, num_layers=num_layers
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        lstm_dropout=lstm_dropout,
     ).to(device)
     client_model.load_state_dict(client_state)
     client_model.eval()
@@ -129,16 +133,16 @@ def _eval_pair(client_state: dict, server_state: dict,
             if "Timestamp" in df.columns:
                 df.set_index("Timestamp", inplace=True)
                 df.index = pd.to_datetime(df.index)
-            df["future_3h_rain"] = df["Rain"].shift(-3).rolling(window=3).sum()
+            df[FUTURE_RAIN_COL] = df["Rain"].shift(-horizon).rolling(window=horizon).sum()
 
             if len(df) < total_hours + seq_len:
                 continue
 
             test_df = df.iloc[-total_hours:].reset_index(drop=True)
-            for idx in range(seq_len, len(test_df) - 3):
-                if pd.isna(test_df.iloc[idx]["future_3h_rain"]):
+            for idx in range(seq_len, len(test_df) - horizon):
+                if pd.isna(test_df.iloc[idx][FUTURE_RAIN_COL]):
                     continue
-                target_val = float(test_df.iloc[idx]["future_3h_rain"])
+                target_val = float(test_df.iloc[idx][FUTURE_RAIN_COL])
                 window     = test_df.iloc[idx - seq_len : idx]
                 feat = (
                     window[features_cfg]
@@ -175,7 +179,9 @@ def main():
     # Config
     test_days   = cfg.get("data",  {}).get("test_days",   14)
     seq_len     = cfg.get("model", {}).get("seq_len",     24)
+    horizon     = max(1, int(cfg.get("model", {}).get("horizon", 3)))
     input_size  = cfg.get("model", {}).get("input_size",   5)
+    lstm_dropout = float(cfg.get("model", {}).get("lstm_dropout", cfg.get("model", {}).get("dropout", 0.3)))
     hidden_size = cfg.get("model", {}).get("hidden_size", 64)
 
     session_dir  = _find_session(args.session)
@@ -188,7 +194,7 @@ def main():
 
     print(f"\n📂 Session   : {session_name}")
     print(f"⚙️  Device    : {device}")
-    print(f"📅 Test days : {test_days}  |  seq_len={seq_len}\n")
+    print(f"📅 Test days : {test_days}  |  seq_len={seq_len} horizon={horizon}\n")
 
     # ── Collect server periodic checkpoints ──────────────────────────────────
     server_ckpts = {
@@ -245,7 +251,7 @@ def main():
                   f"| evaluating...", end="", flush=True)
             test_mse = _eval_pair(
                 client_state, server_state,
-                hidden_size, device, test_days, seq_len, input_size
+                hidden_size, device, test_days, seq_len, horizon, input_size, lstm_dropout
             )
             print(f"  test_mse={test_mse:.4f}")
             curve.append((r, train_loss, test_mse))
