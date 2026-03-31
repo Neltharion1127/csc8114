@@ -7,14 +7,13 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: fsl-server
-    gpus: all
     command: uv run python src/nodes/server_node.py
     ports:
       - "50051:50051"
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - FSL_DEVICE=cuda
+      - FSL_DEVICE=${FSL_DEVICE:-cpu}
       - UV_PROJECT_ENVIRONMENT=/opt/venv
       - UV_LINK_MODE=copy
       - UV_CACHE_DIR=/root/.cache/uv
@@ -39,7 +38,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    gpus: all
     command: uv run python src/nodes/client_node.py
     depends_on:
       fsl-server:
@@ -47,7 +45,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - FSL_DEVICE=cuda
+      - FSL_DEVICE=${FSL_DEVICE:-cpu}
       - UV_PROJECT_ENVIRONMENT=/opt/venv
       - UV_LINK_MODE=copy
       - UV_CACHE_DIR=/root/.cache/uv

@@ -4,6 +4,9 @@ compression:
 console:
   log_step_details: false
   log_server_requests: false
+artifacts:
+  # none|minimal|full: controls checkpoint/meta config payload size.
+  config_snapshot_policy: minimal
 data:
   processed_dir: dataset/processed
   test_days: 14

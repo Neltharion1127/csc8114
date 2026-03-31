@@ -1,4 +1,3 @@
-import copy
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -7,6 +6,7 @@ from pathlib import Path
 import torch
 
 from src.shared.common import cfg
+from src.shared.config_artifacts import build_config_ref, build_config_snapshot
 
 
 @dataclass
@@ -37,6 +37,7 @@ def evaluate_epoch(
     current_precision = float(val_metrics.get("precision", 0.0))
     current_recall = float(val_metrics.get("recall", 0.0))
     current_threshold = float(val_metrics.get("selected_threshold", cfg.get("training", {}).get("rain_probability_threshold", 0.5)))
+    config_snapshot, snapshot_policy = build_config_snapshot()
     num_layers_ckpt = sum(
         1 for key in client_model.state_dict()
         if key.startswith("lstm.weight_ih_l")
@@ -70,10 +71,13 @@ def evaluate_epoch(
             "num_layers": num_layers_ckpt,
             "input_size": cfg.get("model", {}).get("input_size", 5),
         },
-        "config_snapshot": copy.deepcopy(cfg),
+        "config_snapshot_policy": snapshot_policy,
+        "config_ref": build_config_ref(),
         "session_id": session_id,
         "client_id": client_id,
     }
+    if config_snapshot is not None:
+        base_ckpt["config_snapshot"] = config_snapshot
 
     score_improved = current_f1 > state.best_test_f1 + 1e-9
     tie_break_improved = abs(current_f1 - state.best_test_f1) <= 1e-9 and avg_val_loss < state.best_test_loss - 1e-9
