@@ -215,6 +215,10 @@ In alignment with the adaptive communication control strategies discussed in Sec
 \label{subsec:matrix}
 We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, to systematically decouple the performance impact of our proposed latency aware strategies. As detailed in the 'Scheduler' column of Table \ref{tab:experiment_matrix}, we differentiate between trials where the adaptive communication control is disabled and those where it is enabled. Disabling the scheduler defines a static configuration where parameters are held fixed to measure their individual impact. Conversely, enabling the scheduler creates an adaptive configuration where the system dynamically manages transitions between compression modes and synchronisation intervals from a scenario specific initial mode. This mapping allows us to isolate the benefits of basic static strategies versus the performance gains of profiling driven dynamic adjustment.
 
+Table \ref{tab:experiment_matrix} should be read as a two-dimensional design space. The first dimension is the network profile, defined by the latency simulator parameters (base latency, client offset, and jitter, with optional burst injection). The second dimension is the communication-control policy, including compression mode, synchronisation interval $\rho$, and whether the adaptive scheduler is active.
+
+The five latency profiles (No, Light, Medium, Burst, and Extreme) were constructed to represent progressively harsher communication conditions, from an ideal link to stress-test settings. Within each profile, we include both static baselines and targeted variants (mode-only, $\rho$-only, and full adaptive control) so that each strategy's contribution to payload, runtime, and predictive performance can be compared under matched network conditions.
+
 \begin{table*}[t]
 \centering
 \caption{Experiment scenarios and optimisation taxonomy.}
@@ -222,7 +226,7 @@ We formulated an experiment matrix consisting of 14 scenarios, M01 through M14, 
 \resizebox{\textwidth}{!}{
 \begin{tabular}{|l|c|l|l|l|c|c|}
 \hline
-\textbf{Network Profile} & \textbf{ID} & \textbf{Latency Profile (ms)} & \textbf{Optimisation Strategy} & \textbf{Compression Policy} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
+\textbf{Profile Type} & \textbf{Scenario ID} & \textbf{Latency Profile (base / max offset / jitter, ms)} & \textbf{Optimisation Strategy} & \textbf{Compression Policy} & \textbf{Sync Interval ($\rho$)} & \textbf{Scheduler} \\
 \hline
 No Latency & M01 & 0 / 0 / 0 & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
 No Latency & M02 & 0 / 0 / 0 & Adaptive Control & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
@@ -237,8 +241,8 @@ Medium & M08 & 3.0 / 14.0 / 1.2 & Static Sync Test & Float32 (Fixed) & 3 (Fixed)
 Medium & M09 & 3.0 / 14.0 / 1.2 & Compression Focus & \textit{Starts at} Float32 & 1 (Fixed) & Enabled \\
 Medium & M10 & 3.0 / 14.0 / 1.2 & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
-Burst & M11 & 3.0 / 14.0 / 20.0 (burst) & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
-Burst & M12 & 3.0 / 14.0 / 20.0 (burst) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
+Burst & M11 & 3.0 / 14.0 / 1.2 (+20.0 burst/50 steps) & Static Baseline & Float32 (Fixed) & 1 (Fixed) & Disabled \\
+Burst & M12 & 3.0 / 14.0 / 1.2 (+20.0 burst/50 steps) & Full Adaptive & \textit{Starts at} Float32 & Dynamic (1--20) & Enabled \\
 \hline
 Extreme & M13 & 40.0 / 160.0 / 5.0 & Static Mode Test & INT8 (Fixed) & 1 (Fixed) & Disabled \\
 Extreme & M14 & 40.0 / 160.0 / 5.0 & Full Adaptive & \textit{Starts at} INT8 & Dynamic (1--20) & Enabled \\
@@ -255,6 +259,8 @@ The analysis is organised by research questions: (RQ1) overall performance versu
 
 \subsection{Overall Performance vs Baseline}
 Overall performance and communication indicators are summarised in Table \ref{tab:overall_baseline}.
+
+In this paper, ``baseline'' refers to the profile-matched static configuration (scheduler disabled, float32 compression, and fixed $\rho=1$), i.e., M03 for Light, M05 for Medium, and M11 for Burst (with M01 as the no-latency reference).
 
 \begin{table*}[t]
 \centering
@@ -287,6 +293,7 @@ Compared with the medium static baseline (M05), adaptive compression only (M09) 
 
 
 \subsection{Impact of Compression}
+We focus on the medium-latency profile here because M05, M06, and M07 form a controlled comparison where only the compression policy changes while other conditions are held constant. This isolates the effect of compression; cross profile behaviour is reported in the overall and adaptive analyses.
 The effect of static compression modes is summarised in Table \ref{tab:compression_impact}.
 
 \begin{table}[H]
