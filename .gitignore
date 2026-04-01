@@ -21,6 +21,7 @@
 *.synctex
 *.synctex(busy)
 *.pdf
+!paper/diagrams/**/*.pdf
 
 # Editor temp files
 *.swp
