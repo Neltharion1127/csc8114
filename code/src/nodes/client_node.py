@@ -5,7 +5,7 @@ import re
 import socket
 import time
 
-import pandas as pd
+
 import torch
 
 from proto import fsl_pb2
@@ -30,14 +30,7 @@ from src.shared.targets import rain_threshold_mm
 
 FEATURE_COLS = feature_cols_from_cfg()
 
-end_date_str = cfg.get("data_download", {}).get("end_date", "2026-03-10T00:00:00")
-test_days = int(cfg.get("data", {}).get("test_days", 14))
-val_days = int(cfg.get("data", {}).get("val_days", test_days))
-END_DATE = pd.Timestamp(end_date_str)
-if END_DATE.tzinfo is not None:
-    END_DATE = END_DATE.tz_convert(None)
-TEST_START_DATE = END_DATE - pd.Timedelta(days=test_days)
-VAL_START_DATE = TEST_START_DATE - pd.Timedelta(days=val_days)
+
 
 
 def _resolve_requested_client_id() -> int:
@@ -159,15 +152,13 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                 client_id=client_id,
                 sensor_data_cache=sensor_data_cache,
                 feature_cols=FEATURE_COLS,
-                train_end_date=VAL_START_DATE,
             )
 
             eval_max_samples = max(0, int(cfg.get("training", {}).get("eval_max_samples_per_sensor", 0)))
             val_index_cache, val_samples, _ = build_eval_index_cache(
                 client_id=client_id,
                 sensor_data_cache=sensor_data_cache,
-                start_date=VAL_START_DATE,
-                end_date=TEST_START_DATE,
+                target_phase="VAL",
                 eval_max_samples=eval_max_samples,
                 seq_len=seq_len,
                 label="VAL",
@@ -175,13 +166,12 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             )
             if val_samples == 0:
                 raise RuntimeError(
-                    f"Client {client_id} has 0 validation samples in window "
-                    f"[{VAL_START_DATE}, {TEST_START_DATE}). Increase data span or adjust val/test days."
+                    f"Client {client_id} has 0 validation samples (monthly days 21-25). "
+                    "Check dataset timestamps and val_days configuration."
                 )
             print(
-                f"[CLIENT {client_id}] Data windows | train:<{VAL_START_DATE} "
-                f"| val:[{VAL_START_DATE},{TEST_START_DATE}) | test:>={TEST_START_DATE} "
-                f"| horizon={target_horizon}h"
+                f"[CLIENT {client_id}] Monthly split | TRAIN: day 1-20 "
+                f"| VAL: day 21-25 | TEST: day 26-end | horizon={target_horizon}h"
             )
 
             train_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)
@@ -202,7 +192,6 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
                     optimizer=optimizer,
                     client_files=client_files,
                     sensor_data_cache=sensor_data_cache,
-                    split_date=VAL_START_DATE,
                     train_state=train_state,
                     feature_cols=FEATURE_COLS,
                     feat_stats=feat_stats,

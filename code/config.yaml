@@ -9,10 +9,10 @@ artifacts:
   config_snapshot_policy: minimal
 data:
   processed_dir: dataset/processed
-  test_days: 14
-  val_days: 14
-  # train_ratio: 0.7  # unused (current split uses test_days/val_days windows)
-  # val_ratio: 0.15   # unused (current split uses test_days/val_days windows)
+  # Monthly cyclic splitting
+  train_days: 20
+  val_days: 5
+  # test_days: Remaining days of the month
   # Feature columns consumed by model/data pipeline (preferred location)
   feature_cols:
     - Temperature
@@ -21,7 +21,8 @@ data:
     - Wind Speed
     - Rain
 federated:
-  num_clients: 3
+  num_clients: 11  
+  # 12 parquet files: client 1-10 get 1 file each; last client gets remaining files
   rho: 1
 grpc:
   max_message_mb: 50
@@ -36,7 +37,7 @@ model:
   horizon: 1
   input_size: 5
   num_layers: 2
-  seq_len: 24
+  seq_len: 48
 # output:
 #   metrics_dir: /app/outputs/metrics  # unused (runtime writes to results/)
 #   plots_dir: /app/outputs/plots      # unused (runtime writes to results/)
@@ -328,7 +329,7 @@ server:
 
 data_download:
   start_date: "2023-01-01T00:00:00"
-  end_date: "2026-03-10T00:00:00"      # up to today
+  end_date: "2026-03-31T00:00:00"
   # Legacy location kept for backward compatibility (new code prefers data.feature_cols)
   feature_cols:
     - Temperature
