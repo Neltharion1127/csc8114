@@ -53,12 +53,13 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     compression_mode = cfg.get("compression", {}).get("mode", "float32")
     epochs = cfg.get("training", {}).get("num_rounds", epochs)
     requested_client_id = _resolve_requested_client_id()
-    base_client_name = os.getenv("HOSTNAME") or socket.gethostname()
-    client_name = (
-        f"{base_client_name}-cid{requested_client_id}"
-        if requested_client_id > 0
-        else base_client_name
-    )
+    # Use a stable, fixed name so the server can recognize this client on reconnect.
+    # The Docker container hostname changes on every restart, so we use CLIENT_ID instead.
+    if requested_client_id > 0:
+        client_name = f"fsl-client-cid{requested_client_id}"
+    else:
+        base_client_name = os.getenv("HOSTNAME") or socket.gethostname()
+        client_name = base_client_name
 
     time.sleep(cfg.get("training", {}).get("start_delay", 8))
     print(f"[CLIENT] Connecting to {target_address} for registration...")

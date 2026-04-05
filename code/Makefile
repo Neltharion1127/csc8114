@@ -1,10 +1,12 @@
 # FSL Project Makefile
 # This file turns complex command lines into simple, one-word commands.
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session eval-batch matrix matrix-dry-run clean-native check-native-port clean clean-all
+.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session eval-batch matrix matrix-dry-run clean-native check-native-port clean clean-all build-client build-client-arm64 deploy-clients
 
 DEFAULT_NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 NUM_CLIENTS ?= $(DEFAULT_NUM_CLIENTS)
+REGISTRY ?= cindyncl26
+CLIENT_IMAGE ?= $(REGISTRY)/fsl-client:latest
 SERVER_COLOR := \033[1;34m
 RESET_COLOR := \033[0m
 SERVER_HOST ?= 127.0.0.1
@@ -249,3 +251,26 @@ clean-native:
 	@pkill -f "src.nodes.client_node" 2>/dev/null || true
 	@pkill -f "src.nodes.server_node" 2>/dev/null || true
 	@echo "Killed native server/client processes (if any)."
+
+# ─── Raspberry Pi / Ansible Deployment ───────────────────────────────────────
+
+# Build client image for local testing (amd64)
+build-client:
+	docker build -f Dockerfile -t $(CLIENT_IMAGE) .
+
+# Cross-compile and push ARM64 image for Raspberry Pi (requires docker buildx)
+build-client-arm64:
+	docker buildx build \
+	  --no-cache \
+	  --platform linux/arm64 \
+	  -f Dockerfile \
+	  -t $(CLIENT_IMAGE) \
+	  --push .
+
+# Deploy to all 11 Raspberry Pis via Ansible
+deploy-clients:
+	ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini
+
+# Dry-run: preview what Ansible would change without applying
+deploy-clients-check:
+	ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini --check

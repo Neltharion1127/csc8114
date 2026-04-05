@@ -1,0 +1,2 @@
+client_image: cindyncl26/fsl-client:latest
+server_host: "51.254.207.168"   # FSL server (Ubuntu VPS)

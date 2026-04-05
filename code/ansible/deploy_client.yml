@@ -1,0 +1,57 @@
+---
+- name: Deploy FSL Client to Raspberry Pis
+  hosts: clients
+  become: true
+
+  tasks:
+    - name: Ensure dataset directory exists
+      ansible.builtin.file:
+        path: /home/pi/dataset/processed
+        state: directory
+        mode: '0755'
+
+    - name: Synchronize dataset from Mac to Pis (this may take a few mins)
+      ansible.posix.synchronize:
+        src: ../dataset/processed/
+        dest: /home/pi/dataset/processed/
+        archive: true
+        compress: true
+        rsync_opts:
+          - "--ignore-existing"  # Only upload missing files to save time
+
+    - name: Pull FSL client image
+      community.docker.docker_image:
+        name: "{{ client_image }}"
+        source: pull
+
+    - name: Remove old fsl-client container (if exists)
+      community.docker.docker_container:
+        name: fsl-client
+        state: absent
+
+    - name: Start fsl-client container
+      community.docker.docker_container:
+        name: fsl-client
+        image: "{{ client_image }}"
+        state: started
+        restart_policy: unless-stopped
+        command: python src/nodes/client_node.py
+        env:
+          CLIENT_ID: "{{ client_id | string }}"
+          FSL_SERVER_HOST: "{{ server_host }}"
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: /app
+          FSL_DEVICE: cpu
+        volumes:
+          - /home/pi/dataset/processed:/app/dataset/processed
+          - /home/pi/results:/app/results
+          - /home/pi/bestweights:/app/bestweights
+
+    - name: Show container status
+      ansible.builtin.command: docker ps --filter name=fsl-client
+      register: container_status
+      changed_when: false
+
+    - name: Print container status
+      ansible.builtin.debug:
+        msg: "{{ container_status.stdout_lines }}"
