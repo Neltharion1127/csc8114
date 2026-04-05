@@ -177,8 +177,8 @@ def main():
     device = torch.device(args.device)
 
     # Config
-    test_days   = cfg.get("data",  {}).get("test_days",   14)
-    seq_len     = cfg.get("model", {}).get("seq_len",     24)
+    test_days   = cfg.get("data",  {}).get("test_days",   5)
+    seq_len     = cfg.get("model", {}).get("seq_len",     48)
     horizon     = max(1, int(cfg.get("model", {}).get("horizon", 3)))
     input_size  = cfg.get("model", {}).get("input_size",   5)
     lstm_dropout = float(cfg.get("model", {}).get("lstm_dropout", cfg.get("model", {}).get("dropout", 0.3)))
