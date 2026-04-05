@@ -43,8 +43,12 @@ def _find_session(session_id: str | None) -> Path:
 
 
 def _latest_client_logs(session_dir: Path) -> dict[int, Path]:
+    """Scans for client logs in the session directory and recursive subdirectories."""
+    # Recursively find training logs, which might be in pi01/, pi02/ subdirs
+    # created by 'ansible fetch' or in the root of the session dir.
+    all_logs = list(session_dir.rglob("training_log_client*.csv"))
     by_client: dict[int, Path] = {}
-    for path in sorted(session_dir.glob("training_log_client*.csv")):
+    for path in sorted(all_logs):
         if "progress" in path.name:
             continue
         m = re.search(r"training_log_client(\d+)_\d{8}_\d{6}\.csv$", path.name)
