@@ -384,13 +384,13 @@ def main() -> int:
         before_res = _list_sessions(PROJECT_ROOT / "results")
 
         # Cleanup is best-effort; do not stop batch if no process exists.
-        cleanup_cmd = ["make", "clean-native"] if backend == "native" else ["make", "clean"]
+        cleanup_cmd = ["make", "native-clean"] if backend == "native" else ["make", "docker-clean"]
         subprocess.run(cleanup_cmd, cwd=PROJECT_ROOT, env=env_backend, check=False)
         try:
             if backend == "native":
                 run_cmd = [
                     "make",
-                    "run-native",
+                    "native-run",
                     f"SERVER_DEVICE={server_device}",
                     f"CLIENT_DEVICE={client_device}",
                     f"STARTUP_TIMEOUT={startup_timeout}",
@@ -400,7 +400,7 @@ def main() -> int:
             else:
                 run_cmd = [
                     "make",
-                    "run-network",
+                    "docker-run",
                     f"NUM_CLIENTS={run_num_clients}",
                     "AUTO_PLOT=0",
                 ]
