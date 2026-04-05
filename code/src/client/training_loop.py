@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 
 from src.client.data_pipeline import (
+    FUTURE_RAIN_COL,
     collect_eval_indices_capped,
     load_sensor_data,
     resolve_split_pos,
@@ -69,13 +70,18 @@ def _select_best_threshold(
     return best_threshold, best_metrics, default_metrics
 
 
-def preload_sensor_data(client_id: int, client_files: list[str]) -> dict[str, pd.DataFrame]:
+def preload_sensor_data(
+    client_id: int,
+    client_files: list[str],
+    *,
+    horizon: int | None = None,
+) -> dict[str, pd.DataFrame]:
     print(f"[CLIENT {client_id}] Pre-loading sensor data into memory...")
     sensor_data_cache: dict[str, pd.DataFrame] = {}
     for file_path in client_files:
         sensor_id = Path(file_path).stem
         try:
-            sensor_data_cache[file_path] = load_sensor_data(file_path)
+            sensor_data_cache[file_path] = load_sensor_data(file_path, horizon=horizon)
         except Exception as e:
             print(f"[CLIENT {client_id} ERROR] Failed to load {sensor_id}: {e}")
     if not sensor_data_cache:
@@ -91,51 +97,40 @@ def compute_feature_stats(
     client_id: int,
     sensor_data_cache: dict[str, pd.DataFrame],
     feature_cols: list[str],
-    train_end_date: pd.Timestamp | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    print(
-        f"[CLIENT {client_id}] Calculating feature statistics for normalization "
-        f"(train_only={train_end_date is not None})..."
-    )
+    """Calculate normalisation statistics using only TRAIN-phase rows (day 1-20 of each month)."""
+    from src.client.data_pipeline import get_dataset_split
+    print(f"[CLIENT {client_id}] Calculating feature statistics for normalisation (TRAIN phase only)...")
     train_frames: list[pd.DataFrame] = []
     train_rows = 0
     for df in sensor_data_cache.values():
-        if train_end_date is None:
-            train_df = df
-        elif isinstance(df.index, pd.DatetimeIndex):
-            timestamps = pd.to_datetime(df.index)
-            if timestamps.tz is not None:
-                timestamps = timestamps.tz_convert(None)
-            split_ts = pd.Timestamp(train_end_date)
-            if split_ts.tzinfo is not None:
-                split_ts = split_ts.tz_convert(None)
-            train_df = df.loc[timestamps < split_ts]
-        else:
-            split_pos = resolve_split_pos(df, pd.Timestamp(train_end_date))
-            train_df = df.iloc[:split_pos]
-
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise TypeError("compute_feature_stats requires a DatetimeIndex.")
+        timestamps = pd.to_datetime(df.index)
+        train_mask = np.array([get_dataset_split(ts) == "TRAIN" for ts in timestamps])
+        train_df = df[train_mask]
         if not train_df.empty:
             train_frames.append(train_df)
             train_rows += int(len(train_df))
 
     if not train_frames:
         raise RuntimeError(
-            f"Client {client_id} has 0 rows in train window for feature normalization. "
-            "Check split dates and dataset timestamps."
+            f"Client {client_id} has 0 TRAIN-phase rows for feature normalisation. "
+            "Check dataset timestamps and monthly_cycle configuration."
         )
 
     all_combined = pd.concat(train_frames)
     feat_mean = all_combined[feature_cols].mean().values
     feat_std = all_combined[feature_cols].std().values + 1e-9
-    print(f"[CLIENT {client_id}] Normalization stats rows={train_rows}")
+    print(f"[CLIENT {client_id}] Normalisation stats rows={train_rows}")
     return feat_mean, feat_std
+
 
 def build_eval_index_cache(
     *,
     client_id: int,
     sensor_data_cache: dict[str, pd.DataFrame],
-    start_date: pd.Timestamp | None,
-    end_date: pd.Timestamp | None,
+    target_phase: str,
     eval_max_samples: int,
     seq_len: int,
     label: str,
@@ -147,8 +142,7 @@ def build_eval_index_cache(
     for file_path, df in sensor_data_cache.items():
         eval_indices = collect_eval_indices_capped(
             df,
-            start_date=start_date,
-            end_date=end_date,
+            target_phase=target_phase,
             eval_max_samples=eval_max_samples,
             min_history=seq_len,
             horizon=horizon,
@@ -156,7 +150,7 @@ def build_eval_index_cache(
         eval_index_cache[file_path] = eval_indices
         total_eval_samples += int(len(eval_indices))
         if len(eval_indices) > 0:
-            total_eval_positive += int(df["future_3h_rain"].iloc[eval_indices].apply(is_rain).sum())
+            total_eval_positive += int(df[FUTURE_RAIN_COL].iloc[eval_indices].apply(is_rain).sum())
     print(
         f"[CLIENT {client_id}] Fixed {label.lower()} set prepared: "
         f"samples={total_eval_samples} positives={total_eval_positive} "
@@ -173,7 +167,6 @@ def run_train_epoch(
     optimizer,
     client_files: list[str],
     sensor_data_cache: dict[str, pd.DataFrame],
-    split_date: pd.Timestamp,
     train_state: SchedulerState,
     feature_cols: list[str],
     feat_stats: tuple[np.ndarray, np.ndarray],
@@ -198,7 +191,7 @@ def run_train_epoch(
                 optimizer.zero_grad()
                 result = sample_index(
                     df,
-                    split_date,
+                    None,
                     is_training=True,
                     rain_sample_ratio=rain_sample_ratio,
                     min_history=seq_len,
@@ -208,7 +201,7 @@ def run_train_epoch(
                 if result is None:
                     continue
                 target_idx, mode = result
-                target_value = float(df["future_3h_rain"].iloc[target_idx])
+                target_value = float(df[FUTURE_RAIN_COL].iloc[target_idx])
                 log_entry = run_forward_step(
                     stub,
                     client_id,
@@ -271,7 +264,7 @@ def run_eval_epoch(
                 if eval_indices is None or len(eval_indices) == 0:
                     continue
                 for target_idx in eval_indices:
-                    target_value = float(df["future_3h_rain"].iloc[target_idx])
+                    target_value = float(df[FUTURE_RAIN_COL].iloc[target_idx])
                     log_entry = run_forward_step(
                         stub,
                         client_id,

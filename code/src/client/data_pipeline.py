@@ -1,7 +1,33 @@
 import numpy as np
 import pandas as pd
 
+from src.shared.common import cfg
 from src.shared.targets import is_rain
+
+FUTURE_RAIN_COL = "future_rain"
+LEGACY_FUTURE_RAIN_COL = "future_24h_rain"
+
+
+def _resolve_target_col(df: pd.DataFrame) -> str:
+    """Return the preferred target column, with legacy fallback."""
+    if FUTURE_RAIN_COL in df.columns:
+        return FUTURE_RAIN_COL
+    if LEGACY_FUTURE_RAIN_COL in df.columns:
+        return LEGACY_FUTURE_RAIN_COL
+    raise KeyError(
+        f"Missing target column. Expected '{FUTURE_RAIN_COL}' "
+        f"(or legacy '{LEGACY_FUTURE_RAIN_COL}')."
+    )
+
+
+def resolve_horizon(horizon: int | None = None) -> int:
+    """Resolve prediction horizon from arg or config, clamped to >=1."""
+    raw = horizon if horizon is not None else cfg.get("model", {}).get("horizon", 24)
+    try:
+        resolved = int(raw)
+    except (TypeError, ValueError):
+        resolved = 24
+    return max(1, resolved)
 
 
 def partition_client_files(
@@ -32,62 +58,56 @@ def resolve_split_pos(df: pd.DataFrame, split_date: pd.Timestamp) -> int:
     return int(split_pos)
 
 
+def get_dataset_split(ts: pd.Timestamp) -> str:
+    """Monthly cycle logic based on configuration."""
+    train_limit = int(cfg.get("data", {}).get("train_days", 20))
+    val_limit   = train_limit + int(cfg.get("data", {}).get("val_days", 5))
+    day = ts.day
+    if day <= train_limit:
+        return "TRAIN"
+    if day <= val_limit:
+        return "VAL"
+    return "TEST"  # Remaining days
+
+
 def collect_eval_indices(
     df: pd.DataFrame,
     *,
-    start_date: pd.Timestamp | None = None,
-    end_date: pd.Timestamp | None = None,
+    target_phase: str,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
-    """Collect deterministic indices in a [start_date, end_date) time window."""
-    def _to_naive_timestamp(value: pd.Timestamp | None) -> pd.Timestamp | None:
-        if value is None:
-            return None
-        ts = pd.Timestamp(value)
-        return ts.tz_convert(None) if ts.tzinfo is not None else ts
-
+    """Collect indices belonging to a given monthly split phase (TRAIN/VAL/TEST)."""
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError("Monthly cycle splitting requires a DatetimeIndex.")
+    horizon = resolve_horizon(horizon)
     all_indices = np.arange(len(df))
     mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
 
-    if isinstance(df.index, pd.DatetimeIndex):
-        timestamps = pd.to_datetime(df.index)
-        if timestamps.tz is not None:
-            timestamps = timestamps.tz_convert(None)
-        start_ts = _to_naive_timestamp(start_date)
-        end_ts = _to_naive_timestamp(end_date)
-        if start_ts is not None:
-            mask = mask & (timestamps >= start_ts)
-        if end_ts is not None:
-            mask = mask & (timestamps < end_ts)
-    else:
-        if start_date is not None:
-            start_pos = resolve_split_pos(df, _to_naive_timestamp(start_date))
-            mask = mask & (all_indices >= start_pos)
-        if end_date is not None:
-            end_pos = resolve_split_pos(df, _to_naive_timestamp(end_date))
-            mask = mask & (all_indices < end_pos)
+    timestamps = pd.to_datetime(df.index)
+    phase_mask = np.array([get_dataset_split(ts) == target_phase for ts in timestamps])
+    mask = mask & phase_mask
 
-    if "future_3h_rain" in df.columns:
-        valid_target = df["future_3h_rain"].notna().to_numpy()
-        mask = mask & valid_target
+    if FUTURE_RAIN_COL in df.columns:
+        mask = mask & df[FUTURE_RAIN_COL].notna().to_numpy()
+    elif LEGACY_FUTURE_RAIN_COL in df.columns:
+        mask = mask & df[LEGACY_FUTURE_RAIN_COL].notna().to_numpy()
+
     return all_indices[mask]
 
 
 def collect_eval_indices_capped(
     df: pd.DataFrame,
     *,
-    start_date: pd.Timestamp | None = None,
-    end_date: pd.Timestamp | None = None,
+    target_phase: str,
     eval_max_samples: int = 0,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
-    """Collect deterministic eval indices in a time window, with optional fixed cap."""
+    """Collect eval indices for a monthly phase, with optional fixed cap."""
     eval_indices = collect_eval_indices(
         df,
-        start_date=start_date,
-        end_date=end_date,
+        target_phase=target_phase,
         min_history=min_history,
         horizon=horizon,
     )
@@ -99,42 +119,32 @@ def collect_eval_indices_capped(
 
 def collect_test_indices(
     df: pd.DataFrame,
-    split_date: pd.Timestamp,
     *,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
-    """Collect deterministic test indices with valid context and non-NaN targets."""
-    return collect_eval_indices(
-        df,
-        start_date=split_date,
-        end_date=None,
-        min_history=min_history,
-        horizon=horizon,
-    )
+    """Collect TEST-phase indices."""
+    return collect_eval_indices(df, target_phase="TEST", min_history=min_history, horizon=horizon)
 
 
 def collect_test_indices_capped(
     df: pd.DataFrame,
-    split_date: pd.Timestamp,
     *,
     eval_max_samples: int = 0,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
 ) -> np.ndarray:
-    """Collect deterministic test indices, with optional fixed-size cap per sensor."""
-    test_indices = collect_eval_indices_capped(
+    """Collect TEST-phase indices with optional cap."""
+    return collect_eval_indices_capped(
         df,
-        start_date=split_date,
-        end_date=None,
+        target_phase="TEST",
         eval_max_samples=eval_max_samples,
         min_history=min_history,
         horizon=horizon,
     )
-    return test_indices
 
 
-def load_sensor_data(file_path: str) -> pd.DataFrame:
+def load_sensor_data(file_path: str, *, horizon: int | None = None) -> pd.DataFrame:
     """
     Reads a single sensor parquet file, ensures a DatetimeIndex,
     and computes the future rainfall target column.
@@ -144,7 +154,8 @@ def load_sensor_data(file_path: str) -> pd.DataFrame:
         df.set_index("Timestamp", inplace=True)
         df.index = pd.to_datetime(df.index)
 
-    df["future_3h_rain"] = df["Rain"].shift(-3).rolling(window=3).sum()
+    horizon = resolve_horizon(horizon)
+    df[FUTURE_RAIN_COL] = df["Rain"].shift(-horizon).rolling(window=horizon).sum()
     return df
 
 
@@ -155,21 +166,31 @@ def sample_index(
     is_training: bool = True,
     rain_sample_ratio: float | None = None,
     min_history: int = 24,
-    horizon: int = 3,
+    horizon: int | None = None,
     rain_threshold: float | None = None,
 ) -> tuple[int, str] | None:
     """Pick one train/test sample with optional rain oversampling."""
-    split_pos = resolve_split_pos(df, split_date)
-
+    horizon = resolve_horizon(horizon)
     all_indices = np.arange(len(df))
-    base_mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
 
-    if is_training:
-        base_mask = base_mask & (all_indices < split_pos)
-    else:
-        base_mask = base_mask & (all_indices >= split_pos)
+    # Monthly cycle logic
+    target_phase = "TRAIN" if is_training else "TEST"
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError("Predicting precipitation requires a DatetimeIndex.")
+    
+    timestamps = pd.to_datetime(df.index)
+    valid_mask = (all_indices >= min_history) & (all_indices < len(df) - horizon)
+    
+    # Filter indices that match the target phase
+    possible_indices = all_indices[valid_mask]
+    phase_compliant = [idx for idx in possible_indices if get_dataset_split(timestamps[idx]) == target_phase]
+    eligible_indices = np.array(phase_compliant)
+    
+    if len(eligible_indices) == 0:
+        return None
 
-    target_arr = pd.to_numeric(df["future_3h_rain"], errors="coerce").to_numpy(dtype=float)
+    target_col = _resolve_target_col(df)
+    target_arr = pd.to_numeric(df[target_col], errors="coerce").to_numpy(dtype=float)
     valid_target = np.isfinite(target_arr)
     rain_mask = np.zeros_like(valid_target, dtype=bool)
     rain_mask[valid_target] = np.array(
@@ -178,8 +199,9 @@ def sample_index(
     )
     dry_mask = valid_target & ~rain_mask
 
-    rainy_pos = all_indices[base_mask & rain_mask]
-    dry_pos = all_indices[base_mask & dry_mask]
+    # Intersect monthly-eligible indices with data-quality masks
+    rainy_pos = np.intersect1d(eligible_indices, np.where(rain_mask)[0])
+    dry_pos = np.intersect1d(eligible_indices, np.where(dry_mask)[0])
 
     if rain_sample_ratio is None:
         rain_sample_ratio = 0.5 if is_training else 0.0

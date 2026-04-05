@@ -54,13 +54,47 @@ def resolve_device() -> torch.device:
 
 
 def grpc_channel_options() -> list[tuple[str, int]]:
-    """Build grpc max message size options from config."""
+    """Build gRPC channel options: message size limits + keepalive for real-network stability."""
     max_mb = int(cfg.get("grpc", {}).get("max_message_mb", 50))
     max_bytes = max_mb * 1024 * 1024
     return [
         ("grpc.max_send_message_length", max_bytes),
         ("grpc.max_receive_message_length", max_bytes),
+        # Send a ping every 30 s even when there are no active RPCs, so both sides
+        # detect a dead TCP connection before the next training step hits it.
+        ("grpc.keepalive_time_ms", 30_000),
+        # If the peer does not respond to the ping within 10 s, declare the link dead.
+        ("grpc.keepalive_timeout_ms", 10_000),
+        # Allow pings even when no RPC is in flight (required for the above to work).
+        ("grpc.keepalive_permit_without_calls", True),
+        ("grpc.http2.max_pings_without_data", 0),
     ]
+
+
+def create_grpc_channel(address: str):
+    """
+    Create a gRPC channel to *address* with keepalive options.
+
+    When ``grpc.tls_enabled`` is true in config, an SSL/TLS channel is returned
+    and the server certificate (or CA bundle) is read from ``grpc.tls_cert_path``.
+    Otherwise an insecure channel is returned (safe when running over Tailscale).
+    """
+    import grpc as _grpc  # local import to avoid circular dependency at module level
+
+    options = grpc_channel_options()
+    grpc_cfg = cfg.get("grpc", {})
+
+    if grpc_cfg.get("tls_enabled", False):
+        ca_cert_path = grpc_cfg.get("tls_cert_path")
+        if ca_cert_path:
+            with open(ca_cert_path, "rb") as fh:
+                root_certificates = fh.read()
+        else:
+            root_certificates = None  # fall back to system CA bundle
+        credentials = _grpc.ssl_channel_credentials(root_certificates=root_certificates)
+        return _grpc.secure_channel(address, credentials, options=options)
+
+    return _grpc.insecure_channel(address, options=options)
 
 
 def resolve_server_address() -> str:

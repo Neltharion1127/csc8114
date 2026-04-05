@@ -49,6 +49,14 @@ def _find_latest_log() -> Path:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Constants used for dashboard labels/heuristics
+TRAIN_DAYS = 20
+VAL_DAYS = 5
+TEST_DAYS = 5
+SEQ_LEN = 48
+HORIZON = 1
+DEVICE = "cpu"
+
 def plot_server_metrics(log_path: Path):
     df = pd.read_csv(log_path)
     print(f"[INFO] Loaded {len(df):,} rows from {log_path.name}")

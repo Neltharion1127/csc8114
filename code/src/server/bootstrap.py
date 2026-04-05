@@ -15,15 +15,34 @@ def run_server(servicer) -> None:
     )
     fsl_pb2_grpc.add_FSLServiceServicer_to_server(servicer, server)
 
-    server_port = cfg.get("grpc", {}).get("server_port", 50051)
-    bind_host = os.getenv("FSL_SERVER_BIND_HOST", str(cfg.get("grpc", {}).get("bind_host", "[::]")))
+    grpc_cfg = cfg.get("grpc", {})
+    server_port = grpc_cfg.get("server_port", 50051)
+    bind_host = os.getenv("FSL_SERVER_BIND_HOST", str(grpc_cfg.get("bind_host", "[::]")))
     bind_addr = f"{bind_host}:{server_port}"
-    bind_result = server.add_insecure_port(bind_addr)
-    if bind_result == 0 and bind_host == "[::]":
-        fallback_addr = f"0.0.0.0:{server_port}"
-        print(f"[SERVER] Failed to bind {bind_addr}; retrying with {fallback_addr}")
-        bind_result = server.add_insecure_port(fallback_addr)
-        bind_addr = fallback_addr
+    tls_enabled = grpc_cfg.get("tls_enabled", False)
+
+    if tls_enabled:
+        cert_path = grpc_cfg.get("tls_cert_path")
+        key_path = grpc_cfg.get("tls_key_path")
+        if not cert_path or not key_path:
+            raise RuntimeError(
+                "grpc.tls_enabled is true but tls_cert_path / tls_key_path are not set in config."
+            )
+        with open(cert_path, "rb") as fh:
+            cert_pem = fh.read()
+        with open(key_path, "rb") as fh:
+            key_pem = fh.read()
+        credentials = grpc.ssl_server_credentials([(key_pem, cert_pem)])
+        bind_result = server.add_secure_port(bind_addr, credentials)
+        print(f"[SERVER] TLS enabled (cert={cert_path})")
+    else:
+        bind_result = server.add_insecure_port(bind_addr)
+        if bind_result == 0 and bind_host == "[::]":
+            fallback_addr = f"0.0.0.0:{server_port}"
+            print(f"[SERVER] Failed to bind {bind_addr}; retrying with {fallback_addr}")
+            bind_result = server.add_insecure_port(fallback_addr)
+            bind_addr = fallback_addr
+
     if bind_result == 0:
         raise RuntimeError(
             f"Failed to bind gRPC server on {bind_addr}. "

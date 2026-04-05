@@ -5,6 +5,7 @@ import time
 import pandas as pd
 
 from src.shared.common import cfg, project_root
+from src.shared.config_artifacts import build_config_ref, build_minimal_config_snapshot, resolve_config_snapshot_policy
 from src.shared.targets import is_rain
 
 
@@ -72,7 +73,9 @@ def save_results(
         "avg_payload_bytes": avg_bytes,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),
-        "cfg": cfg,
+        "config_snapshot_policy": resolve_config_snapshot_policy(),
+        "config_ref": build_config_ref(),
+        "config_minimal": build_minimal_config_snapshot(),
     }
     meta_path = filepath.replace(".csv", "_meta.json")
     try:
@@ -115,6 +118,8 @@ def save_progress(
         "avg_payload_bytes": avg_bytes,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),
+        "config_snapshot_policy": resolve_config_snapshot_policy(),
+        "config_ref": build_config_ref(),
         "is_partial": True,
     }
     meta_path = os.path.join(output_dir, f"training_log_client{client_id}_progress_meta.json")

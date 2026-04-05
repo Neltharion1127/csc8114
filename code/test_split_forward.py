@@ -39,12 +39,13 @@ def test_fsl_communication_loop():
     
     # [SERVER SIDE]
     # Server executes forward pass
+    # ServerHead returns (rain_logit, rain_amount); use the classifier head for the loss.
     server_optim.zero_grad()
-    prediction = server_model(received_activation)
-    print(f"Server Prediction Shape: {prediction.shape}")
-    
+    rain_logit, _ = server_model(received_activation)
+    print(f"Server Prediction Shape: {rain_logit.shape}")
+
     # Server calculates Loss
-    loss = criterion(prediction, mock_y)
+    loss = criterion(rain_logit, mock_y)
     print(f"Loss computed: {loss.item():.4f}")
     
     # Server executes backward pass

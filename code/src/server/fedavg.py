@@ -10,7 +10,7 @@ from typing import Any
 import torch
 
 from proto import fsl_pb2
-from src.shared.common import cfg
+from src.shared.config_artifacts import build_config_ref, build_config_snapshot
 from src.shared.serialization import tensor_to_bytes
 
 
@@ -289,6 +289,7 @@ class FedAvgCoordinator:
         self.current_round += 1
 
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        config_snapshot, snapshot_policy = build_config_snapshot()
         server_ckpt = {
             "round": self.current_round,
             "model_state_dict": server_model.state_dict(),
@@ -296,11 +297,14 @@ class FedAvgCoordinator:
             "config": {
                 "hidden_size": self.hidden_size,
             },
-            "config_snapshot": copy.deepcopy(cfg),
+            "config_snapshot_policy": snapshot_policy,
+            "config_ref": build_config_ref(),
             "session_id": self.session_id,
             "aggregated_client_ids": client_ids,
             "aggregation_reason": reason,
         }
+        if config_snapshot is not None:
+            server_ckpt["config_snapshot"] = config_snapshot
         server_model_path = os.path.join(
             self.session_dir,
             f"server_head_round_{self.current_round}_{stamp}.pth",

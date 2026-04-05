@@ -7,11 +7,22 @@ class ClientLSTM(nn.Module):
     It is responsible for taking raw D-dimensional weather features over a time window
     and extracting abstract 'smashed activations' (hidden states). 
     """
-    def __init__(self, input_size=5, hidden_size=64, num_layers=1):
+    def __init__(
+        self,
+        input_size=5,
+        hidden_size=64,
+        num_layers=1,
+        lstm_dropout=0.3,
+        dropout=None,
+    ):
         super(ClientLSTM, self).__init__()
+        if dropout is not None:
+            # Backward-compatible alias for legacy call sites.
+            lstm_dropout = dropout
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.lstm_dropout = float(lstm_dropout)
         
         # Core feature extractor 
         self.lstm = nn.LSTM(
@@ -19,7 +30,7 @@ class ClientLSTM(nn.Module):
             hidden_size=hidden_size, 
             num_layers=num_layers, 
             batch_first=True,
-            dropout=0.3 if num_layers > 1 else 0.0
+            dropout=self.lstm_dropout if num_layers > 1 else 0.0
         )
         
     def forward(self, x):

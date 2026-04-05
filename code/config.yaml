@@ -4,12 +4,15 @@ compression:
 console:
   log_step_details: false
   log_server_requests: false
+artifacts:
+  # none|minimal|full: controls checkpoint/meta config payload size.
+  config_snapshot_policy: minimal
 data:
   processed_dir: dataset/processed
-  test_days: 14
-  val_days: 14
-  train_ratio: 0.7
-  val_ratio: 0.15
+  # Monthly cyclic splitting
+  train_days: 20
+  val_days: 5
+  # test_days: Remaining days of the month
   # Feature columns consumed by model/data pipeline (preferred location)
   feature_cols:
     - Temperature
@@ -18,25 +21,35 @@ data:
     - Wind Speed
     - Rain
 federated:
-  num_clients: 3
+  num_clients: 11
+  # 12 parquet files: client 1-10 get 1 file each; last client gets remaining files
   rho: 1
+  # How long the server barrier waits for all active clients to submit weights.
+  # 15s was fine for local Docker; real Pi → VPS latency needs a much larger window.
+  round_timeout_sec: 120
 grpc:
   max_message_mb: 50
   server_host: fsl-server
   # server_host: localhost
   server_port: 50051
+  # TLS: set tls_enabled: true and provide cert/key paths for encrypted transport.
+  # When running over Tailscale the WireGuard layer already encrypts traffic,
+  # so tls_enabled: false is acceptable for that topology.
+  tls_enabled: false
+  # tls_cert_path: /app/certs/server.crt   # server + client (CA cert)
+  # tls_key_path:  /app/certs/server.key   # server only
 model:
-  dropout: 0.3
+  lstm_dropout: 0.3
   hidden_size: 64
   server_head_width: 64
   server_head_dropout: 0.1
   horizon: 1
   input_size: 5
   num_layers: 2
-  seq_len: 24
-output:
-  metrics_dir: /app/outputs/metrics
-  plots_dir: /app/outputs/plots
+  seq_len: 48
+# output:
+#   metrics_dir: /app/outputs/metrics  # unused (runtime writes to results/)
+#   plots_dir: /app/outputs/plots      # unused (runtime writes to results/)
 profiler:
   enabled: true
   latency_generator:
@@ -58,7 +71,6 @@ scheduler:
   topk_multiplier: 1.5
   latency_ema_alpha: 0.2
 experiment_matrix:
-  enabled: false
   seeds: [42, 52, 62]
   runner:
     backend: native
@@ -299,7 +311,7 @@ experiment_matrix:
           rho: 1
 training:
   seed: 42
-  batch_size: 32
+  # batch_size: 32  # unused (main training loop is step-based RPC, not DataLoader batch training)
   classification_loss_weight: 2.0
   classification_positive_weight: 1.1
   classification_loss_type: focal # weighted_bce | focal
@@ -326,7 +338,7 @@ server:
 
 data_download:
   start_date: "2023-01-01T00:00:00"
-  end_date: "2026-3-10T00:00:00"      # up to today
+  end_date: "2026-03-31T00:00:00"
   # Legacy location kept for backward compatibility (new code prefers data.feature_cols)
   feature_cols:
     - Temperature
@@ -338,5 +350,4 @@ data_download:
   # bbox: [-1.71, 54.95, -1.54, 55.03]
   # Data download window settings
   raw_out_dir: dataset
-  raw_filename: newcastle_rainfall_data.csv
-
+  # raw_filename: newcastle_rainfall_data.csv  # unused
