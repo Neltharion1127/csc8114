@@ -1,276 +1,427 @@
+# ═══════════════════════════════════════════════════════════════════════════════
 # FSL Project Makefile
-# This file turns complex command lines into simple, one-word commands.
+#
+# Command groups:
+#   (no prefix)   Setup utilities  — compile-proto, download-data
+#   docker-*      Local Docker dev — single-machine, all containers on one host
+#   native-*      Local Python dev — no Docker, direct process execution
+#   dist-*        Distributed      — VPS server + Raspberry Pi clients
+#   eval-*        Evaluation       — test-set metrics and batch reports
+#   plot-*        Visualisation    — training curves, confusion matrices
+#   matrix*       Experiment matrix— run the 14-scenario ablation suite
+# ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help compile-proto download-data run-network test-network run-native run-native-server run-native-client run-native-clients plot plot-latest plot-session plot-confusion eval-latest eval-session eval-batch matrix matrix-dry-run clean-native check-native-port clean clean-all build-client build-client-arm64 deploy-clients
+.PHONY: help compile-proto download-data \
+        docker-run docker-build docker-clean \
+        native-run native-server native-clients native-check-port native-clean \
+        dist-build dist-deploy dist-deploy-check dist-start dist-logs \
+        eval-latest eval-session eval-batch \
+        plot-latest plot-session plot-confusion \
+        matrix matrix-dry-run
 
+# ─── Variables ────────────────────────────────────────────────────────────────
+
+# Read num_clients straight from config so it stays in sync automatically
 DEFAULT_NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
-NUM_CLIENTS ?= $(DEFAULT_NUM_CLIENTS)
-REGISTRY ?= cindyncl26
-CLIENT_IMAGE ?= $(REGISTRY)/fsl-client:latest
-SERVER_COLOR := \033[1;34m
-RESET_COLOR := \033[0m
-SERVER_HOST ?= 127.0.0.1
-SERVER_PORT ?= 50051
-SERVER_DEVICE ?= cpu
-CLIENT_DEVICE ?= mps
-STARTUP_TIMEOUT ?= 60
-PLOT_DEVICE ?= cpu
-AUTO_PLOT ?= 0
-UV_CACHE_DIR ?= .uv-cache
-UV := UV_CACHE_DIR=$(UV_CACHE_DIR) UV_LINK_MODE=copy uv
-PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
+NUM_CLIENTS     ?= $(DEFAULT_NUM_CLIENTS)
+
+# Docker image coordinates
+REGISTRY        ?= cindyncl26
+CLIENT_IMAGE    ?= $(REGISTRY)/fsl-client:latest
+IMAGE_TAG       ?= latest           # Override: make dist-start IMAGE_TAG=sha-abc1234
+
+# Remote hosts
+VPS_USER        ?= ubuntu
+VPS_HOST_DEPLOY ?= 51.254.207.168
+
+# Network
+SERVER_HOST     ?= 0.0.0.0
+SERVER_PORT     ?= 50051
+
+# Devices (cpu / cuda / mps)
+SERVER_DEVICE   ?= cpu
+CLIENT_DEVICE   ?= mps
+
+# Timing
+STARTUP_TIMEOUT ?= 60               # Seconds to wait for server readiness
+
+# Analysis
+PLOT_DEVICE     ?= cpu
+AUTO_PLOT       ?= 0                # Set to 1 to auto-plot after a run
+
+# Python / uv
+UV_CACHE_DIR    ?= .uv-cache
+UV              := UV_CACHE_DIR=$(UV_CACHE_DIR) UV_LINK_MODE=copy uv
+PYTHON          ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
+
+# Terminal colours (used in log multiplexer)
+SERVER_COLOR    := \033[1;34m
+RESET_COLOR     := \033[0m
+
+# ─── Help ─────────────────────────────────────────────────────────────────────
 
 help:
-	@echo "Available commands:"
-	@echo "  make compile-proto   - Re-compiles the fsl.proto file into Python code"
-	@echo "  make download-data   - Downloads weather data into dataset/processed"
-	@echo "  make run-network     - Cleans, builds, and starts Server + $(NUM_CLIENTS) Clients"
-	@echo "  make test-network    - Backward-compatible alias for run-network"
-	@echo "  make run-native      - Start native server first, then native clients"
-	@echo "  make run-native-server   - Start native server (no Docker)"
-	@echo "  make run-native-client   - One command to start 1..NUM_CLIENTS native clients"
-	@echo "  make plot SESSION=<id> - Manually plot one session"
-	@echo "  make plot-latest     - Plot latest session (training curve + server metrics)"
-	@echo "  make plot-session SESSION=<id> - Plot a specific session"
-	@echo "  make plot-confusion SESSION=<id> - Plot confusion matrices for one session"
-	@echo "  AUTO_PLOT=1          - Enable auto-plot after run-native/run-network (default: 0)"
-	@echo "  make eval-latest     - Run structured evaluation for latest bestweights session"
-	@echo "  make eval-session SESSION=<id> - Run structured evaluation for one session"
-	@echo "  make eval-batch [FORCE_THRESHOLD=0.34] [REPORT_TAG=fixedthr034] - Batch run evaluation over sessions"
-	@echo "  make matrix [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Run experiment matrix from config.yaml"
-	@echo "  make matrix-dry-run [ONLY=M01,M02] [MAX_RUNS=N] [BACKEND=native|docker] - Print matrix plan only"
-	@echo "  make clean-native    - Kill native server/client Python processes"
-	@echo "  make clean           - Removes all Docker containers and network caches"
+	@echo ""
+	@echo "Usage: make <target> [VAR=value ...]"
+	@echo ""
+	@echo "── Setup ──────────────────────────────────────────────────────"
+	@echo "  compile-proto              Recompile fsl.proto → Python stubs"
+	@echo "  download-data              Fetch weather data into dataset/processed/"
+	@echo ""
+	@echo "── Local Docker (docker-*) ─────────────────────────────────────"
+	@echo "  docker-run  [NUM_CLIENTS=N]  Build + start server & N clients in Docker"
+	@echo "  docker-build                 Build local amd64 image (no push)"
+	@echo "  docker-clean                 Stop & remove all FSL containers"
+	@echo ""
+	@echo "── Local Native (native-*) ─────────────────────────────────────"
+	@echo "  native-run  [NUM_CLIENTS=N]  Start server then all clients as Python processes"
+	@echo "  native-server                Start only the server process"
+	@echo "  native-clients               Start only the client processes (server must be up)"
+	@echo "  native-clean                 Kill all native server/client processes"
+	@echo ""
+	@echo "── Distributed Pi (dist-*) ─────────────────────────────────────"
+	@echo "  dist-build   [IMAGE_TAG=x]   Build amd64+arm64 image and push to Docker Hub"
+	@echo "  dist-deploy  [IMAGE_TAG=x]   Ansible: deploy image to all Pis (Tailscale)"
+	@echo "  dist-deploy-check            Ansible dry-run: preview changes without applying"
+	@echo "  dist-start   [IMAGE_TAG=x]   Full experiment: restart VPS server → wait → deploy Pis"
+	@echo "  dist-logs                    Tail live server logs from VPS"
+	@echo ""
+	@echo "── Evaluation (eval-*) ─────────────────────────────────────────"
+	@echo "  eval-latest                  Evaluate the most recent checkpoint session"
+	@echo "  eval-session SESSION=<id>    Evaluate a specific session"
+	@echo "  eval-batch   [FORCE_THRESHOLD=0.34] [REPORT_TAG=tag]  Batch evaluation"
+	@echo ""
+	@echo "── Plots (plot-*) ──────────────────────────────────────────────"
+	@echo "  plot-latest                  Training curve + server metrics for latest session"
+	@echo "  plot-session SESSION=<id>    Same for a specific session"
+	@echo "  plot-confusion SESSION=<id>  Confusion matrices for a specific session"
+	@echo ""
+	@echo "── Experiment Matrix (matrix*) ─────────────────────────────────"
+	@echo "  matrix       [ONLY=M01,M02] [MAX_RUNS=N]  Run ablation scenarios"
+	@echo "  matrix-dry-run               Print the run plan without executing"
+	@echo ""
 
-# Compiles the gRPC protocol definitions
+# ═══════════════════════════════════════════════════════════════════════════════
+# SETUP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Recompile proto/fsl.proto into proto/fsl_pb2*.py — only needed after editing the .proto
 compile-proto:
 	$(UV) run python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. proto/fsl.proto
-	@echo "fsl.proto compiled successfully!"
+	@echo "fsl.proto compiled successfully."
 
-# Downloads the latest configured weather dataset into dataset/processed
+# Download 3 years of hourly weather from Open-Meteo for all configured stations
 download-data:
 	$(UV) run python -m src.data.data_download_openmeteo
 
-# Runs a clean split-learning session from scratch
-run-network: clean
-	@echo "Starting Split Learning with $(NUM_CLIENTS) clients..."
-	docker compose build
-# 1. 先背景啟動 Server
-	docker compose up -d fsl-server
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL DOCKER  (docker-*)
+# Single-machine simulation: server + N clients all run as Docker containers
+# on the same host, communicating over a Docker bridge network.
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# 2. 逐個啟動 Client，明確注入 CLIENT_ID，避免和 Docker 內部 hostname 混淆
+# Build image for the local host architecture only (no push, for quick local tests)
+docker-build:
+	docker build -f Dockerfile -t $(CLIENT_IMAGE) .
+
+# Clean slate run: tear down any leftover containers, rebuild, then start everything.
+# Server starts first; clients are launched individually so CLIENT_ID is injected
+# explicitly rather than derived from the Docker-assigned hostname.
+docker-run: docker-clean
+	@echo "Starting $(NUM_CLIENTS) clients in Docker..."
+	docker compose build
+	docker compose up -d fsl-server
 	@for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		echo "Starting client $$i..."; \
 		docker compose run -d --no-deps --name fsl-client-$$i -e CLIENT_ID=$$i fsl-client; \
 	done
-
-# 3. 顯示目前運行中的容器狀態
-	@(docker logs -f fsl-server 2>&1 | awk '{printf "$(SERVER_COLOR)%-13s$(RESET_COLOR) | %s\n", "fsl-server", $$0; fflush()}') & \
+	@(docker logs -f fsl-server 2>&1 | awk \
+		'{printf "$(SERVER_COLOR)%-13s$(RESET_COLOR) | %s\n", "fsl-server", $$0; fflush()}') & \
 	for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		case $$((($$i - 1) % 6)) in \
-			0) color="\033[1;32m" ;; \
-			1) color="\033[1;33m" ;; \
-			2) color="\033[1;35m" ;; \
-			3) color="\033[1;36m" ;; \
-			4) color="\033[1;31m" ;; \
-			5) color="\033[1;37m" ;; \
+			0) color="\033[1;32m" ;; 1) color="\033[1;33m" ;; \
+			2) color="\033[1;35m" ;; 3) color="\033[1;36m" ;; \
+			4) color="\033[1;31m" ;; 5) color="\033[1;37m" ;; \
 		esac; \
-		(docker logs -f fsl-client-$$i 2>&1 | awk -v prefix=$$(printf "fsl-client-%d" $$i) -v color="$$color" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, prefix, reset, $$0; fflush()}') & \
+		(docker logs -f fsl-client-$$i 2>&1 | awk \
+			-v p=$$(printf "fsl-client-%d" $$i) -v c="$$color" -v r="$(RESET_COLOR)" \
+			'{printf "%s%-13s%s | %s\n", c, p, r, $$0; fflush()}') & \
 	done; \
 	wait; \
-	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; fi
 
-# Backward-compatible alias
-test-network: run-network
-# Cleans up the Docker environment
-clean:
+# Stop and remove all FSL containers and Docker networks
+docker-clean:
 	docker compose down -v --remove-orphans
 	@echo "Cleaned up all FSL Docker containers and networks."
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL NATIVE  (native-*)
+# Run server and clients as plain Python processes on the local machine.
+# No Docker overhead — ideal for rapid iteration and debugging.
+# ═══════════════════════════════════════════════════════════════════════════════
 
-run-native-server:
-	@echo "Starting native server on $(SERVER_HOST):$(SERVER_PORT) with device=$(SERVER_DEVICE)"
-	@$(MAKE) check-native-port
-	PYTHONUNBUFFERED=1 FSL_DEVICE=$(SERVER_DEVICE) FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_BIND_HOST=$(SERVER_HOST) FSL_SERVER_PORT=$(SERVER_PORT) \
+# Start only the gRPC server; blocks until you Ctrl-C
+native-server:
+	@echo "Starting native server on $(SERVER_HOST):$(SERVER_PORT) [device=$(SERVER_DEVICE)]"
+	@$(MAKE) native-check-port
+	PYTHONUNBUFFERED=1 \
+	FSL_DEVICE=$(SERVER_DEVICE) \
+	FSL_SERVER_HOST=$(SERVER_HOST) \
+	FSL_SERVER_BIND_HOST=$(SERVER_HOST) \
+	FSL_SERVER_PORT=$(SERVER_PORT) \
 		$(PYTHON) -u -m src.nodes.server_node
 
-run-native-client:
-	@echo "Starting $(NUM_CLIENTS) native clients -> $(SERVER_HOST):$(SERVER_PORT), device=$(CLIENT_DEVICE)"
+# Start all clients in parallel (server must already be running)
+native-clients:
+	@echo "Starting $(NUM_CLIENTS) native clients → $(SERVER_HOST):$(SERVER_PORT) [device=$(CLIENT_DEVICE)]"
 	@pids=""; \
 	trap 'kill $$pids 2>/dev/null || true' INT TERM EXIT; \
 	for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		case $$((($$i - 1) % 6)) in \
-			0) color="\033[1;32m" ;; \
-			1) color="\033[1;33m" ;; \
-			2) color="\033[1;35m" ;; \
-			3) color="\033[1;36m" ;; \
-			4) color="\033[1;31m" ;; \
-			5) color="\033[1;37m" ;; \
+			0) color="\033[1;32m" ;; 1) color="\033[1;33m" ;; \
+			2) color="\033[1;35m" ;; 3) color="\033[1;36m" ;; \
+			4) color="\033[1;31m" ;; 5) color="\033[1;37m" ;; \
 		esac; \
 		( \
-			PYTHONUNBUFFERED=1 CLIENT_ID=$$i FSL_DEVICE=$(CLIENT_DEVICE) FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_PORT=$(SERVER_PORT) \
+			PYTHONUNBUFFERED=1 CLIENT_ID=$$i \
+			FSL_DEVICE=$(CLIENT_DEVICE) \
+			FSL_SERVER_HOST=$(SERVER_HOST) \
+			FSL_SERVER_PORT=$(SERVER_PORT) \
 			$(PYTHON) -u -m src.nodes.client_node 2>&1 | \
-			awk -v prefix=$$(printf "client-%d" $$i) -v color="$$color" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, prefix, reset, $$0; fflush()}' \
+			awk -v p=$$(printf "client-%d" $$i) -v c="$$color" -v r="$(RESET_COLOR)" \
+				'{printf "%s%-13s%s | %s\n", c, p, r, $$0; fflush()}' \
 		) & \
 		pids="$$pids $$!"; \
 	done; \
 	wait $$pids; \
-	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; fi
+
+# One-shot: start server, wait for it to be ready, then start all clients.
+# Ctrl-C kills everything cleanly via the trap.
+native-run:
+	@echo "Starting native stack: server($(SERVER_DEVICE)) + $(NUM_CLIENTS) clients($(CLIENT_DEVICE))"
+	@$(MAKE) native-check-port
+	@set -e; \
+	pids=""; \
+	trap 'kill $$pids 2>/dev/null || true' INT TERM EXIT; \
+	( \
+		PYTHONUNBUFFERED=1 FSL_DEVICE=$(SERVER_DEVICE) \
+		FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_BIND_HOST=$(SERVER_HOST) \
+		FSL_SERVER_PORT=$(SERVER_PORT) \
+		$(PYTHON) -u -m src.nodes.server_node 2>&1 | \
+		awk -v c="$(SERVER_COLOR)" -v r="$(RESET_COLOR)" \
+			'{printf "%s%-13s%s | %s\n", c, "server", r, $$0; fflush()}' \
+	) & \
+	server_pid=$$!; pids="$$server_pid"; \
+	echo "Waiting for server at $(SERVER_HOST):$(SERVER_PORT) (timeout $(STARTUP_TIMEOUT)s)..."; \
+	ready=0; \
+	for _ in $$(seq 1 $(STARTUP_TIMEOUT)); do \
+		if python -c \
+			'import socket,sys; s=socket.socket(); s.settimeout(1); s.connect((sys.argv[1],int(sys.argv[2]))); s.close()' \
+			"$(SERVER_HOST)" "$(SERVER_PORT)" >/dev/null 2>&1; then \
+			ready=1; break; \
+		fi; \
+		sleep 1; \
+	done; \
+	if [ "$$ready" -ne 1 ]; then \
+		echo "Server did not become ready in time. Aborting."; \
+		kill $$pids 2>/dev/null || true; exit 1; \
+	fi; \
+	for i in $$(seq 1 $(NUM_CLIENTS)); do \
+		case $$((($$i - 1) % 6)) in \
+			0) color="\033[1;32m" ;; 1) color="\033[1;33m" ;; \
+			2) color="\033[1;35m" ;; 3) color="\033[1;36m" ;; \
+			4) color="\033[1;31m" ;; 5) color="\033[1;37m" ;; \
+		esac; \
+		( \
+			PYTHONUNBUFFERED=1 CLIENT_ID=$$i \
+			FSL_DEVICE=$(CLIENT_DEVICE) \
+			FSL_SERVER_HOST=$(SERVER_HOST) \
+			FSL_SERVER_PORT=$(SERVER_PORT) \
+			$(PYTHON) -u -m src.nodes.client_node 2>&1 | \
+			awk -v p=$$(printf "client-%d" $$i) -v c="$$color" -v r="$(RESET_COLOR)" \
+				'{printf "%s%-13s%s | %s\n", c, p, r, $$0; fflush()}' \
+		) & \
+		pids="$$pids $$!"; \
+	done; \
+	wait $$pids; \
+	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; fi
+
+# Guard: fail early if the server port is already occupied
+native-check-port:
+	@if lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P >/dev/null 2>&1; then \
+		echo "Port $(SERVER_PORT) already in use. Run 'make native-clean' first."; \
+		lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P; \
+		exit 1; \
+	fi
+
+# Kill any lingering native server/client Python processes
+native-clean:
+	@pkill -f "src.nodes.client_node" 2>/dev/null || true
+	@pkill -f "src.nodes.server_node" 2>/dev/null || true
+	@echo "Native processes stopped."
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DISTRIBUTED  (dist-*)
+# Real deployment: server on a remote VPS, clients on Raspberry Pis over
+# a Tailscale overlay network.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Build a multi-architecture image (amd64 for VPS + arm64 for Pi) and push it
+# to Docker Hub. Requires `docker buildx` with a multi-platform builder set up.
+# Override IMAGE_TAG to version-pin the build, e.g. make dist-build IMAGE_TAG=sha-abc1234
+dist-build:
+	docker buildx build \
+	  --no-cache \
+	  --platform linux/amd64,linux/arm64 \
+	  -f Dockerfile \
+	  -t $(REGISTRY)/fsl-client:$(IMAGE_TAG) \
+	  --push .
+
+# Deploy the specified image to all 11 Pis via Ansible over Tailscale.
+# Uses inventory.taisale.ini (100.x.x.x Tailscale IPs).
+dist-deploy:
+	ansible-playbook ansible/deploy_client.yml \
+	  -i ansible/inventory.taisale.ini \
+	  --extra-vars "image_tag=$(IMAGE_TAG)"
+
+# Dry-run: show what Ansible would change without touching any Pi
+dist-deploy-check:
+	ansible-playbook ansible/deploy_client.yml \
+	  -i ansible/inventory.taisale.ini \
+	  --extra-vars "image_tag=$(IMAGE_TAG)" \
+	  --check
+
+# Full experiment launch in three steps:
+#   1. SSH into VPS → pull image → replace the running server container
+#   2. Poll VPS_HOST_DEPLOY:SERVER_PORT until gRPC port is open (or timeout)
+#   3. Ansible: pull same image on every Pi and restart the client container
+#
+# Usage:
+#   make dist-start                        # uses IMAGE_TAG=latest
+#   make dist-start IMAGE_TAG=sha-a1b2c3   # pins a specific build
+dist-start:
+	@echo "=== [1/3] Restarting server on VPS (image=$(IMAGE_TAG)) ==="
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
+	  docker pull $(REGISTRY)/fsl-client:$(IMAGE_TAG) && \
+	  docker stop fsl-server 2>/dev/null || true && \
+	  docker rm   fsl-server 2>/dev/null || true && \
+	  docker run -d \
+	    --name fsl-server \
+	    --restart unless-stopped \
+	    -p $(SERVER_PORT):$(SERVER_PORT) \
+	    -e PYTHONUNBUFFERED=1 \
+	    -e PYTHONPATH=/app \
+	    -e FSL_DEVICE=cpu \
+	    -v /home/$(VPS_USER)/bestweights:/app/bestweights \
+	    -v /home/$(VPS_USER)/results:/app/results \
+	    $(REGISTRY)/fsl-client:$(IMAGE_TAG) \
+	    python src/nodes/server_node.py && \
+	  echo '[VPS] Server container started.'"
+	@echo "=== [2/3] Waiting for server at $(VPS_HOST_DEPLOY):$(SERVER_PORT) (timeout=$(STARTUP_TIMEOUT)s) ==="
+	@ready=0; \
+	for i in $$(seq 1 $(STARTUP_TIMEOUT)); do \
+		if python -c \
+			'import socket,sys; s=socket.socket(); s.settimeout(1); s.connect((sys.argv[1],int(sys.argv[2]))); s.close()' \
+			"$(VPS_HOST_DEPLOY)" "$(SERVER_PORT)" >/dev/null 2>&1; then \
+			ready=1; break; \
+		fi; \
+		printf "."; sleep 1; \
+	done; printf "\n"; \
+	if [ "$$ready" -ne 1 ]; then \
+		echo "ERROR: Server not reachable after $(STARTUP_TIMEOUT)s. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "[OK] Server is reachable."
+	@echo "=== [3/3] Deploying clients to Pis (image=$(IMAGE_TAG)) ==="
+	ansible-playbook ansible/deploy_client.yml \
+	  -i ansible/inventory.taisale.ini \
+	  --extra-vars "image_tag=$(IMAGE_TAG)"
+	@echo ""
+	@echo "Experiment is running. Follow logs with: make dist-logs"
+
+# Stream live server logs from the VPS; Ctrl-C to stop
+dist-logs:
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "docker logs -f fsl-server"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVALUATION  (eval-*)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Evaluate the most recently saved checkpoint against the held-out test set
+eval-latest:
+	@SESSION=$$(ls -1dt bestweights/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
+	if [ -z "$$SESSION" ]; then \
+		echo "No session found under bestweights/"; exit 1; \
+	fi; \
+	echo "Evaluating session $$SESSION..."; \
+	$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $$SESSION
+
+eval-session:
+	@if [ -z "$(SESSION)" ]; then \
+		echo "Usage: make eval-session SESSION=2026-03-13_03-19-17 [PLOT_DEVICE=cpu|mps]"; exit 1; \
+	fi
+	$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $(SESSION)
+
+# Batch evaluation over multiple sessions; supports optional filters
+eval-batch:
+	@CMD="$(PYTHON) -m src.data.batch_run_evaluation \
+		--sessions-root $(if $(SESSIONS_ROOT),$(SESSIONS_ROOT),bestweights) \
+		--device $(PLOT_DEVICE)"; \
+	if [ -n "$(ONLY)" ];             then CMD="$$CMD --only $(ONLY)"; fi; \
+	if [ -n "$(LIMIT)" ];            then CMD="$$CMD --limit $(LIMIT)"; fi; \
+	if [ -n "$(FORCE_THRESHOLD)" ];  then CMD="$$CMD --force-prob-threshold $(FORCE_THRESHOLD)"; fi; \
+	if [ -n "$(REPORT_TAG)" ];       then CMD="$$CMD --report-tag $(REPORT_TAG)"; fi; \
+	if [ "$(CONTINUE_ON_ERROR)" = "1" ]; then CMD="$$CMD --continue-on-error"; fi; \
+	if [ "$(DRY_RUN)" = "1" ];       then CMD="$$CMD --dry-run"; fi; \
+	echo "Running: $$CMD"; eval "$$CMD"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PLOTS  (plot-*)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 plot-latest:
 	@SESSION=$$(ls -1dt results/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
 	if [ -z "$$SESSION" ]; then \
-		echo "No results session found under results/"; \
-		exit 1; \
+		echo "No session found under results/"; exit 1; \
 	fi; \
-	echo "Generating plots for session $$SESSION..."; \
+	echo "Plotting session $$SESSION..."; \
 	$(PYTHON) -m src.data.plot_training_curve --session $$SESSION --device $(PLOT_DEVICE); \
 	$(PYTHON) -m src.data.plot_server_metrics --log results/$$SESSION/server_log_$$SESSION.csv; \
 	$(PYTHON) -m src.data.plot_confusion_matrix --session $$SESSION --phase both
 
 plot-session:
 	@if [ -z "$(SESSION)" ]; then \
-		echo "Usage: make plot-session SESSION=2026-03-13_01-53-07 [PLOT_DEVICE=cpu|mps]"; \
-		exit 1; \
+		echo "Usage: make plot-session SESSION=2026-03-13_01-53-07 [PLOT_DEVICE=cpu|mps]"; exit 1; \
 	fi
-	@echo "Generating plots for session $(SESSION)..."
-	@$(PYTHON) -m src.data.plot_training_curve --session $(SESSION) --device $(PLOT_DEVICE)
-	@$(PYTHON) -m src.data.plot_server_metrics --log results/$(SESSION)/server_log_$(SESSION).csv
-	@$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
-
-plot: plot-session
+	$(PYTHON) -m src.data.plot_training_curve --session $(SESSION) --device $(PLOT_DEVICE)
+	$(PYTHON) -m src.data.plot_server_metrics --log results/$(SESSION)/server_log_$(SESSION).csv
+	$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
 
 plot-confusion:
 	@if [ -z "$(SESSION)" ]; then \
-		echo "Usage: make plot-confusion SESSION=2026-03-13_01-53-07"; \
-		exit 1; \
+		echo "Usage: make plot-confusion SESSION=2026-03-13_01-53-07"; exit 1; \
 	fi
-	@echo "Generating confusion matrix for session $(SESSION)..."
-	@$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
+	$(PYTHON) -m src.data.plot_confusion_matrix --session $(SESSION) --phase both
 
-eval-latest:
-	@SESSION=$$(ls -1dt bestweights/20* 2>/dev/null | head -n1 | xargs -I{} basename {}); \
-	if [ -z "$$SESSION" ]; then \
-		echo "No bestweights session found under bestweights/"; \
-		exit 1; \
-	fi; \
-	echo "Running evaluation for session $$SESSION..."; \
-	$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $$SESSION
-
-eval-session:
-	@if [ -z "$(SESSION)" ]; then \
-		echo "Usage: make eval-session SESSION=2026-03-13_03-19-17 [PLOT_DEVICE=cpu|mps]"; \
-		exit 1; \
-	fi
-	@echo "Running evaluation for session $(SESSION)..."
-	@$(PYTHON) -m src.data.run_evaluation --device $(PLOT_DEVICE) --session $(SESSION)
-
-eval-batch:
-	@CMD="$(PYTHON) -m src.data.batch_run_evaluation --sessions-root $(if $(SESSIONS_ROOT),$(SESSIONS_ROOT),bestweights) --device $(PLOT_DEVICE)"; \
-	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
-	if [ -n "$(LIMIT)" ]; then CMD="$$CMD --limit $(LIMIT)"; fi; \
-	if [ -n "$(FORCE_THRESHOLD)" ]; then CMD="$$CMD --force-prob-threshold $(FORCE_THRESHOLD)"; fi; \
-	if [ -n "$(REPORT_TAG)" ]; then CMD="$$CMD --report-tag $(REPORT_TAG)"; fi; \
-	if [ "$(CONTINUE_ON_ERROR)" = "1" ]; then CMD="$$CMD --continue-on-error"; fi; \
-	if [ "$(DRY_RUN)" = "1" ]; then CMD="$$CMD --dry-run"; fi; \
-	echo "Running: $$CMD"; \
-	eval "$$CMD"
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXPERIMENT MATRIX  (matrix*)
+# Runs the 14-scenario ablation suite defined in config.yaml.
+# ═══════════════════════════════════════════════════════════════════════════════
 
 matrix:
-	@CMD="$(PYTHON) -m src.data.run_experiment_matrix --config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml)"; \
-	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
+	@CMD="$(PYTHON) -m src.data.run_experiment_matrix \
+		--config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml)"; \
+	if [ -n "$(ONLY)" ];    then CMD="$$CMD --only $(ONLY)"; fi; \
 	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
 	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
-	echo "Running: $$CMD"; \
-	eval "$$CMD"
+	echo "Running: $$CMD"; eval "$$CMD"
 
 matrix-dry-run:
-	@CMD="$(PYTHON) -m src.data.run_experiment_matrix --config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml) --dry-run"; \
-	if [ -n "$(ONLY)" ]; then CMD="$$CMD --only $(ONLY)"; fi; \
+	@CMD="$(PYTHON) -m src.data.run_experiment_matrix \
+		--config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml) --dry-run"; \
+	if [ -n "$(ONLY)" ];    then CMD="$$CMD --only $(ONLY)"; fi; \
 	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
 	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
-	echo "Running: $$CMD"; \
-	eval "$$CMD"
-
-run-native-clients: run-native-client
-
-run-native:
-	@echo "Starting native stack: server($(SERVER_DEVICE)) + $(NUM_CLIENTS) clients($(CLIENT_DEVICE))"
-	@$(MAKE) check-native-port
-	@set -e; \
-	pids=""; \
-	trap 'kill $$pids 2>/dev/null || true' INT TERM EXIT; \
-	( \
-		PYTHONUNBUFFERED=1 FSL_DEVICE=$(SERVER_DEVICE) FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_BIND_HOST=$(SERVER_HOST) FSL_SERVER_PORT=$(SERVER_PORT) \
-		$(PYTHON) -u -m src.nodes.server_node 2>&1 | \
-		awk -v color="$(SERVER_COLOR)" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, "server", reset, $$0; fflush()}' \
-	) & \
-	server_pid=$$!; \
-	pids="$$server_pid"; \
-	echo "Waiting for server at $(SERVER_HOST):$(SERVER_PORT) (timeout $(STARTUP_TIMEOUT)s)..."; \
-	ready=0; \
-	for _ in $$(seq 1 $(STARTUP_TIMEOUT)); do \
-		if python -c 'import socket,sys; s=socket.socket(); s.settimeout(1); s.connect((sys.argv[1], int(sys.argv[2]))); s.close()' "$(SERVER_HOST)" "$(SERVER_PORT)" >/dev/null 2>&1; then \
-			ready=1; \
-			break; \
-		fi; \
-		sleep 1; \
-	done; \
-	if [ "$$ready" -ne 1 ]; then \
-		echo "Server did not become ready in time."; \
-		kill $$pids 2>/dev/null || true; \
-		exit 1; \
-	fi; \
-	for i in $$(seq 1 $(NUM_CLIENTS)); do \
-		case $$((($$i - 1) % 6)) in \
-			0) color="\033[1;32m" ;; \
-			1) color="\033[1;33m" ;; \
-			2) color="\033[1;35m" ;; \
-			3) color="\033[1;36m" ;; \
-			4) color="\033[1;31m" ;; \
-			5) color="\033[1;37m" ;; \
-		esac; \
-		( \
-			PYTHONUNBUFFERED=1 CLIENT_ID=$$i FSL_DEVICE=$(CLIENT_DEVICE) FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_PORT=$(SERVER_PORT) \
-			$(PYTHON) -u -m src.nodes.client_node 2>&1 | \
-			awk -v prefix=$$(printf "client-%d" $$i) -v color="$$color" -v reset="$(RESET_COLOR)" '{printf "%s%-13s%s | %s\n", color, prefix, reset, $$0; fflush()}' \
-		) & \
-		pids="$$pids $$!"; \
-	done; \
-	wait $$pids; \
-	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; else echo "Auto-plot disabled (AUTO_PLOT=$(AUTO_PLOT))"; fi
-
-check-native-port:
-	@if lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P >/dev/null 2>&1; then \
-		echo "Port $(SERVER_PORT) already has listener(s). Run 'make clean-native' first."; \
-		lsof -iTCP:$(SERVER_PORT) -sTCP:LISTEN -n -P; \
-		exit 1; \
-	fi
-
-clean-native:
-	@pkill -f "src.nodes.client_node" 2>/dev/null || true
-	@pkill -f "src.nodes.server_node" 2>/dev/null || true
-	@echo "Killed native server/client processes (if any)."
-
-# ─── Raspberry Pi / Ansible Deployment ───────────────────────────────────────
-
-# Build client image for local testing (amd64)
-build-client:
-	docker build -f Dockerfile -t $(CLIENT_IMAGE) .
-
-# Cross-compile and push ARM64 image for Raspberry Pi (requires docker buildx)
-build-client-arm64:
-	docker buildx build \
-	  --no-cache \
-	  --platform linux/arm64 \
-	  -f Dockerfile \
-	  -t $(CLIENT_IMAGE) \
-	  --push .
-
-# Deploy to all 11 Raspberry Pis via Ansible
-deploy-clients:
-	ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini
-
-# Dry-run: preview what Ansible would change without applying
-deploy-clients-check:
-	ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini --check
+	echo "Running: $$CMD"; eval "$$CMD"
