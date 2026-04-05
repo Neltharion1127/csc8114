@@ -21,14 +21,23 @@ data:
     - Wind Speed
     - Rain
 federated:
-  num_clients: 11  
+  num_clients: 11
   # 12 parquet files: client 1-10 get 1 file each; last client gets remaining files
   rho: 1
+  # How long the server barrier waits for all active clients to submit weights.
+  # 15s was fine for local Docker; real Pi → VPS latency needs a much larger window.
+  round_timeout_sec: 120
 grpc:
   max_message_mb: 50
   server_host: fsl-server
   # server_host: localhost
   server_port: 50051
+  # TLS: set tls_enabled: true and provide cert/key paths for encrypted transport.
+  # When running over Tailscale the WireGuard layer already encrypts traffic,
+  # so tls_enabled: false is acceptable for that topology.
+  tls_enabled: false
+  # tls_cert_path: /app/certs/server.crt   # server + client (CA cert)
+  # tls_key_path:  /app/certs/server.key   # server only
 model:
   lstm_dropout: 0.3
   hidden_size: 64
