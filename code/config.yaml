@@ -71,6 +71,18 @@ scheduler:
   topk_multiplier: 1.5
   latency_ema_alpha: 0.2
 experiment_matrix:
+  # 3 latency profiles × 5 strategies = 15 scenarios × 2 seeds = 30 runs
+  # Latency ranges calibrated against Mao et al. 2017 (MEC survey):
+  #   Low  (~2ms):  WiFi/LAN edge deployment
+  #   Mid  (~8ms):  4G cellular MEC link
+  #   High (~50ms): NB-IoT / wide-area IoT
+  # Scheduler thresholds: float16@4ms, int8@10ms, topk@15ms
+  # Strategy axes (clean ablation):
+  #   S0: float32, rho=1, no scheduler  (baseline)
+  #   S1: float16, rho=1, no scheduler  (compression only - tier 1)
+  #   S2: int8,    rho=1, no scheduler  (compression only - tier 2)
+  #   S3: float32, rho=3, no scheduler  (sync interval only)
+  #   S4: float32, rho=dynamic, adaptive scheduler (joint adaptation)
   seeds: [42, 52, 62]
   runner:
     backend: native
@@ -80,8 +92,9 @@ experiment_matrix:
     startup_timeout: 120
     summary_csv: results/matrix_summary.csv
   scenarios:
+    # ── No latency (profiler off — clean baseline, no floor interference) ─
     - id: M01
-      description: P0+S0 no-latency baseline (static float32, rho=1)
+      description: "No latency | S0 baseline (float32, rho=1, no scheduler)"
       overrides:
         profiler:
           enabled: false
@@ -91,60 +104,65 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
+
     - id: M02
-      description: P0+S3 no-latency with adaptive scheduler
+      description: "No latency | S1 float16 compression only"
       overrides:
         profiler:
           enabled: false
         scheduler:
-          enabled: true
+          enabled: false
         compression:
-          mode: float32
+          mode: float16
         federated:
           rho: 1
+
     - id: M03
-      description: P1+S0 light latency, static float32
+      description: "No latency | S2 int8 compression only"
       overrides:
         profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 1.5
-            client_offsets_ms: [0.0, 4.0, 9.0]
-            jitter_ms: 0.8
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
+          enabled: false
         scheduler:
           enabled: false
         compression:
-          mode: float32
+          mode: int8
         federated:
           rho: 1
+
     - id: M04
-      description: P1+S3 light latency with adaptive scheduler
+      description: "No latency | S3 sync interval only (float32, rho=3)"
       overrides:
         profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 1.5
-            client_offsets_ms: [0.0, 4.0, 9.0]
-            jitter_ms: 0.8
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
+          enabled: false
+        scheduler:
+          enabled: false
+        compression:
+          mode: float32
+        federated:
+          rho: 3
+
+    - id: M05
+      description: "No latency | S4 adaptive scheduler"
+      overrides:
+        profiler:
+          enabled: false
         scheduler:
           enabled: true
         compression:
           mode: float32
         federated:
           rho: 1
-    - id: M05
-      description: P2+S0 medium latency, static float32
+
+    # ── Mid latency (~8ms base) ──────────────────────────────────────────
+    - id: M06
+      description: "Mid latency | S0 baseline (float32, rho=1, no scheduler)"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
+            base_latency_ms: 8.0
+            client_offsets_ms: [0.0, 2.0, 4.0]
+            jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
         scheduler:
@@ -153,15 +171,34 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
-    - id: M06
-      description: P2+S1 medium latency, static int8
+
+    - id: M07
+      description: "Mid latency | S1 float16 compression only"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
+            base_latency_ms: 8.0
+            client_offsets_ms: [0.0, 2.0, 4.0]
+            jitter_ms: 1.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
+        scheduler:
+          enabled: false
+        compression:
+          mode: float16
+        federated:
+          rho: 1
+
+    - id: M08
+      description: "Mid latency | S2 int8 compression only"
+      overrides:
+        profiler:
+          enabled: true
+          latency_generator:
+            base_latency_ms: 8.0
+            client_offsets_ms: [0.0, 2.0, 4.0]
+            jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
         scheduler:
@@ -170,33 +207,16 @@ experiment_matrix:
           mode: int8
         federated:
           rho: 1
-    - id: M07
-      description: P2+S2 medium latency, static topk
+
+    - id: M09
+      description: "Mid latency | S3 sync interval only (float32, rho=3)"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: topk
-          topk_ratio: 0.5
-        federated:
-          rho: 1
-    - id: M08
-      description: P2+S5 medium latency, static float32 with rho=3
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
+            base_latency_ms: 8.0
+            client_offsets_ms: [0.0, 2.0, 4.0]
+            jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
         scheduler:
@@ -205,34 +225,16 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 3
-    - id: M09
-      description: P2+S4 medium latency, adaptive compression only (rho fixed at 1)
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: true
-          min_rho: 1
-          max_rho: 1
-        compression:
-          mode: float32
-        federated:
-          rho: 1
+
     - id: M10
-      description: P2+S3 medium latency with adaptive scheduler
+      description: "Mid latency | S4 adaptive scheduler"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
+            base_latency_ms: 8.0
+            client_offsets_ms: [0.0, 2.0, 4.0]
+            jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
         scheduler:
@@ -241,48 +243,52 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
+
+    # ── High latency (~50ms base) ────────────────────────────────────────
     - id: M11
-      description: P3+S0 burst latency, static float32
+      description: "High latency | S0 baseline (float32, rho=1, no scheduler)"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
-            burst_every_steps: 50
-            burst_latency_ms: 20.0
+            base_latency_ms: 50.0
+            client_offsets_ms: [0.0, 10.0, 20.0]
+            jitter_ms: 5.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
         scheduler:
           enabled: false
         compression:
           mode: float32
         federated:
           rho: 1
+
     - id: M12
-      description: P3+S3 burst latency with adaptive scheduler
+      description: "High latency | S1 float16 compression only"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 3.0
-            client_offsets_ms: [0.0, 8.0, 14.0]
-            jitter_ms: 1.2
-            burst_every_steps: 50
-            burst_latency_ms: 20.0
+            base_latency_ms: 50.0
+            client_offsets_ms: [0.0, 10.0, 20.0]
+            jitter_ms: 5.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
         scheduler:
-          enabled: true
+          enabled: false
         compression:
-          mode: float32
+          mode: float16
         federated:
           rho: 1
+
     - id: M13
-      description: P4+S0 extreme latency, static int8 (200ms-class)
+      description: "High latency | S2 int8 compression only"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 40.0
-            client_offsets_ms: [0.0, 80.0, 160.0]
+            base_latency_ms: 50.0
+            client_offsets_ms: [0.0, 10.0, 20.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -292,21 +298,40 @@ experiment_matrix:
           mode: int8
         federated:
           rho: 1
+
     - id: M14
-      description: P4+S3 extreme latency with adaptive scheduler (default int8)
+      description: "High latency | S3 sync interval only (float32, rho=3)"
       overrides:
         profiler:
           enabled: true
           latency_generator:
-            base_latency_ms: 40.0
-            client_offsets_ms: [0.0, 80.0, 160.0]
+            base_latency_ms: 50.0
+            client_offsets_ms: [0.0, 10.0, 20.0]
+            jitter_ms: 5.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
+        scheduler:
+          enabled: false
+        compression:
+          mode: float32
+        federated:
+          rho: 3
+
+    - id: M15
+      description: "High latency | S4 adaptive scheduler"
+      overrides:
+        profiler:
+          enabled: true
+          latency_generator:
+            base_latency_ms: 50.0
+            client_offsets_ms: [0.0, 10.0, 20.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
         scheduler:
           enabled: true
         compression:
-          mode: int8
+          mode: float32
         federated:
           rho: 1
 training:

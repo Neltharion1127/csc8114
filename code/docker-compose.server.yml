@@ -1,0 +1,17 @@
+services:
+  fsl-server:
+    image: cindyncl26/fsl-client:latest
+    container_name: fsl-server
+    restart: unless-stopped
+    command: python src/nodes/server_node.py
+    ports:
+      - "50051:50051"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - FSL_DEVICE=cpu
+      - FSL_CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./results:/app/results
+      - ./bestweights:/app/bestweights
