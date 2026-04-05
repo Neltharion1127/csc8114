@@ -9,6 +9,7 @@ on:
       - "code/config.yaml"
       - "code/pyproject.toml"
       - "code/Dockerfile"
+    workflow_dispatch: 
 
 jobs:
   build-push:
