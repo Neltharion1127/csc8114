@@ -43,6 +43,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.num_clients = federated_cfg.get("num_clients", 3)
         self.min_clients_per_round = federated_cfg.get("min_clients_per_round", 2)
         self.round_timeout_sec = federated_cfg.get("round_timeout_sec", 120.0)
+        self.grace_period_sec = federated_cfg.get("grace_period_sec", 0.0)
         self.sync_lock = threading.Lock()
 
         self._next_client_id = 1
@@ -71,6 +72,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             ckpt_interval=self.ckpt_interval,
             min_clients_per_round=self.min_clients_per_round,
             round_timeout_sec=self.round_timeout_sec,
+            grace_period_sec=self.grace_period_sec,
         )
 
         scheduler_cfg = cfg.get("scheduler", {})

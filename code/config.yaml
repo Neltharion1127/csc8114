@@ -28,6 +28,9 @@ federated:
   # How long the server barrier waits for all active clients to submit weights.
   # 15s was fine for local Docker; real Pi → VPS latency needs a much larger window.
   round_timeout_sec: 120
+  # After quorum is reached, wait this many extra seconds for stragglers before aggregating.
+  # Set to 0 to aggregate immediately upon quorum.
+  grace_period_sec: 20
 grpc:
   max_message_mb: 50
   server_host: fsl-server
@@ -162,7 +165,9 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 2.0, 4.0]
+            # offsets span float16 zone (8-9ms) to int8 zone (10-14ms)
+            # clients 1-4: ~8-9ms → float16; clients 5-11: ~10-14ms → int8
+            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
             jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -180,7 +185,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 2.0, 4.0]
+            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
             jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -198,7 +203,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 2.0, 4.0]
+            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
             jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -216,7 +221,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 2.0, 4.0]
+            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
             jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -234,7 +239,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 2.0, 4.0]
+            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
             jitter_ms: 1.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -253,7 +258,9 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 10.0, 20.0]
+            # offsets span int8 zone (50-62ms) to topk zone (65-80ms)
+            # clients 1-6: ~50-62ms → int8; clients 7-11: ~65-80ms → topk
+            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -271,7 +278,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 10.0, 20.0]
+            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -289,7 +296,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 10.0, 20.0]
+            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -307,7 +314,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 10.0, 20.0]
+            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0
@@ -325,7 +332,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 10.0, 20.0]
+            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
             burst_latency_ms: 0.0

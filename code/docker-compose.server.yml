@@ -2,7 +2,7 @@ services:
   fsl-server:
     image: cindyncl26/fsl-client:latest
     container_name: fsl-server
-    restart: unless-stopped
+    restart: "no"
     command: python src/nodes/server_node.py
     ports:
       - "50051:50051"

@@ -35,6 +35,7 @@ class FedAvgCoordinator:
         ckpt_interval: int,
         min_clients_per_round: int = 2,
         round_timeout_sec: float = 15.0,
+        grace_period_sec: float = 0.0,
     ):
         self.num_clients = num_clients
         self.hidden_size = hidden_size
@@ -44,6 +45,8 @@ class FedAvgCoordinator:
         self.ckpt_interval = ckpt_interval
         self.min_clients_per_round = max(1, int(min_clients_per_round))
         self.round_timeout_sec = max(0.1, float(round_timeout_sec))
+        self.grace_period_sec = max(0.0, float(grace_period_sec))
+        self._quorum_reached_at: float | None = None
 
         self.client_weights_buffer: dict[int, PendingUpdate] = {}
         self.global_weights = None
@@ -239,13 +242,36 @@ class FedAvgCoordinator:
         if self.round_start_time is None:
             return self.round_timeout_sec
         elapsed = time.time() - self.round_start_time
-        return max(0.0, self.round_timeout_sec - elapsed)
+        timeout_remaining = max(0.0, self.round_timeout_sec - elapsed)
+        # If quorum is reached and grace period is active, wake up sooner to check it.
+        if self._quorum_reached_at is not None and self.grace_period_sec > 0.0:
+            grace_remaining = max(0.0, self.grace_period_sec - (time.time() - self._quorum_reached_at))
+            return min(timeout_remaining, grace_remaining)
+        return timeout_remaining
 
     def _has_quorum_locked(self) -> bool:
         return len(self.client_weights_buffer) >= self._required_clients_locked()
 
+    def _grace_period_elapsed_locked(self) -> bool:
+        """True if grace period has passed since quorum was first reached."""
+        if self.grace_period_sec <= 0.0:
+            return True
+        if self._quorum_reached_at is None:
+            return False
+        return (time.time() - self._quorum_reached_at) >= self.grace_period_sec
+
     def _maybe_aggregate_locked(self, *, server_model, optimizer, reason: str) -> None:
-        if self.client_weights_buffer and self._has_quorum_locked():
+        if not (self.client_weights_buffer and self._has_quorum_locked()):
+            return
+        if self._quorum_reached_at is None:
+            self._quorum_reached_at = time.time()
+            if self.grace_period_sec > 0.0:
+                print(
+                    f"[FED AVG] Quorum reached ({len(self.client_weights_buffer)}/"
+                    f"{self._required_clients_locked()}), "
+                    f"waiting grace period {self.grace_period_sec:.0f}s for stragglers..."
+                )
+        if self._grace_period_elapsed_locked():
             self._aggregate_locked(server_model=server_model, optimizer=optimizer, reason=reason)
 
     def _build_sync_response_locked(
@@ -278,14 +304,18 @@ class FedAvgCoordinator:
             f"waited={barrier_elapsed_s:.2f}s)"
         )
 
-        weights_list = [update.weights for update in pending_updates]
-        self.global_weights = copy.deepcopy(weights_list[0])
+        total_epochs = sum(u.local_epochs for u in pending_updates)
+        if total_epochs <= 0:
+            total_epochs = len(pending_updates)
+        self.global_weights = copy.deepcopy(pending_updates[0].weights)
         for key in self.global_weights.keys():
-            for i in range(1, len(weights_list)):
-                self.global_weights[key] += weights_list[i][key]
-            self.global_weights[key] = torch.div(self.global_weights[key], len(weights_list))
+            self.global_weights[key] = sum(
+                u.weights[key] * (u.local_epochs / total_epochs)
+                for u in pending_updates
+            )
 
         self.client_weights_buffer = {}
+        self._quorum_reached_at = None
         self.current_round += 1
 
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
