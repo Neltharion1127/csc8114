@@ -22,6 +22,7 @@ data:
     - Rain
 federated:
   num_clients: 11
+  min_clients_per_round: 9
   # 12 parquet files: client 1-10 get 1 file each; last client gets remaining files
   rho: 1
   # How long the server barrier waits for all active clients to submit weights.
