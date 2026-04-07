@@ -47,6 +47,7 @@ class FedAvgCoordinator:
         self.round_timeout_sec = max(0.1, float(round_timeout_sec))
         self.grace_period_sec = max(0.0, float(grace_period_sec))
         self._quorum_reached_at: float | None = None
+        self._server_start_time: float = time.time()
 
         self.client_weights_buffer: dict[int, PendingUpdate] = {}
         self.global_weights = None
@@ -165,8 +166,9 @@ class FedAvgCoordinator:
                 )
 
             # Before the first round, wait until enough clients have connected.
+            # Deadline is measured from server startup, not from first weight submission.
             if self.current_round == 0:
-                deadline = time.time() + self.round_timeout_sec
+                deadline = self._server_start_time + self.round_timeout_sec
                 while len(self._active_clients) < self.min_clients_per_round:
                     remaining = deadline - time.time()
                     if remaining <= 0:
