@@ -47,7 +47,7 @@ model:
   hidden_size: 64
   server_head_width: 64
   server_head_dropout: 0.1
-  horizon: 1
+  horizon: 24
   input_size: 5
   num_layers: 2
   seq_len: 48
