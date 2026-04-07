@@ -15,7 +15,7 @@
         docker-run docker-build docker-clean \
         native-run native-server native-clients native-check-port native-clean \
         dist-build dist-deploy dist-deploy-check dist-start dist-logs \
-        dist-sync-config dist-server-restart dist-load-image dist-clean-results dist-clean-server \
+        dist-sync-config dist-server-restart dist-load-image dist-load-image-local dist-clean-results dist-clean-server \
         dist-restart \
         eval-latest eval-session eval-batch \
         plot-latest plot-session plot-confusion \
@@ -86,6 +86,7 @@ help:
 	@echo "  dist-sync-config                  Push config.yaml to VPS + all Pis"
 	@echo "  dist-server-restart               SSH → VPS: stop + recreate server container"
 	@echo "  dist-load-image                   Save image from VPS → Mac → all Pis (offline)"
+	@echo "  dist-load-image-local             Build arm64 image on Mac → push to all Pis (no VPS/DockerHub needed)"
 	@echo "  dist-deploy        [IMAGE_TAG=x]  Ansible: deploy image to all Pis (Tailscale)"
 	@echo "  dist-deploy-check                 Ansible dry-run: preview changes without applying"
 	@echo "  dist-start         [IMAGE_TAG=x]  Full experiment: sync config → restart server → deploy Pis"
@@ -313,6 +314,23 @@ dist-load-image:
 	ansible clients -i ansible/inventory.taisale.ini \
 	  -m shell \
 	  -a "docker load -i /tmp/fsl-client.tar.gz" \
+	  --become
+
+# Build arm64 image locally on Mac and push directly to all Pis.
+# No Docker Hub or VPS needed — useful when Pi → internet is blocked.
+dist-load-image-local:
+	@echo "=== [1/3] Building arm64 image on Mac ==="
+	docker buildx build --platform linux/arm64 -t fsl-client:arm64 --load -f Dockerfile .
+	docker save fsl-client:arm64 | gzip > /tmp/fsl-client.tar.gz
+	@echo "=== [2/3] Copying image to all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m copy \
+	  -a "src=/tmp/fsl-client.tar.gz dest=/tmp/fsl-client.tar.gz" \
+	  --become
+	@echo "=== [3/3] Loading image on all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m shell \
+	  -a "docker load -i /tmp/fsl-client.tar.gz && docker tag fsl-client:arm64 cindyncl26/fsl-client:latest" \
 	  --become
 
 # Delete results/ and bestweights/ on all Pis, then recreate empty dirs.
