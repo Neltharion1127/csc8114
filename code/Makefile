@@ -16,6 +16,7 @@
         native-run native-server native-clients native-check-port native-clean \
         dist-build dist-deploy dist-deploy-check dist-start dist-logs \
         dist-sync-config dist-server-restart dist-load-image dist-clean-results dist-clean-server \
+        dist-restart \
         eval-latest eval-session eval-batch \
         plot-latest plot-session plot-confusion \
         matrix matrix-dry-run
@@ -91,6 +92,7 @@ help:
 	@echo "  dist-logs                         Tail live server logs from VPS"
 	@echo "  dist-clean-results                Delete results/ and bestweights/ on all Pis"
 	@echo "  dist-clean-server                 Delete results/ and bestweights/ on VPS"
+	@echo "  dist-restart                      Stop all + clear all results + fresh start"
 	@echo ""
 	@echo "── Evaluation (eval-*) ─────────────────────────────────────────"
 	@echo "  eval-latest                  Evaluate the most recent checkpoint session"
@@ -323,7 +325,7 @@ dist-clean-results:
 # Delete results/ and bestweights/ on the VPS server, then recreate empty dirs.
 dist-clean-server:
 	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
-	  rm -rf ~/csc8114/code/results ~/csc8114/code/bestweights && \
+	  sudo rm -rf ~/csc8114/code/results ~/csc8114/code/bestweights && \
 	  mkdir -p ~/csc8114/code/results ~/csc8114/code/bestweights && \
 	  echo '[VPS] results/ and bestweights/ cleared.'"
 
@@ -387,6 +389,26 @@ dist-start:
 	  --extra-vars "image_tag=$(IMAGE_TAG)"
 	@echo ""
 	@echo "Experiment is running. Follow logs with: make dist-logs"
+
+# Nuclear restart: stop everything, wipe all results, then do a full fresh start.
+# Equivalent to: stop server + stop all Pi clients + clean VPS + clean Pis + dist-start
+dist-restart:
+	@echo "=== [1/5] Stopping server on VPS ==="
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
+	  cd ~/csc8114/code && \
+	  docker compose -f docker-compose.server.yml down 2>/dev/null || true && \
+	  echo '[VPS] Server stopped.'"
+	@echo "=== [2/5] Stopping client containers on all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m shell \
+	  -a "docker stop fsl-client 2>/dev/null || true && docker rm fsl-client 2>/dev/null || true" \
+	  --become
+	@echo "=== [3/5] Clearing results on VPS ==="
+	$(MAKE) dist-clean-server
+	@echo "=== [4/5] Clearing results on all Pis ==="
+	$(MAKE) dist-clean-results
+	@echo "=== [5/5] Fresh start ==="
+	$(MAKE) dist-start
 
 # Stream live server logs from the VPS; Ctrl-C to stop
 dist-logs:

@@ -2,6 +2,7 @@
 - name: Deploy FSL Client to Raspberry Pis
   hosts: clients
   become: true
+  serial: 1  # Pull one Pi at a time to avoid Docker Hub rate limiting
 
   tasks:
     - name: Ensure directories exist
