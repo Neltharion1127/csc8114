@@ -15,6 +15,7 @@
         docker-run docker-build docker-clean \
         native-run native-server native-clients native-check-port native-clean \
         dist-build dist-deploy dist-deploy-check dist-start dist-logs \
+        dist-sync-config dist-server-restart dist-load-image dist-clean-results dist-clean-server \
         eval-latest eval-session eval-batch \
         plot-latest plot-session plot-confusion \
         matrix matrix-dry-run
@@ -80,11 +81,16 @@ help:
 	@echo "  native-clean                 Kill all native server/client processes"
 	@echo ""
 	@echo "── Distributed Pi (dist-*) ─────────────────────────────────────"
-	@echo "  dist-build   [IMAGE_TAG=x]   Build amd64+arm64 image and push to Docker Hub"
-	@echo "  dist-deploy  [IMAGE_TAG=x]   Ansible: deploy image to all Pis (Tailscale)"
-	@echo "  dist-deploy-check            Ansible dry-run: preview changes without applying"
-	@echo "  dist-start   [IMAGE_TAG=x]   Full experiment: restart VPS server → wait → deploy Pis"
-	@echo "  dist-logs                    Tail live server logs from VPS"
+	@echo "  dist-build         [IMAGE_TAG=x]  Build amd64+arm64 image and push to Docker Hub"
+	@echo "  dist-sync-config                  Push config.yaml to VPS + all Pis"
+	@echo "  dist-server-restart               SSH → VPS: stop + recreate server container"
+	@echo "  dist-load-image                   Save image from VPS → Mac → all Pis (offline)"
+	@echo "  dist-deploy        [IMAGE_TAG=x]  Ansible: deploy image to all Pis (Tailscale)"
+	@echo "  dist-deploy-check                 Ansible dry-run: preview changes without applying"
+	@echo "  dist-start         [IMAGE_TAG=x]  Full experiment: sync config → restart server → deploy Pis"
+	@echo "  dist-logs                         Tail live server logs from VPS"
+	@echo "  dist-clean-results                Delete results/ and bestweights/ on all Pis"
+	@echo "  dist-clean-server                 Delete results/ and bestweights/ on VPS"
 	@echo ""
 	@echo "── Evaluation (eval-*) ─────────────────────────────────────────"
 	@echo "  eval-latest                  Evaluate the most recent checkpoint session"
@@ -268,6 +274,59 @@ native-clean:
 # a Tailscale overlay network.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Sync config.yaml to VPS (scp) and all Pis (ansible).
+# Run this whenever config.yaml changes — no need to rebuild the image.
+dist-sync-config:
+	@echo "=== Syncing config.yaml to VPS ==="
+	scp config.yaml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/config.yaml
+	@echo "=== Syncing config.yaml to all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m copy \
+	  -a "src=config.yaml dest=/home/pi/config.yaml" \
+	  --become
+
+# Restart only the server container on VPS using docker compose.
+# Useful after a config change without touching Pi clients.
+dist-server-restart:
+	@echo "=== Restarting server on VPS ==="
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
+	  cd ~/csc8114/code && \
+	  docker compose -f docker-compose.server.yml down && \
+	  docker compose -f docker-compose.server.yml up -d && \
+	  echo '[VPS] Server restarted.'"
+
+# Load image onto all Pis without Docker Hub access.
+# Saves image from VPS → Mac → pushes to all Pis via Ansible.
+# Pi → Docker Hub is often blocked; this works over Tailscale.
+dist-load-image:
+	@echo "=== [1/3] Saving image from VPS to Mac ==="
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "docker save $(CLIENT_IMAGE) | gzip > /tmp/fsl-client.tar.gz"
+	scp $(VPS_USER)@$(VPS_HOST_DEPLOY):/tmp/fsl-client.tar.gz /tmp/fsl-client.tar.gz
+	@echo "=== [2/3] Copying image to all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m copy \
+	  -a "src=/tmp/fsl-client.tar.gz dest=/tmp/fsl-client.tar.gz" \
+	  --become
+	@echo "=== [3/3] Loading image on all Pis ==="
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m shell \
+	  -a "docker load -i /tmp/fsl-client.tar.gz" \
+	  --become
+
+# Delete results/ and bestweights/ on all Pis, then recreate empty dirs.
+dist-clean-results:
+	ansible clients -i ansible/inventory.taisale.ini \
+	  -m shell \
+	  -a "rm -rf /home/pi/results /home/pi/bestweights && mkdir -p /home/pi/results /home/pi/bestweights" \
+	  --become
+
+# Delete results/ and bestweights/ on the VPS server, then recreate empty dirs.
+dist-clean-server:
+	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
+	  rm -rf ~/csc8114/code/results ~/csc8114/code/bestweights && \
+	  mkdir -p ~/csc8114/code/results ~/csc8114/code/bestweights && \
+	  echo '[VPS] results/ and bestweights/ cleared.'"
+
 # Build a multi-architecture image (amd64 for VPS + arm64 for Pi) and push it
 # to Docker Hub. Requires `docker buildx` with a multi-platform builder set up.
 # Override IMAGE_TAG to version-pin the build, e.g. make dist-build IMAGE_TAG=sha-abc1234
@@ -293,33 +352,21 @@ dist-deploy-check:
 	  --extra-vars "image_tag=$(IMAGE_TAG)" \
 	  --check
 
-# Full experiment launch in three steps:
-#   1. SSH into VPS → pull image → replace the running server container
-#   2. Poll VPS_HOST_DEPLOY:SERVER_PORT until gRPC port is open (or timeout)
-#   3. Ansible: pull same image on every Pi and restart the client container
+# Full experiment launch in four steps:
+#   1. Sync config.yaml to VPS + all Pis
+#   2. SSH into VPS → restart server via docker compose
+#   3. Poll VPS_HOST_DEPLOY:SERVER_PORT until gRPC port is open (or timeout)
+#   4. Ansible: restart client containers on all Pis
 #
 # Usage:
 #   make dist-start                        # uses IMAGE_TAG=latest
 #   make dist-start IMAGE_TAG=sha-a1b2c3   # pins a specific build
 dist-start:
-	@echo "=== [1/3] Restarting server on VPS (image=$(IMAGE_TAG)) ==="
-	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
-	  docker pull $(REGISTRY)/fsl-client:$(IMAGE_TAG) && \
-	  docker stop fsl-server 2>/dev/null || true && \
-	  docker rm   fsl-server 2>/dev/null || true && \
-	  docker run -d \
-	    --name fsl-server \
-	    --restart unless-stopped \
-	    -p $(SERVER_PORT):$(SERVER_PORT) \
-	    -e PYTHONUNBUFFERED=1 \
-	    -e PYTHONPATH=/app \
-	    -e FSL_DEVICE=cpu \
-	    -v /home/$(VPS_USER)/bestweights:/app/bestweights \
-	    -v /home/$(VPS_USER)/results:/app/results \
-	    $(REGISTRY)/fsl-client:$(IMAGE_TAG) \
-	    python src/nodes/server_node.py && \
-	  echo '[VPS] Server container started.'"
-	@echo "=== [2/3] Waiting for server at $(VPS_HOST_DEPLOY):$(SERVER_PORT) (timeout=$(STARTUP_TIMEOUT)s) ==="
+	@echo "=== [1/4] Syncing config.yaml to VPS + Pis ==="
+	$(MAKE) dist-sync-config
+	@echo "=== [2/4] Restarting server on VPS ==="
+	$(MAKE) dist-server-restart
+	@echo "=== [3/4] Waiting for server at $(VPS_HOST_DEPLOY):$(SERVER_PORT) (timeout=$(STARTUP_TIMEOUT)s) ==="
 	@ready=0; \
 	for i in $$(seq 1 $(STARTUP_TIMEOUT)); do \
 		if python -c \
@@ -334,7 +381,7 @@ dist-start:
 		exit 1; \
 	fi; \
 	echo "[OK] Server is reachable."
-	@echo "=== [3/3] Deploying clients to Pis (image=$(IMAGE_TAG)) ==="
+	@echo "=== [4/4] Deploying clients to Pis (image=$(IMAGE_TAG)) ==="
 	ansible-playbook ansible/deploy_client.yml \
 	  -i ansible/inventory.taisale.ini \
 	  --extra-vars "image_tag=$(IMAGE_TAG)"

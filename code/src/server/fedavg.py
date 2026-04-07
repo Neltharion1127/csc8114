@@ -164,6 +164,20 @@ class FedAvgCoordinator:
                     ),
                 )
 
+            # Before the first round, wait until enough clients have connected.
+            if self.current_round == 0:
+                deadline = time.time() + self.round_timeout_sec
+                while len(self._active_clients) < self.min_clients_per_round:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        print(
+                            f"[FED AVG] Startup wait timed out: only "
+                            f"{len(self._active_clients)}/{self.min_clients_per_round} "
+                            f"clients connected. Proceeding with current active set."
+                        )
+                        break
+                    self.round_cond.wait(timeout=min(remaining, 5.0))
+
             target_round = self.current_round + 1
             now = time.time()
             if not self.client_weights_buffer:
