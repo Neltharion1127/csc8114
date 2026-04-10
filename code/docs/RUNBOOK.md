@@ -7,16 +7,16 @@
 | Requirement / 条件 | Check / 检查方式 |
 |---|---|
 | Tailscale connected / Tailscale 已连接 | `tailscale status` |
-| Docker Hub logged in / Docker Hub 已登录 | `docker login` |
 | Ansible installed / Ansible 已安装 | `ansible --version` |
 | VPS reachable / VPS 可达 | `ping 51.254.207.168` |
+| Working directory / 工作目录 | All `make` commands run from `code/` |
 
 ---
 
 ## 1. Build & Push Image / 构建并推送镜像
 
 Only needed when `src/`, `Dockerfile`, `pyproject.toml`, or `proto/` change.
-仅在修改了 `src/`、`Dockerfile`、`pyproject.toml` 或 `proto/` 时需要执行。
+仅在修改了 `src/`、`Dockerfile`、`pyproject.toml` 或 `proto/` 时需要。
 
 ```bash
 git add .
@@ -24,114 +24,101 @@ git commit -m "..."
 git push origin main
 ```
 
-GitHub Actions builds a multi-arch image (amd64 + arm64) and pushes it to Docker Hub automatically. Wait ~5–10 minutes before proceeding.
-
-GitHub Actions 自动构建 amd64+arm64 双架构镜像并推送到 Docker Hub，等待约 5-10 分钟后再继续。
+GitHub Actions builds a multi-arch image (amd64 + arm64) and pushes to Docker Hub automatically (~5–10 min).
+GitHub Actions 自动构建双架构镜像并推送，等待约 5–10 分钟。
 
 ---
 
-## 2. Start VPS Server / 启动 VPS 服务端
+## 2. Deploy Image to Pis / 分发镜像到 Pi
 
-**First time or after changing config.yaml / 第一次或修改 config.yaml 后：**
+Pi 通常无法直接访问 Docker Hub（TLS timeout），用以下方式之一分发：
 
+**Option A — Build on Mac and push directly (recommended) / Mac 本地构建后直接推（推荐）：**
 ```bash
-scp code/config.yaml ubuntu@51.254.207.168:~/csc8114/code/config.yaml
-scp code/docker-compose.server.yml ubuntu@51.254.207.168:~/csc8114/code/docker-compose.server.yml
+make dist-load-image-local
 ```
 
-**Every time / 每次启动：**
-
+**Option B — Route through VPS / 通过 VPS 中转：**
 ```bash
-ssh ubuntu@51.254.207.168
-
-docker pull cindyncl26/fsl-client:latest
-docker compose -f docker-compose.server.yml down 2>/dev/null
-docker compose -f docker-compose.server.yml up -d
-docker logs -f fsl-server
-# Wait for: "Listening for incoming FSL connections on [::]:50051"
-# 等待看到: "Listening for incoming FSL connections on [::]:50051"
+make dist-load-image
 ```
 
 ---
 
-## 3. Deploy Clients to All Pis / 部署客户端到所有 Pi
+## 3. Fresh Start (most common) / 全新启动实验（最常用）
 
-Run from the `code/` directory on your local machine.
-在本机 `code/` 目录下执行。
+一条命令完成：sync config → 重启服务端 → 等 gRPC 就绪 → 部署所有 Pi 客户端。
 
 ```bash
-cd code
-ansible-playbook ansible/deploy_client.yml -i ansible/inventory.taisale.ini
+make dist-start
 ```
-
-This single command will automatically:
-这一条命令会自动完成：
-
-1. Create required directories on all Pis / 在所有 Pi 上创建必要目录
-2. Sync `dataset/processed/` (incremental, slow on first run) / 同步数据集（增量，第一次较慢）
-3. Sync latest `config.yaml` to every Pi / 同步最新 `config.yaml` 到每台 Pi
-4. Pull latest image / 拉取最新镜像
-5. Stop old container and start new training / 停掉旧容器，启动新容器开始训练
 
 ---
 
-## 4. Monitor Progress / 查看进度
+## 4. Nuclear Restart / 核弹重启
 
-**VPS server logs / VPS 服务端日志：**
+停止所有训练 + 清空所有结果 + 全新启动。
+
 ```bash
-ssh ubuntu@51.254.207.168 "docker logs -f fsl-server"
+make dist-restart
+```
+
+---
+
+## 5. Monitor Progress / 查看进度
+
+**VPS server logs / 服务端日志：**
+```bash
+make dist-logs
 ```
 
 **Single Pi client log / 单台 Pi 客户端日志：**
 ```bash
-ssh -i ~/.ssh/id_rsa pi@100.125.109.94 "docker logs -f fsl-client"
+ssh pi@100.125.109.94 "docker logs -f fsl-client"
 ```
 
 **All Pi container status / 所有 Pi 容器状态：**
 ```bash
 ansible clients -i ansible/inventory.taisale.ini \
-  -a "docker ps --filter name=fsl-client --format '{{.Names}}: {{.Status}}'"
+  -m shell \
+  -a "docker ps -a | grep fsl-client" --become
 ```
 
 ---
 
-## 5. Change Config & Re-run / 改参数重跑
+## 6. Config-only Update / 仅更新配置
 
-```
-1. Edit code/config.yaml locally / 修改本地 code/config.yaml
-2. scp config.yaml to VPS (step 2) / 重新推 config 到 VPS（步骤二）
-3. Restart VPS server (step 2) / 重启 VPS 服务端（步骤二）
-4. Re-deploy clients (step 3) / 重新部署客户端（步骤三）
-```
+代码不变，只改了 config.yaml：
 
-No need to push code or rebuild the image.
-不需要 push 代码，不触发 CI 重新构建镜像。
-
----
-
-## 6. Stop All Training / 停止所有训练
-
-**Stop all Pi clients / 停止所有 Pi 客户端：**
 ```bash
-ansible clients -i ansible/inventory.ini \
-  -a "docker stop fsl-client" \
-  --become
+make dist-sync-config     # 推 config 到 VPS + 所有 Pi
+make dist-server-restart  # 重启服务端使配置生效
+# 然后重新部署客户端
+ansible-playbook ansible/deploy_client.yml -i ansible/inventory.taisale.ini
 ```
 
-**Stop VPS server / 停止 VPS 服务端：**
+Or all-in-one / 或一条命令：
 ```bash
-ssh ubuntu@51.254.207.168 "docker stop fsl-server"
+make dist-start
 ```
 
 ---
 
-## 7. Collect Results / 收集实验结果
+## 7. Clean Results / 清空结果
 
-**Pull results from all Pis / 从所有 Pi 拉取结果：**
 ```bash
-ansible clients -i ansible/inventory.taisale.ini \
-  -m ansible.posix.synchronize \
-  -a "mode=pull src=/home/pi/results/ dest=code/results/pi_results/"
+make dist-clean-server   # 清空 VPS 的 results/ 和 bestweights/
+make dist-clean-results  # 清空所有 Pi 的 results/ 和 bestweights/
+```
+
+---
+
+## 8. Collect Results / 收集实验结果
+
+**Pull from VPS / 从 VPS 拉取：**
+```bash
+scp -r ubuntu@51.254.207.168:~/csc8114/code/results/ code/results/vps_results/
+scp -r ubuntu@51.254.207.168:~/csc8114/code/bestweights/ code/bestweights/
 ```
 ```bash
 ansible clients -i ansible/inventory.taisale.ini \
@@ -139,22 +126,29 @@ ansible clients -i ansible/inventory.taisale.ini \
   -a "mode=pull src=/home/pi/bestweights/ dest=code/bestweights/"
 ```
 
-**Pull results from VPS / 从 VPS 拉取结果：**
+**Pull from all Pis / 从所有 Pi 拉取：**
 ```bash
-scp -r ubuntu@51.254.207.168:~/csc8114/code/results/ code/results/vps_results/
-```
-```bash
-scp -r ubuntu@51.254.207.168:~/csc8114/code/bestweights/ code/bestweights/
+ansible clients -i ansible/inventory.taisale.ini \
+  -m ansible.posix.synchronize \
+  -a "mode=pull src=/home/pi/results/ dest=code/results/pi_results/"
 ```
 
 ---
 
-## 8. Manual Debug on Single Pi / 单台 Pi 手动调试
+## 9. Debug: Check Why a Pi Failed / 排查某台 Pi 异常
 
 ```bash
-ssh -i ~/.ssh/id_rsa pi@100.125.109.94
+# 查看容器退出状态
+ansible clients -i ansible/inventory.taisale.ini \
+  -m shell -a "docker ps -a | grep fsl-client" --become
 
-CLIENT_ID=1 docker compose -f docker-compose.client.yml up
+# 查看某台 Pi 的容器日志
+ansible pi08 -i ansible/inventory.taisale.ini \
+  -m shell -a "docker logs fsl-client 2>&1 | tail -30" --become
+
+# 常见错误
+# "exec format error" → 镜像架构错误（amd64 跑在 arm64 Pi 上），需重新 make dist-load-image-local
+# "connection refused"  → 服务端未启动或网络不通
 ```
 
 ---
@@ -163,62 +157,14 @@ CLIENT_ID=1 docker compose -f docker-compose.client.yml up
 
 | Action / 操作 | Command / 命令 |
 |---|---|
-| Trigger image build / 触发镜像构建 | `git push origin main` |
-| Start server / 启动服务端 | VPS: `docker compose -f docker-compose.server.yml up -d` |
-| Deploy all clients / 部署所有客户端 | `ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini` |
-| Watch server logs / 看服务端日志 | `docker logs -f fsl-server` |
-| Stop all clients / 停止所有客户端 | `ansible clients -i ansible/inventory.ini -a "docker stop fsl-client" --become` |
-| Deploy to subset of Pis / 只部署部分 Pi | append `--limit pi01,pi02` to ansible command |
-| Run specific matrix scenarios / 跑特定场景 | `python -m src.data.run_experiment_matrix --only M06,M07` |
-| Get all client's containers status/ 查看所有正在執行的容器|`ansible all -i ansible/inventory.ini -b -a "docker ps"`|
-| Get all client's directories/ 查看所有client的目錄|`ansible all -i ansible/inventory.ini -b -a "ls -lh /home/pi"`|
-| Clean all client's docker images/ 清理所有client的 docker鏡像|`ansible clients -i ansible/inventory.ini -m shell -a "docker system prune -a -f --volumes" --become`|
-| Clean VPS docker images/ 清理VPS的 docker鏡像|`ssh ubuntu@51.254.207.168 "docker system prune -a -f --volumes"`|
-||make dist-clean-results|
-||make dist-clean-server|
-
----
-
-# 從所有 Raspberry Pi 拉回 Client 端結果與模型
-## 拉回日誌與結果
-ansible clients -i ansible/inventory.ini \
-  -m ansible.posix.synchronize \
-  -a "mode=pull src=/home/pi/results/ dest=results/pi_results/"
-
-## 拉回 Client 端權重
-ansible clients -i ansible/inventory.ini \
-  -m ansible.posix.synchronize \
-  -a "mode=pull src=/home/pi/bestweights/ dest=bestweights/pi_bestweights/"
-
-# 從 VPS 拉回 Server 端結果
-## 拉回 Server 端日誌 (注意：這會拉回 vps_results 子目錄)
-scp -r ubuntu@51.254.207.168:~/csc8114/code/results/ results/vps_results/
-
-## 拉回 Server 端權重
-scp -r ubuntu@51.254.207.168:~/csc8114/code/bestweights/ bestweights/
-
-# 補跑 09~14 的評估
-make eval-batch SESSION=2026-04-09_08-11-48
-make matrix-report SESSION=2026-04-09_08-11-48
-
-
-
-## 9. Advanced: Partial Scenario Retrieval / 进阶：部分场景拉取
-If you only need scenario 09-14 from VPS:
-如果只需要從 VPS 拉取 09-14：
-
-```bash
-SESSION_ID=2026-04-09_08-11-48
-for i in {09..14}; do
-  scp -r ubuntu@51.254.207.168:~/csc8114/code/results/$SESSION_ID/$i results/vps_results/$SESSION_ID/
-  scp -r ubuntu@51.254.207.168:~/csc8114/code/results/$SESSION_ID/${i}_seed42 results/vps_results/$SESSION_ID/
-done
-```
-
-## 10. Matrix Reporting Pipeline / 矩阵报表生成流
-```bash
-# 1. Merge VPS Data: cp -r results/vps_results/SESSION_ID/* results/SESSION_ID/
-# 2. Run Eval:       make eval-batch SESSION=SESSION_ID
-# 3. Run Report:     make matrix-report SESSION=SESSION_ID
-```
-
+| 全新启动实验 | `make dist-start` |
+| 核弹重启（停止+清空+重启）| `make dist-restart` |
+| 只更新镜像到 Pi（Mac 构建）| `make dist-load-image-local` |
+| 只更新镜像到 Pi（VPS 中转）| `make dist-load-image` |
+| 同步 config 到双端 | `make dist-sync-config` |
+| 只重启服务端 | `make dist-server-restart` |
+| 查看服务端日志 | `make dist-logs` |
+| 清空 VPS 结果 | `make dist-clean-server` |
+| 清空 Pi 结果 | `make dist-clean-results` |
+| 构建并推送镜像到 Docker Hub | `make dist-build` |
+| 只跑指定场景 | `make matrix ONLY=05,06` |

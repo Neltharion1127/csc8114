@@ -32,36 +32,31 @@
         checksum: true
 
     - name: Pull FSL client image
-      community.docker.docker_image:
-        name: "{{ client_image }}"
-        source: pull
+      ansible.builtin.shell: docker pull {{ client_image }}
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
 
     - name: Remove old fsl-client container (if exists)
-      community.docker.docker_container:
-        name: fsl-client
-        state: absent
+      ansible.builtin.shell: docker stop fsl-client 2>/dev/null; docker rm fsl-client 2>/dev/null; true
+      changed_when: false
 
     - name: Start fsl-client container
-      community.docker.docker_container:
-        name: fsl-client
-        image: "{{ client_image }}"
-        state: started
-        restart_policy: "no"
-        command: python src/nodes/run_scenario_loop.py --role client
-        env:
-          CLIENT_ID: "{{ client_id | string }}"
-          SESSION_ID: "{{ session_id | default('') }}"
-          SCENARIO_ID: "{{ scenario_id | default('') }}"
-          FSL_SERVER_HOST: "{{ server_host }}"
-          FSL_CONFIG_PATH: /app/config.yaml
-          PYTHONUNBUFFERED: "1"
-          PYTHONPATH: /app
-          FSL_DEVICE: cpu
-        volumes:
-          - /home/pi/config.yaml:/app/config.yaml:ro
-          - /home/pi/dataset/processed:/app/dataset/processed:ro
-          - /home/pi/results:/app/results
-          - /home/pi/bestweights:/app/bestweights
+      ansible.builtin.shell: >
+        docker run -d
+        --name fsl-client
+        --restart no
+        -e CLIENT_ID={{ client_id }}
+        -e FSL_SERVER_HOST={{ server_host }}
+        -e FSL_CONFIG_PATH=/app/config.yaml
+        -e PYTHONUNBUFFERED=1
+        -e PYTHONPATH=/app
+        -e FSL_DEVICE=cpu
+        -v /home/pi/config.yaml:/app/config.yaml:ro
+        -v /home/pi/dataset/processed:/app/dataset/processed:ro
+        -v /home/pi/results:/app/results
+        -v /home/pi/bestweights:/app/bestweights
+        {{ client_image }}
+        python src/nodes/client_node.py
 
     - name: Show container status
       ansible.builtin.command: docker ps --filter name=fsl-client
