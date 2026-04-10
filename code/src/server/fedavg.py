@@ -12,6 +12,7 @@ import torch
 from proto import fsl_pb2
 from src.shared.config_artifacts import build_config_ref, build_config_snapshot
 from src.shared.serialization import tensor_to_bytes
+from src.shared.common import cfg
 
 
 @dataclass
@@ -134,6 +135,17 @@ class FedAvgCoordinator:
         with self.round_cond:
             if client_id not in self._completed_clients:
                 self._active_clients.add(client_id)
+
+            # --- Safety Catch: Prevent rounds exceeding config ---
+            num_rounds = cfg.get("training", {}).get("num_rounds", 30)
+            if self.current_round >= num_rounds:
+                print(f"[FED AVG] Target rounds ({num_rounds}) reached. Rejecting update from Client:{client_id}")
+                return self._build_sync_response_locked(
+                    accepted=False,
+                    applied_round=self.current_round,
+                    status_message="FINISHED",
+                    refresh_only=True
+                )
 
             if base_round < self.current_round:
                 print(

@@ -12,8 +12,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 .PHONY: help compile-proto download-data \
-        docker-run docker-build docker-clean \
-        native-run native-server native-clients native-check-port native-clean \
+        docker-run docker-run-single docker-build docker-clean \
+        native-run native-run-single native-server native-clients native-check-port native-clean \
         dist-build dist-deploy dist-deploy-check dist-start dist-logs \
         dist-sync-config dist-server-restart dist-load-image dist-load-image-local dist-clean-results dist-clean-server \
         dist-restart \
@@ -35,6 +35,11 @@ IMAGE_TAG       ?= latest           # Override: make dist-start IMAGE_TAG=sha-ab
 # Remote hosts
 VPS_USER        ?= ubuntu
 VPS_HOST_DEPLOY ?= 51.254.207.168
+
+################################################################################
+# Ansible 修改讀取預設值
+################################################################################
+ANSIBLE_INV     ?= ansible/inventory.ini
 
 # Network
 SERVER_HOST     ?= 0.0.0.0
@@ -134,15 +139,22 @@ docker-build:
 	docker build -f Dockerfile -t $(CLIENT_IMAGE) .
 
 # Clean slate run: tear down any leftover containers, rebuild, then start everything.
-# Server starts first; clients are launched individually so CLIENT_ID is injected
-# explicitly rather than derived from the Docker-assigned hostname.
-docker-run: docker-clean
-	@echo "Starting $(NUM_CLIENTS) clients in Docker..."
+# If SCENARIO_ID is set, runs a single scenario. Otherwise runs the full matrix.
+docker-run:
+ifeq ($(SCENARIO_ID),)
+	@echo "[MATRIX] No SCENARIO_ID set → running full experiment matrix (docker backend)..."
+	$(MAKE) matrix BACKEND=docker
+else
+	$(MAKE) docker-run-single
+endif
+
+docker-run-single: docker-clean
+	@echo "Starting $(NUM_CLIENTS) clients in Docker (scenario=$(SCENARIO_ID))..."
 	docker compose build
-	docker compose up -d fsl-server
+	SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) docker compose up -d fsl-server
 	@for i in $$(seq 1 $(NUM_CLIENTS)); do \
 		echo "Starting client $$i..."; \
-		docker compose run -d --no-deps --name fsl-client-$$i -e CLIENT_ID=$$i fsl-client; \
+		docker compose run -d --no-deps --name fsl-client-$$i -e CLIENT_ID=$$i -e SESSION_ID=$(SESSION_ID) -e SCENARIO_ID=$(SCENARIO_ID) fsl-client; \
 	done
 	@(docker logs -f fsl-server 2>&1 | awk \
 		'{printf "$(SERVER_COLOR)%-13s$(RESET_COLOR) | %s\n", "fsl-server", $$0; fflush()}') & \
@@ -179,6 +191,8 @@ native-server:
 	FSL_SERVER_HOST=$(SERVER_HOST) \
 	FSL_SERVER_BIND_HOST=$(SERVER_HOST) \
 	FSL_SERVER_PORT=$(SERVER_PORT) \
+	SESSION_ID=$(SESSION_ID) \
+	SCENARIO_ID=$(SCENARIO_ID) \
 		$(PYTHON) -u -m src.nodes.server_node
 
 # Start all clients in parallel (server must already be running)
@@ -197,6 +211,7 @@ native-clients:
 			FSL_DEVICE=$(CLIENT_DEVICE) \
 			FSL_SERVER_HOST=$(SERVER_HOST) \
 			FSL_SERVER_PORT=$(SERVER_PORT) \
+			SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) \
 			$(PYTHON) -u -m src.nodes.client_node 2>&1 | \
 			awk -v p=$$(printf "client-%d" $$i) -v c="$$color" -v r="$(RESET_COLOR)" \
 				'{printf "%s%-13s%s | %s\n", c, p, r, $$0; fflush()}' \
@@ -207,9 +222,17 @@ native-clients:
 	if [ "$(AUTO_PLOT)" = "1" ]; then $(MAKE) plot-latest; fi
 
 # One-shot: start server, wait for it to be ready, then start all clients.
-# Ctrl-C kills everything cleanly via the trap.
+# If SCENARIO_ID is set, runs a single scenario. Otherwise runs the full matrix.
 native-run:
-	@echo "Starting native stack: server($(SERVER_DEVICE)) + $(NUM_CLIENTS) clients($(CLIENT_DEVICE))"
+ifeq ($(SCENARIO_ID),)
+	@echo "[MATRIX] No SCENARIO_ID set → running full experiment matrix (native backend)..."
+	$(MAKE) matrix BACKEND=native
+else
+	$(MAKE) native-run-single
+endif
+
+native-run-single:
+	@echo "Starting native stack: server($(SERVER_DEVICE)) + $(NUM_CLIENTS) clients($(CLIENT_DEVICE)) [scenario=$(SCENARIO_ID)]"
 	@$(MAKE) native-check-port
 	@set -e; \
 	pids=""; \
@@ -218,6 +241,7 @@ native-run:
 		PYTHONUNBUFFERED=1 FSL_DEVICE=$(SERVER_DEVICE) \
 		FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_BIND_HOST=$(SERVER_HOST) \
 		FSL_SERVER_PORT=$(SERVER_PORT) \
+		SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) \
 		$(PYTHON) -u -m src.nodes.server_node 2>&1 | \
 		awk -v c="$(SERVER_COLOR)" -v r="$(RESET_COLOR)" \
 			'{printf "%s%-13s%s | %s\n", c, "server", r, $$0; fflush()}' \
@@ -248,6 +272,7 @@ native-run:
 			FSL_DEVICE=$(CLIENT_DEVICE) \
 			FSL_SERVER_HOST=$(SERVER_HOST) \
 			FSL_SERVER_PORT=$(SERVER_PORT) \
+			SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) \
 			$(PYTHON) -u -m src.nodes.client_node 2>&1 | \
 			awk -v p=$$(printf "client-%d" $$i) -v c="$$color" -v r="$(RESET_COLOR)" \
 				'{printf "%s%-13s%s | %s\n", c, p, r, $$0; fflush()}' \
@@ -280,10 +305,11 @@ native-clean:
 # Sync config.yaml to VPS (scp) and all Pis (ansible).
 # Run this whenever config.yaml changes — no need to rebuild the image.
 dist-sync-config:
-	@echo "=== Syncing config.yaml to VPS ==="
+	@echo "=== Syncing config.yaml and compose to VPS ==="
 	scp config.yaml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/config.yaml
+	scp docker-compose.server.yml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/docker-compose.server.yml
 	@echo "=== Syncing config.yaml to all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m copy \
 	  -a "src=config.yaml dest=/home/pi/config.yaml" \
 	  --become
@@ -295,7 +321,7 @@ dist-server-restart:
 	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "\
 	  cd ~/csc8114/code && \
 	  docker compose -f docker-compose.server.yml down && \
-	  docker compose -f docker-compose.server.yml up -d && \
+	  SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) docker compose -f docker-compose.server.yml up -d && \
 	  echo '[VPS] Server restarted.'"
 
 # Load image onto all Pis without Docker Hub access.
@@ -306,12 +332,12 @@ dist-load-image:
 	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "docker save $(CLIENT_IMAGE) | gzip > /tmp/fsl-client.tar.gz"
 	scp $(VPS_USER)@$(VPS_HOST_DEPLOY):/tmp/fsl-client.tar.gz /tmp/fsl-client.tar.gz
 	@echo "=== [2/3] Copying image to all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m copy \
 	  -a "src=/tmp/fsl-client.tar.gz dest=/tmp/fsl-client.tar.gz" \
 	  --become
 	@echo "=== [3/3] Loading image on all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m shell \
 	  -a "docker load -i /tmp/fsl-client.tar.gz" \
 	  --become
@@ -323,19 +349,19 @@ dist-load-image-local:
 	docker buildx build --platform linux/arm64 -t fsl-client:arm64 --load -f Dockerfile .
 	docker save fsl-client:arm64 | gzip > /tmp/fsl-client.tar.gz
 	@echo "=== [2/3] Copying image to all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m copy \
 	  -a "src=/tmp/fsl-client.tar.gz dest=/tmp/fsl-client.tar.gz" \
 	  --become
 	@echo "=== [3/3] Loading image on all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m shell \
 	  -a "docker load -i /tmp/fsl-client.tar.gz && docker tag fsl-client:arm64 cindyncl26/fsl-client:latest" \
 	  --become
 
 # Delete results/ and bestweights/ on all Pis, then recreate empty dirs.
 dist-clean-results:
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m shell \
 	  -a "rm -rf /home/pi/results /home/pi/bestweights && mkdir -p /home/pi/results /home/pi/bestweights" \
 	  --become
@@ -359,16 +385,21 @@ dist-build:
 	  --push .
 
 # Deploy the specified image to all 11 Pis via Ansible over Tailscale.
-# Uses inventory.taisale.ini (100.x.x.x Tailscale IPs).
+# Uses $(ANSIBLE_INV)
 dist-deploy:
 	ansible-playbook ansible/deploy_client.yml \
-	  -i ansible/inventory.taisale.ini \
+	  -i $(ANSIBLE_INV) \
 	  --extra-vars "image_tag=$(IMAGE_TAG)"
+
+dist-deploy-cindy:
+	ansible-playbook ansible/deploy_client.yml \
+	  -i $(ANSIBLE_INV) \
+	  --extra-vars "image_tag=$(IMAGE_TAG) session_id=$(SESSION_ID) scenario_id=$(SCENARIO_ID)"
 
 # Dry-run: show what Ansible would change without touching any Pi
 dist-deploy-check:
 	ansible-playbook ansible/deploy_client.yml \
-	  -i ansible/inventory.taisale.ini \
+	  -i $(ANSIBLE_INV) \
 	  --extra-vars "image_tag=$(IMAGE_TAG)" \
 	  --check
 
@@ -385,26 +416,12 @@ dist-start:
 	@echo "=== [1/4] Syncing config.yaml to VPS + Pis ==="
 	$(MAKE) dist-sync-config
 	@echo "=== [2/4] Restarting server on VPS ==="
-	$(MAKE) dist-server-restart
-	@echo "=== [3/4] Waiting for server at $(VPS_HOST_DEPLOY):$(SERVER_PORT) (timeout=$(STARTUP_TIMEOUT)s) ==="
-	@ready=0; \
-	for i in $$(seq 1 $(STARTUP_TIMEOUT)); do \
-		if python -c \
-			'import socket,sys; s=socket.socket(); s.settimeout(1); s.connect((sys.argv[1],int(sys.argv[2]))); s.close()' \
-			"$(VPS_HOST_DEPLOY)" "$(SERVER_PORT)" >/dev/null 2>&1; then \
-			ready=1; break; \
-		fi; \
-		printf "."; sleep 1; \
-	done; printf "\n"; \
-	if [ "$$ready" -ne 1 ]; then \
-		echo "ERROR: Server not reachable after $(STARTUP_TIMEOUT)s. Aborting."; \
-		exit 1; \
-	fi; \
-	echo "[OK] Server is reachable."
+	SESSION_ID=$(SESSION_ID) SCENARIO_ID=$(SCENARIO_ID) $(MAKE) dist-server-restart
+	@echo "[SKIP] Skipping reachability check, deploying clients directly..."
 	@echo "=== [4/4] Deploying clients to Pis (image=$(IMAGE_TAG)) ==="
 	ansible-playbook ansible/deploy_client.yml \
-	  -i ansible/inventory.taisale.ini \
-	  --extra-vars "image_tag=$(IMAGE_TAG)"
+	  -i $(ANSIBLE_INV) \
+	  --extra-vars "image_tag=$(IMAGE_TAG) session_id=$(SESSION_ID) scenario_id=$(SCENARIO_ID)"
 	@echo ""
 	@echo "Experiment is running. Follow logs with: make dist-logs"
 
@@ -417,7 +434,7 @@ dist-restart:
 	  docker compose -f docker-compose.server.yml down 2>/dev/null || true && \
 	  echo '[VPS] Server stopped.'"
 	@echo "=== [2/5] Stopping client containers on all Pis ==="
-	ansible clients -i ansible/inventory.taisale.ini \
+	ansible clients -i $(ANSIBLE_INV) \
 	  -m shell \
 	  -a "docker stop fsl-client 2>/dev/null || true && docker rm fsl-client 2>/dev/null || true" \
 	  --become
@@ -431,6 +448,12 @@ dist-restart:
 # Stream live server logs from the VPS; Ctrl-C to stop
 dist-logs:
 	ssh $(VPS_USER)@$(VPS_HOST_DEPLOY) "docker logs -f fsl-server"
+
+dist-fetch:
+	@echo "Fetching latest experiment results from VPS..."
+	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/ ./results/
+	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/bestweights/ ./bestweights/
+	@echo "Results and Weights synchronized to local machine."
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVALUATION  (eval-*)
@@ -512,3 +535,9 @@ matrix-dry-run:
 	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
 	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
 	echo "Running: $$CMD"; eval "$$CMD"
+
+matrix-report:
+	@if [ -z "$(SESSION)" ]; then \
+		echo "Usage: make matrix-report SESSION=2026-04-09_08-11-48"; exit 1; \
+	fi
+	$(PYTHON) src/data/generate_matrix_report.py --session $(SESSION)

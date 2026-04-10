@@ -154,7 +154,11 @@ def find_best_server(session_id: str | None = None) -> str:
         session_dir = bw_dir / session_id
         if not session_dir.is_dir():
             raise FileNotFoundError(f"Session not found under bestweights/: {session_id}")
+        
+        # Support both flat layout and nested scenario layout (e.g. session/01_seed42/server_head...)
         all_paths = glob.glob(str(session_dir / "server_head_round_*.pth"))
+        if not all_paths:
+            all_paths = glob.glob(str(session_dir / "**/server_head_round_*.pth"), recursive=True)
     else:
         # Collect from both flat root and one level of subdirectories
         flat_paths   = glob.glob(str(bw_dir / "server_head_round_*.pth"))
@@ -207,8 +211,11 @@ def find_matching_clients(server_path: str, *, allow_cross_session_fallback: boo
                 pass
         return ids
 
-    # Primary search: same directory as server
+    # Primary search: same directory as server or subdirectories
     primary_files = glob.glob(str(server_dir / "best_client_*_round_*_model_*.pth"))
+    if not primary_files:
+         primary_files = glob.glob(str(server_dir / "**/best_client_*_round_*_model_*.pth"), recursive=True)
+         
     client_ids    = _collect_ids(primary_files)
 
     if not client_ids and allow_cross_session_fallback:
@@ -428,6 +435,10 @@ def evaluate_client(
 
     total_loss, total_batches = 0.0, 0
     all_targets, all_preds, all_probs = [], [], []
+    
+    # Initialize buckets for 12 months
+    month_stats = {m: {"loss": 0.0, "batches": 0, "targets": [], "probs": []} for m in range(1, 13)}
+    
     sensor_data_cache: dict[Path, pd.DataFrame] = {}
     for file in client_files:
         sensor_data_cache[file] = load_sensor_data(str(file), horizon=horizon)
@@ -441,7 +452,6 @@ def evaluate_client(
             df = sensor_data_cache[file]
             test_indices = collect_test_indices_capped(
                 df,
-                split_date,
                 eval_max_samples=eval_max_samples,
                 min_history=seq_len,
                 horizon=horizon,
@@ -449,8 +459,16 @@ def evaluate_client(
             if len(test_indices) == 0:
                 print(f"  [WARNING] No valid test indices in {sensor_id} — skipped")
                 continue
-
+            
             for idx in test_indices:
+                # Resolve month from current timestamp
+                # Note: idx is the index label in indices, we need the timestamp at that index
+                try:
+                    ts = df.index[int(idx)]
+                    m_idx = ts.month
+                except:
+                    m_idx = 1 # Fallback
+                
                 target_val = float(df[FUTURE_RAIN_COL].iloc[int(idx)])
                 window_data = df.iloc[int(idx) - seq_len : int(idx)]
                 features = (
@@ -468,13 +486,43 @@ def evaluate_client(
                 rain_prob = torch.sigmoid(rain_logit).item()
                 raw_pred_val = inverse_target_scalar(rain_amount.item(), mode=target_mode)
                 pred_val = raw_pred_val if rain_prob >= effective_prob_threshold else 0.0
-                pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
+                
+                loss = criterion(torch.tensor([[pred_val]], device=device), y).item()
+                
+                # Monthly collectors
+                month_stats[m_idx]["loss"] += loss
+                month_stats[m_idx]["batches"] += 1
+                month_stats[m_idx]["targets"].append(target_val)
+                month_stats[m_idx]["probs"].append(rain_prob)
 
-                total_loss += criterion(pred, y).item()
-                total_batches += 1
+                # Global collectors
                 all_targets.append(target_val)
-                all_preds.append(pred_val)
                 all_probs.append(rain_prob)
+                all_preds.append(pred_val)
+                total_loss += loss
+                total_batches += 1
+            
+    # Calculate Final Monthly Details
+    monthly_details = []
+    from sklearn.metrics import accuracy_score, f1_score
+    
+    for m in range(1, 13):
+        m_data = month_stats[m]
+        if m_data["batches"] > 0:
+            m_mse = m_data["loss"] / m_data["batches"]
+            m_y_true = [1 if is_rain(t, threshold=rain_threshold) else 0 for t in m_data["targets"]]
+            m_y_pred = [1 if p >= effective_prob_threshold else 0 for p in m_data["probs"]]
+            
+            m_acc = accuracy_score(m_y_true, m_y_pred)
+            m_f1  = f1_score(m_y_true, m_y_pred, zero_division=0)
+            
+            monthly_details.append({
+                "Month": f"{m:02d}",
+                "MSE": round(m_mse, 6),
+                "Acc": round(m_acc, 4),
+                "F1": round(m_f1, 4),
+                "Samples": m_data["batches"]
+            })
 
     if total_batches == 0:
         print(f"  [ERROR] Client {client_id}: No test samples evaluated.")
@@ -552,6 +600,7 @@ def evaluate_client(
         "prob_threshold_source": prob_threshold_source,
         "rain_threshold_mm": rain_threshold,
         "target_transform": target_mode,
+        "monthly_details": monthly_details,
     }
 
 
@@ -771,7 +820,8 @@ def evaluate():
     results_dir = project_root / "results" / selected_session
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    report_stem = f"evaluation_report_{selected_session}"
+    safe_session_str = str(selected_session).replace("/", "_").replace("\\", "_")
+    report_stem = f"evaluation_report_{safe_session_str}"
     if report_tag:
         report_stem = f"{report_stem}_{report_tag}"
 

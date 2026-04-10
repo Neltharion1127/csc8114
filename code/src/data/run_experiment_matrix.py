@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import copy
 import csv
 import json
@@ -269,9 +269,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--backend",
-        choices=["native", "docker"],
+        choices=["native", "docker", "dist"],
         default="",
-        help="Execution backend override (native or docker).",
+        help="Execution backend override (native, docker, or dist for VPS+Pi cluster).",
     )
     parser.add_argument("--max-runs", type=int, default=0, help="Limit total runs (0 means no limit).")
     parser.add_argument("--dry-run", action="store_true", help="Print planned commands only.")
@@ -301,10 +301,14 @@ def main() -> int:
     eval_device = str(runner_cfg.get("eval_device", "cpu"))
     startup_timeout = int(runner_cfg.get("startup_timeout", 90))
     backend = str(args.backend or runner_cfg.get("backend", "native")).strip().lower()
-    if backend not in {"native", "docker"}:
+    if backend not in {"native", "docker", "dist"}:
         raise ValueError(f"Unsupported backend: {backend}")
     summary_csv_rel = str(runner_cfg.get("summary_csv", "results/matrix_summary.csv"))
     summary_csv = _resolve_path(summary_csv_rel)
+
+    # 🆕 Fix: Generate a unified session ID for this matrix run
+    main_session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    print(f"[MATRIX] Using Unified Session ID: {main_session_id}")
 
     configs_dir = PROJECT_ROOT / "results" / "matrix_configs"
 
@@ -366,7 +370,10 @@ def main() -> int:
         env = os.environ.copy()
         env_local = env.copy()
         env_local["FSL_CONFIG_PATH"] = str(run_config_path)
-        env_backend = env.copy()
+        env_local["SESSION_ID"] = main_session_id # 🆕 Force same session
+        env_local["SCENARIO_ID"] = scenario_id      # 🆕 Tell server which scenario
+        
+        env_backend = env_local.copy()
         if backend == "docker":
             env_backend["FSL_CONFIG_PATH"] = _to_container_config_path(run_config_path)
         else:
@@ -384,8 +391,14 @@ def main() -> int:
         before_res = _list_sessions(PROJECT_ROOT / "results")
 
         # Cleanup is best-effort; do not stop batch if no process exists.
-        cleanup_cmd = ["make", "native-clean"] if backend == "native" else ["make", "docker-clean"]
-        subprocess.run(cleanup_cmd, cwd=PROJECT_ROOT, env=env_backend, check=False)
+        if backend == "native":
+            cleanup_cmd = ["make", "native-clean"]
+        elif backend == "dist":
+            cleanup_cmd = []  # dist-start handles its own teardown
+        else:
+            cleanup_cmd = ["make", "docker-clean"]
+        if cleanup_cmd:
+            subprocess.run(cleanup_cmd, cwd=PROJECT_ROOT, env=env_backend, check=False)
         try:
             if backend == "native":
                 run_cmd = [
@@ -396,6 +409,15 @@ def main() -> int:
                     f"STARTUP_TIMEOUT={startup_timeout}",
                     f"NUM_CLIENTS={run_num_clients}",
                     "AUTO_PLOT=0",
+                ]
+            elif backend == "dist":
+                # Distributed: orchestrate VPS server + Raspberry Pi clients
+                run_cmd = [
+                    "make",
+                    "dist-start",
+                    f"SESSION_ID={main_session_id}",
+                    f"SCENARIO_ID={scenario_id}",
+                    f"NUM_CLIENTS={run_num_clients}",
                 ]
             else:
                 run_cmd = [
@@ -438,7 +460,8 @@ def main() -> int:
             error = str(exc)
             print(f"[MATRIX][ERROR] {run_id}: {error}")
         finally:
-            subprocess.run(cleanup_cmd, cwd=PROJECT_ROOT, env=env_backend, check=False)
+            if cleanup_cmd:
+                subprocess.run(cleanup_cmd, cwd=PROJECT_ROOT, env=env_backend, check=False)
 
         ended_at = datetime.now().isoformat(timespec="seconds")
         duration_sec = round(time.time() - start_ts, 2)

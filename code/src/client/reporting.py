@@ -53,7 +53,12 @@ def save_results(
     avg_latency: float | None = None,
     avg_bytes: float | None = None,
 ) -> None:
-    output_dir = os.path.join(project_root, "results", session_id)
+    scenario_id = os.environ.get("SCENARIO_ID")
+    if scenario_id:
+        output_dir = os.path.join(project_root, "results", session_id, scenario_id)
+    else:
+        output_dir = os.path.join(project_root, "results", session_id)
+        
     os.makedirs(output_dir, exist_ok=True)
 
     log_df = pd.DataFrame(experimental_logs)
@@ -101,7 +106,12 @@ def save_progress(
     Persist rolling progress to deterministic filenames so partial runs are recoverable.
     The file is overwritten each call and contains all logs collected so far.
     """
-    output_dir = os.path.join(project_root, "results", session_id)
+    scenario_id = os.environ.get("SCENARIO_ID")
+    if scenario_id:
+        output_dir = os.path.join(project_root, "results", session_id, scenario_id)
+    else:
+        output_dir = os.path.join(project_root, "results", session_id)
+        
     os.makedirs(output_dir, exist_ok=True)
 
     csv_name = f"training_log_client{client_id}_progress.csv"

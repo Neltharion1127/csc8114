@@ -117,7 +117,11 @@ def _register(stub, state: _ClientState, client_name: str, requested_client_id: 
         base_seed = cfg.get("training", {}).get("seed", 42)
         client_seed = (int(base_seed) + int(state.client_id)) if base_seed is not None else None
         set_global_seed(client_seed, role=f"client-{state.client_id}")
-        state.session_dir = os.path.join(project_root, "bestweights", state.session_id)
+        scenario_id = os.environ.get("SCENARIO_ID")
+        if scenario_id:
+            state.session_dir = os.path.join(project_root, "bestweights", state.session_id, scenario_id)
+        else:
+            state.session_dir = os.path.join(project_root, "bestweights", state.session_id)
         state.periodic_dir = os.path.join(state.session_dir, "periodic")
         os.makedirs(state.session_dir, exist_ok=True)
         os.makedirs(state.periodic_dir, exist_ok=True)
@@ -513,4 +517,6 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
 
 if __name__ == "__main__":
-    run_all_client()
+    # Prioritise num_rounds from config, fallback to 10
+    total_rounds = cfg.get("training", {}).get("num_rounds", 10)
+    run_all_client(epochs=total_rounds)

@@ -7,12 +7,16 @@ from src.shared.common import cfg, project_root
 
 
 class ServerReporter:
-    def __init__(self, *, session_id: str):
+    def __init__(self, *, session_id: str, session_dir: str | None = None):
         self.server_logs = []
         self._lock = threading.Lock()
         self.total_records = 0
-        self.log_dir = os.path.join(project_root, "results", session_id)
-        os.makedirs(self.log_dir, exist_ok=True)
+        if session_dir:
+            self.log_dir = session_dir
+        else:
+            self.log_dir = os.path.join(project_root, "results", session_id)
+            os.makedirs(self.log_dir, exist_ok=True)
+            
         self.log_file = os.path.join(self.log_dir, f"server_log_{session_id}.csv")
         self.flush_interval = max(1, int(cfg.get("server", {}).get("log_flush_interval", 100)))
         print(f"[SERVER] Server log path: {self.log_file}")

@@ -55,13 +55,30 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self._completed_clients: set[int] = set()
         self._shutdown_event = threading.Event()
 
-        self.session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
+        self.session_id = os.environ.get("SESSION_ID") or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.scenario_id = os.environ.get("SCENARIO_ID")
+        
+        # Weights root: bestweights/<session_id>[/<scenario_id>]
+        if self.scenario_id:
+            self.session_dir = os.path.join(project_root, "bestweights", self.session_id, self.scenario_id)
+        else:
+            self.session_dir = os.path.join(project_root, "bestweights", self.session_id)
+
         self.periodic_dir = os.path.join(self.session_dir, "periodic")
         os.makedirs(self.session_dir, exist_ok=True)
         os.makedirs(self.periodic_dir, exist_ok=True)
-        self.ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 10)
-        print(f"[SERVER] Session ID: {self.session_id} -> {self.session_dir}")
+
+        # Results/logs root: results/<session_id>[/<scenario_id>]
+        if self.scenario_id:
+            self.results_dir = os.path.join(project_root, "results", self.session_id, self.scenario_id)
+        else:
+            self.results_dir = os.path.join(project_root, "results", self.session_id)
+        os.makedirs(self.results_dir, exist_ok=True)
+
+        self.ckpt_interval = cfg.get("training", {}).get("checkpoint_interval", 1)
+        print(f"[SERVER] Session ID: {self.session_id} | Scenario: {self.scenario_id or 'None'}")
+        print(f"[SERVER] Weights dir: {self.session_dir}")
+        print(f"[SERVER] Results dir: {self.results_dir}")
         print(f"[SERVER] Periodic checkpoint every {self.ckpt_interval} rounds -> {self.periodic_dir}")
         self.fedavg = FedAvgCoordinator(
             num_clients=self.num_clients,
@@ -91,7 +108,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.log_server_requests = cfg.get("console", {}).get("log_server_requests", False)
         self.profiler_enabled = cfg.get("profiler", {}).get("enabled", True)
         self.scheduler_enabled = scheduler_cfg.get("enabled", True)
-        self.reporter = ServerReporter(session_id=self.session_id)
+        self.reporter = ServerReporter(session_id=self.session_id, session_dir=self.results_dir)
 
     def Register(self, request, context):
         """Assign a client id and return the shared session id."""
@@ -229,8 +246,9 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             f"epochs={request.completed_epochs} steps={request.total_steps} | "
             f"completed={completed}/{self.num_clients}"
         )
-        if completed == self.num_clients and len(self._registered_clients) >= self.num_clients:
-            print(f"[SERVER] ALL CLIENTS FINISHED | session={self.session_id}")
+        # Shutdown if everyone who showed up is finished
+        if completed >= len(self._registered_clients) and len(self._registered_clients) > 0:
+            print(f"[SERVER] ALL REGISTERED CLIENTS FINISHED ({completed}/{len(self._registered_clients)}) | session={self.session_id}")
             self.flush_logs()
             self._shutdown_event.set()
 

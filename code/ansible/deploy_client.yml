@@ -47,9 +47,11 @@
         image: "{{ client_image }}"
         state: started
         restart_policy: "no"
-        command: python src/nodes/client_node.py
+        command: python src/nodes/run_scenario_loop.py --role client
         env:
           CLIENT_ID: "{{ client_id | string }}"
+          SESSION_ID: "{{ session_id | default('') }}"
+          SCENARIO_ID: "{{ scenario_id | default('') }}"
           FSL_SERVER_HOST: "{{ server_host }}"
           FSL_CONFIG_PATH: /app/config.yaml
           PYTHONUNBUFFERED: "1"
