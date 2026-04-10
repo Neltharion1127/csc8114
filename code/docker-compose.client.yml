@@ -3,7 +3,7 @@ services:
     image: cindyncl26/fsl-client:latest
     container_name: fsl-client
     restart: "no"
-    command: python src/nodes/client_node.py
+    command: python src/nodes/run_scenario_loop.py --role client
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
@@ -12,6 +12,8 @@ services:
       - CLIENT_ID=${CLIENT_ID:-1}
       - FSL_SERVER_HOST=${FSL_SERVER_HOST:-51.254.207.168}
       - FSL_SERVER_PORT=${FSL_SERVER_PORT:-50051}
+      - SESSION_ID=${SESSION_ID:-}
+      - SCENARIO_ID=${SCENARIO_ID:-}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./dataset/processed:/app/dataset/processed:ro

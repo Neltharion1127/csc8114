@@ -120,6 +120,11 @@ make dist-clean-results  # 清空所有 Pi 的 results/ 和 bestweights/
 scp -r ubuntu@51.254.207.168:~/csc8114/code/results/ code/results/vps_results/
 scp -r ubuntu@51.254.207.168:~/csc8114/code/bestweights/ code/bestweights/
 ```
+```bash
+ansible clients -i ansible/inventory.taisale.ini \
+  -m ansible.posix.synchronize \
+  -a "mode=pull src=/home/pi/bestweights/ dest=code/bestweights/"
+```
 
 **Pull from all Pis / 从所有 Pi 拉取：**
 ```bash

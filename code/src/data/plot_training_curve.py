@@ -96,69 +96,29 @@ def _eval_pair(client_state: dict, server_state: dict,
     Run the split-inference model on the test set.
     Returns average MSE over all test samples.
     """
-    num_layers = sum(1 for k in client_state if k.startswith("lstm.weight_ih_l"))
-
-    client_model = ClientLSTM(
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        lstm_dropout=lstm_dropout,
-    ).to(device)
-    client_model.load_state_dict(client_state)
-    client_model.eval()
-
-    head_width = cfg.get("model", {}).get("server_head_width", 64)
-    head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
-    server_model = ServerHead(
-        hidden_size=hidden_size,
-        output_size=1,
-        head_width=head_width,
-        dropout=head_dropout,
-    ).to(device)
-    server_model.load_state_dict(server_state)
-    server_model.eval()
-
-    criterion    = nn.MSELoss()
+def _eval_pair(client_model, server_model, test_data_cache, device):
+    """
+    Run evaluation using a pre-loaded cache of test samples.
+    test_data_cache: list of (input_tensor, target_tensor) tuples
+    """
+    criterion = nn.MSELoss()
     prob_threshold = rain_probability_threshold()
-    data_dir     = project_root / cfg.get("data", {}).get("processed_dir", "dataset/processed")
-    features_cfg = cfg.get("data", {}).get(
-        "feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"]
-    )
-    total_hours = test_days * 24
     total_loss, total_batches = 0.0, 0
 
     with torch.no_grad():
-        for file in sorted(data_dir.glob("NCL_*.parquet")):
-            df = pd.read_parquet(file)
-            if "Timestamp" in df.columns:
-                df.set_index("Timestamp", inplace=True)
-                df.index = pd.to_datetime(df.index)
-            df[FUTURE_RAIN_COL] = df["Rain"].shift(-horizon).rolling(window=horizon).sum()
-
-            if len(df) < total_hours + seq_len:
-                continue
-
-            test_df = df.iloc[-total_hours:].reset_index(drop=True)
-            for idx in range(seq_len, len(test_df) - horizon):
-                if pd.isna(test_df.iloc[idx][FUTURE_RAIN_COL]):
-                    continue
-                target_val = float(test_df.iloc[idx][FUTURE_RAIN_COL])
-                window     = test_df.iloc[idx - seq_len : idx]
-                feat = (
-                    window[features_cfg]
-                    .apply(pd.to_numeric, errors="coerce")
-                    .fillna(0).values
-                )
-                x = torch.tensor(feat, dtype=torch.float32).unsqueeze(0).to(device)
-                y = torch.tensor([[target_val]], dtype=torch.float32).to(device)
-
-                smashed = client_model(x)
-                rain_logit, rain_amount = server_model(smashed)
-                rain_prob = torch.sigmoid(rain_logit).item()
-                pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
-                pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
-                total_loss += criterion(pred, y).item()
-                total_batches += 1
+        for x, y in test_data_cache:
+            # Shift to device
+            x_dev, y_dev = x.to(device), y.to(device)
+            # Run inference
+            smashed = client_model(x_dev)
+            rain_logit, rain_amount = server_model(smashed)
+            
+            rain_prob = torch.sigmoid(rain_logit).item()
+            pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
+            
+            pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
+            total_loss += criterion(pred, y_dev).item()
+            total_batches += 1
 
     return total_loss / total_batches if total_batches > 0 else float("nan")
 
@@ -177,24 +137,50 @@ def main():
     device = torch.device(args.device)
 
     # Config
-    test_days   = cfg.get("data",  {}).get("test_days",   5)
+    train_days = cfg.get("data",  {}).get("train_days", 20)
+    val_days   = cfg.get("data",  {}).get("val_days",   5)
     seq_len     = cfg.get("model", {}).get("seq_len",     48)
     horizon     = max(1, int(cfg.get("model", {}).get("horizon", 3)))
     input_size  = cfg.get("model", {}).get("input_size",   5)
     lstm_dropout = float(cfg.get("model", {}).get("lstm_dropout", cfg.get("model", {}).get("dropout", 0.3)))
     hidden_size = cfg.get("model", {}).get("hidden_size", 64)
 
+    # ── Dynamically calculate test_days ──────────────────────────────────────
+    # Pick a sample client file to determine total length
+    test_days = 5.0 # default fallback
+    try:
+        sample_files = sorted(list((project_root / "data" / "processed").glob("*.parquet")))
+        if sample_files:
+            df_sample = pd.read_parquet(sample_files[0])
+            # Total hours / 24 = total days
+            total_days = len(df_sample) / 24.0
+            test_days = max(0.1, total_days - train_days - val_days)
+    except Exception:
+        pass
+
     session_dir  = _find_session(args.session)
     periodic_dir = session_dir / "periodic"
-    session_name = session_dir.name
+    
+    # Preserve full relative path like "2026-04-09_08-11-48/01_seed42"
+    bw = project_root / "bestweights"
+    try:
+        session_rel_path = session_dir.relative_to(bw)
+        session_name = str(session_rel_path)
+    except ValueError:
+        session_name = session_dir.name
+        
+    session_id = session_name
 
     if not periodic_dir.is_dir():
         print(f"[ERROR] No periodic/ dir found in {session_dir}")
         sys.exit(1)
 
-    print(f"\n📂 Session   : {session_name}")
+    print(f"📅 Session   : {session_id}")
     print(f"⚙️  Device    : {device}")
-    print(f"📅 Test days : {test_days}  |  seq_len={seq_len} horizon={horizon}\n")
+    
+    # 🕵️‍♂️ UI Update: Explain that this is the Cyclic test window per month
+    msg_days = f"{test_days:.1f} (per month)" if test_days < 10 else f"{test_days}"
+    print(f"📅 Test window: {msg_days}  |  seq_len={seq_len} horizon={horizon}\n")
 
     # ── Collect server periodic checkpoints ──────────────────────────────────
     server_ckpts = {
@@ -222,7 +208,39 @@ def main():
         sys.exit(1)
 
     print(f"Clients found: {client_ids_sorted}")
+    
+    # 📉 Optimization: In Federated Learning, clients share the same global model.
+    # Evaluating CLIENT 1 is sufficient to see the trend.
+    eval_client_ids = [1] if 1 in client_ids_sorted else [client_ids_sorted[0]]
+    print(f"\u26a1\ufe0f  Plotting representative Client {eval_client_ids[0]} for speed...")
     print(f"Server rounds: {server_rounds}\n")
+
+    # ── Pre-load Test Data Cache (Speed Hack!) ──────────────────────────────
+    print(f"⏳ Pre-loading test samples from 3-year dataset (Monthly Cyclic)...")
+    from src.client.data_pipeline import collect_test_indices, load_sensor_data
+    
+    data_dir = None
+    for pd_name in [cfg.get("data", {}).get("processed_dir", "dataset/processed"), "data/processed", "dataset/processed"]:
+        candidate = project_root / pd_name
+        if candidate.is_dir() and any(candidate.glob("*.parquet")):
+            data_dir = candidate
+            break
+            
+    test_data_cache = []
+    if data_dir:
+        features_cfg = cfg.get("data", {}).get("feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"])
+        for file in sorted(data_dir.glob("*.parquet")):
+            df = load_sensor_data(str(file), horizon=horizon)
+            test_indices = collect_test_indices(df, min_history=seq_len, horizon=horizon)
+            for idx in test_indices:
+                target_val = float(df.iloc[idx][FUTURE_RAIN_COL])
+                window = df.iloc[idx - seq_len : idx]
+                feat = window[features_cfg].apply(pd.to_numeric, errors="coerce").fillna(0).values
+                test_data_cache.append((
+                    torch.tensor(feat, dtype=torch.float32).unsqueeze(0),
+                    torch.tensor([[target_val]], dtype=torch.float32)
+                ))
+    print(f"✅ Cached {len(test_data_cache)} test samples.\n")
 
     # ── Evaluate every (client, round) pair ──────────────────────────────────
     # Structure: results[client_id] = [(round, train_loss, test_mse), ...]
@@ -247,15 +265,25 @@ def main():
             client_state, train_loss, _ = _load_ckpt(ckpt_path, device)
             server_state, _, _          = _load_ckpt(srv_path,  device)
 
-            print(f"  Client {cid} | round {r:04d} | train_loss={train_loss:.4f} "
-                  f"| evaluating...", end="", flush=True)
-            test_mse = _eval_pair(
-                client_state, server_state,
-                hidden_size, device, test_days, seq_len, horizon, input_size, lstm_dropout
-            )
-            print(f"  test_mse={test_mse:.4f}")
-            curve.append((r, train_loss, test_mse))
+            # Initialize models
+            num_layers = sum(1 for k in client_state if k.startswith("lstm.weight_ih_l"))
+            c_model = ClientLSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, lstm_dropout=lstm_dropout).to(device)
+            c_model.load_state_dict(client_state)
+            c_model.eval()
 
+            head_width = cfg.get("model", {}).get("server_head_width", 64)
+            head_dropout = cfg.get("model", {}).get("server_head_dropout", 0.1)
+            s_model = ServerHead(hidden_size=hidden_size, output_size=1, head_width=head_width, dropout=head_dropout).to(device)
+            s_model.load_state_dict(server_state)
+            s_model.eval()
+
+            print(f"  Client {cid} | round {r:04d} | train_loss={train_loss:.4f} | evaluating...", end="\r", flush=True)
+            
+            # 🔥 Real-time calculation on TEST SET
+            test_mse = _eval_pair(c_model, s_model, test_data_cache, device)
+            print(f"  Client {cid} | round {r:04d} | train_loss={train_loss:.4f} | test_mse={test_mse:.4f}")
+
+            curve.append((r, train_loss, test_mse))
         results[cid] = curve
 
     if not results:
@@ -334,7 +362,9 @@ def main():
 
     out_dir  = project_root / "results" / session_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"training_curve_{session_name}.png"
+    
+    safe_session_name = session_name.replace("/", "_").replace("\\", "_")
+    out_path = out_dir / f"training_curve_{safe_session_name}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 

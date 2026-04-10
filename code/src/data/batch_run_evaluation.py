@@ -17,8 +17,31 @@ def _resolve_root(path_str: str) -> Path:
 def _list_sessions(root: Path) -> list[str]:
     if not root.exists():
         return []
-    sessions = [p.name for p in root.iterdir() if p.is_dir() and p.name.startswith("20")]
-    return sorted(sessions)
+        
+    # Find all directories containing a server model (recursive)
+    found_dirs = set()
+    for p in root.glob("**/server_head_round_*.pth"):
+        # Get path relative to root
+        try:
+            rel_dir = p.parent.relative_to(root)
+            if str(rel_dir) == ".":
+                # If weights are in root (flat layout), we don't treat root as a session name 
+                # unless we want to support it specifically. 
+                # For this project, sessions are subdirs.
+                pass
+            else:
+                found_dirs.add(str(rel_dir))
+        except ValueError:
+            continue
+            
+    if not found_dirs:
+        # Fallback to legacy behavior for backward compatibility
+        found_dirs = [
+            p.name for p in root.iterdir() 
+            if p.is_dir() and (p.name.startswith("20") or "seed" in p.name)
+        ]
+        
+    return sorted(list(found_dirs))
 
 
 def main() -> int:
@@ -86,8 +109,17 @@ def main() -> int:
     print(f"[BATCH-EVAL] sessions_root={sessions_root}")
     print(f"[BATCH-EVAL] total_sessions={len(sessions)}")
 
+    bw_dir = PROJECT_ROOT / "bestweights"
+    try:
+        rel_prefix = sessions_root.relative_to(bw_dir)
+    except ValueError:
+        rel_prefix = Path("")
+
     failures: list[str] = []
     for idx, session_id in enumerate(sessions, start=1):
+        # e.g., if rel_prefix is '2026-04-09_08-11-48', combine it with '01_seed42'
+        full_session_path = str(rel_prefix / session_id) if str(rel_prefix) != "." else session_id
+
         cmd = [
             sys.executable,
             "-m",
@@ -95,7 +127,7 @@ def main() -> int:
             "--device",
             str(args.device),
             "--session",
-            session_id,
+            full_session_path,
         ]
         if args.force_prob_threshold is not None:
             cmd.extend(["--force-prob-threshold", str(args.force_prob_threshold)])
