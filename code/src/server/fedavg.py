@@ -47,7 +47,7 @@ class FedAvgCoordinator:
         self.round_timeout_sec = max(0.1, float(round_timeout_sec))
         self.grace_period_sec = max(0.0, float(grace_period_sec))
         self._quorum_reached_at: float | None = None
-        self._server_start_time: float = time.time()
+        self._startup_deadline: float | None = None
 
         self.client_weights_buffer: dict[int, PendingUpdate] = {}
         self.global_weights = None
@@ -166,11 +166,19 @@ class FedAvgCoordinator:
                 )
 
             # Before the first round, wait until enough clients have connected.
-            # Deadline is measured from server startup, not from first weight submission.
+            # Deadline is measured from when the FIRST client enters this wait,
+            # not from server startup — the server may have been up for a long time
+            # before clients are deployed via Ansible.
             if self.current_round == 0:
-                deadline = self._server_start_time + self.round_timeout_sec
+                if self._startup_deadline is None:
+                    self._startup_deadline = time.time() + self.round_timeout_sec
+                    print(
+                        f"[FED AVG] Startup wait begun: waiting up to {self.round_timeout_sec:.0f}s "
+                        f"for {self.min_clients_per_round} clients "
+                        f"(currently {len(self._active_clients)} registered)."
+                    )
                 while len(self._active_clients) < self.min_clients_per_round:
-                    remaining = deadline - time.time()
+                    remaining = self._startup_deadline - time.time()
                     if remaining <= 0:
                         print(
                             f"[FED AVG] Startup wait timed out: only "
