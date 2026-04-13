@@ -36,17 +36,25 @@ def partition_client_files(
     client_id: int,
     num_clients: int,
 ) -> list[str]:
-    """Partition file list across clients using the same deterministic rule as training."""
+    """Assign exactly one file per client (strict 1:1 mapping).
+
+    Files are sorted deterministically; client N receives sorted_files[N-1].
+    Raises ValueError if num_clients exceeds the number of available files,
+    since that would leave some clients with no data.
+    """
     if num_clients <= 0:
         raise ValueError(f"num_clients must be positive, got {num_clients}")
     if client_id <= 0:
         raise ValueError(f"client_id must be positive, got {client_id}")
 
     sorted_files = sorted(all_files)
-    chunk_size = len(sorted_files) // num_clients
-    start_idx = (client_id - 1) * chunk_size
-    end_idx = start_idx + chunk_size if client_id < num_clients else len(sorted_files)
-    return sorted_files[start_idx:end_idx]
+    if num_clients > len(sorted_files):
+        raise ValueError(
+            f"num_clients ({num_clients}) exceeds available sensor files "
+            f"({len(sorted_files)}). Reduce num_clients or add more sensor files."
+        )
+
+    return [sorted_files[client_id - 1]]
 
 
 def resolve_split_pos(df: pd.DataFrame, split_date: pd.Timestamp) -> int:
@@ -59,15 +67,15 @@ def resolve_split_pos(df: pd.DataFrame, split_date: pd.Timestamp) -> int:
 
 
 def get_dataset_split(ts: pd.Timestamp) -> str:
-    """Monthly cycle logic based on configuration."""
-    train_limit = int(cfg.get("data", {}).get("train_days", 20))
-    val_limit   = train_limit + int(cfg.get("data", {}).get("val_days", 5))
-    day = ts.day
-    if day <= train_limit:
+    """Chronological time-based split using absolute date boundaries from config."""
+    data_cfg = cfg.get("data", {})
+    train_end = pd.Timestamp(data_cfg.get("train_end", "2024-12-31"))
+    val_end   = pd.Timestamp(data_cfg.get("val_end",   "2025-06-30"))
+    if ts < train_end:
         return "TRAIN"
-    if day <= val_limit:
+    if ts < val_end:
         return "VAL"
-    return "TEST"  # Remaining days
+    return "TEST"
 
 
 def collect_eval_indices(

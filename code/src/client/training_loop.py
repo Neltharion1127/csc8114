@@ -98,7 +98,7 @@ def compute_feature_stats(
     sensor_data_cache: dict[str, pd.DataFrame],
     feature_cols: list[str],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Calculate normalisation statistics using only TRAIN-phase rows (day 1-20 of each month)."""
+    """Calculate normalisation statistics using only TRAIN-phase rows (2023-01-01 to 2024-12-31)."""
     from src.client.data_pipeline import get_dataset_split
     print(f"[CLIENT {client_id}] Calculating feature statistics for normalisation (TRAIN phase only)...")
     train_frames: list[pd.DataFrame] = []

@@ -202,12 +202,12 @@ def _init_local(state: _ClientState, data_dir: str, compression_mode: str) -> No
     )
     if val_samples == 0:
         raise RuntimeError(
-            f"Client {state.client_id} has 0 validation samples (monthly days 21-25). "
-            "Check dataset timestamps and val_days configuration."
+            f"Client {state.client_id} has 0 validation samples. "
+            "Check dataset timestamps and train_end/val_end configuration."
         )
     print(
-        f"[CLIENT {state.client_id}] Monthly split | TRAIN: day 1-20 "
-        f"| VAL: day 21-25 | TEST: day 26-end | horizon={state.target_horizon}h"
+        f"[CLIENT {state.client_id}] Chronological split | TRAIN: ≤2024-12-31 "
+        f"| VAL: 2025-01-01→2025-06-30 | TEST: ≥2025-07-01 | horizon={state.target_horizon}h"
     )
     base_rho = max(1, int(cfg.get("federated", {}).get("rho", 1)))
     state.train_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)

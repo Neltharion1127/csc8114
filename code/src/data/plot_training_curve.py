@@ -137,26 +137,11 @@ def main():
     device = torch.device(args.device)
 
     # Config
-    train_days = cfg.get("data",  {}).get("train_days", 20)
-    val_days   = cfg.get("data",  {}).get("val_days",   5)
     seq_len     = cfg.get("model", {}).get("seq_len",     48)
     horizon     = max(1, int(cfg.get("model", {}).get("horizon", 3)))
     input_size  = cfg.get("model", {}).get("input_size",   5)
     lstm_dropout = float(cfg.get("model", {}).get("lstm_dropout", cfg.get("model", {}).get("dropout", 0.3)))
     hidden_size = cfg.get("model", {}).get("hidden_size", 64)
-
-    # ── Dynamically calculate test_days ──────────────────────────────────────
-    # Pick a sample client file to determine total length
-    test_days = 5.0 # default fallback
-    try:
-        sample_files = sorted(list((project_root / "data" / "processed").glob("*.parquet")))
-        if sample_files:
-            df_sample = pd.read_parquet(sample_files[0])
-            # Total hours / 24 = total days
-            total_days = len(df_sample) / 24.0
-            test_days = max(0.1, total_days - train_days - val_days)
-    except Exception:
-        pass
 
     session_dir  = _find_session(args.session)
     periodic_dir = session_dir / "periodic"
@@ -179,8 +164,7 @@ def main():
     print(f"⚙️  Device    : {device}")
     
     # 🕵️‍♂️ UI Update: Explain that this is the Cyclic test window per month
-    msg_days = f"{test_days:.1f} (per month)" if test_days < 10 else f"{test_days}"
-    print(f"📅 Test window: {msg_days}  |  seq_len={seq_len} horizon={horizon}\n")
+    print(f"📅 Test window: 2025-07-01 → end  |  seq_len={seq_len} horizon={horizon}\n")
 
     # ── Collect server periodic checkpoints ──────────────────────────────────
     server_ckpts = {

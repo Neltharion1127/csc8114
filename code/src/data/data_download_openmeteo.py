@@ -39,16 +39,16 @@ if dd_cfg.get("end_date"):
 else:
     END_DATE = datetime.now().strftime("%Y-%m-%d")
 
-OUT_DIR = Path(project_root) / dd_cfg.get("raw_out_dir", "dataset") / "processed"
+OUT_DIR     = Path(project_root) / dd_cfg.get("raw_out_dir", "dataset") / "processed"
+HOLDOUT_DIR = Path(project_root) / dd_cfg.get("raw_out_dir", "dataset") / "holdout"
 
 # Open-Meteo API endpoint for historical weather re-analysis (ERA5)
 API_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-# 12 representative locations around Newcastle to simulate distributed sensors
+# 11 training locations (north bank of the Tyne) — one file per federated client
 LOCATIONS = [
     {"name": "NCL_CITY_CENTRE",  "lat": 54.978,  "lon": -1.617},
     {"name": "NCL_JESMOND",      "lat": 54.988,  "lon": -1.602},
-    {"name": "NCL_GATESHEAD",    "lat": 54.962,  "lon": -1.601},
     {"name": "NCL_GOSFORTH",     "lat": 55.001,  "lon": -1.616},
     {"name": "NCL_WALLSEND",     "lat": 55.000,  "lon": -1.534},
     {"name": "NCL_BYKER",        "lat": 54.972,  "lon": -1.574},
@@ -58,6 +58,13 @@ LOCATIONS = [
     {"name": "NCL_BLAYDON",      "lat": 54.966,  "lon": -1.712},
     {"name": "NCL_SCOTSWOOD",    "lat": 54.970,  "lon": -1.654},
     {"name": "NCL_BENWELL",      "lat": 54.975,  "lon": -1.638},
+]
+
+# Holdout location — south bank of the Tyne (Gateshead borough), geographically
+# isolated from all training sites by the River Tyne.  Never seen during training;
+# used only for post-training cross-location generalisation evaluation.
+HOLDOUT_LOCATIONS = [
+    {"name": "NCL_GATESHEAD",    "lat": 54.962,  "lon": -1.601},
 ]
 
 # Open-Meteo variable mapping → our column names
@@ -106,27 +113,36 @@ def fetch_location(loc: dict) -> pd.DataFrame | None:
     return df
 
 
-def main():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    print(f"Downloading Open-Meteo data for {len(LOCATIONS)} locations")
-    print(f"Period: {START_DATE} → {END_DATE}")
-    print(f"Output: {OUT_DIR}\n")
-
-    for loc in LOCATIONS:
+def _download_locations(locations: list[dict], out_dir: Path) -> int:
+    """Download a list of locations into out_dir. Returns count of successes."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    success = 0
+    for loc in locations:
         print(f"  [{loc['name']}] Fetching...", end=" ", flush=True)
         try:
             df = fetch_location(loc)
-            out_path = OUT_DIR / f"{loc['name']}.parquet"
+            out_path = out_dir / f"{loc['name']}.parquet"
             df.to_parquet(out_path, index=False)
             rain_rows = (df["Rain"] > 0).sum()
             print(f"✓  {len(df):,} rows | Rain: {rain_rows:,} samples ({100*rain_rows/len(df):.1f}%)")
+            success += 1
         except Exception as e:
             print(f"✗  FAILED: {e}")
+    return success
 
-    # Quick summary
-    files = list(OUT_DIR.glob("NCL_*.parquet"))
-    print(f"\n✅ Done. {len(files)}/{len(LOCATIONS)} locations saved to {OUT_DIR}/")
+
+def main():
+    print(f"Downloading Open-Meteo data")
+    print(f"Period: {START_DATE} → {END_DATE}\n")
+
+    print(f"── Training locations ({len(LOCATIONS)}) → {OUT_DIR}")
+    n_train = _download_locations(LOCATIONS, OUT_DIR)
+
+    print(f"\n── Holdout locations ({len(HOLDOUT_LOCATIONS)}) → {HOLDOUT_DIR}")
+    n_holdout = _download_locations(HOLDOUT_LOCATIONS, HOLDOUT_DIR)
+
+    total = len(LOCATIONS) + len(HOLDOUT_LOCATIONS)
+    print(f"\n✅ Done. {n_train + n_holdout}/{total} locations saved.")
 
 
 if __name__ == "__main__":
