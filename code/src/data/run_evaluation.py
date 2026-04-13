@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.metrics import accuracy_score, average_precision_score, f1_score, roc_auc_score
 
 # --- Configuration & Paths ---
 project_root = Path(__file__).resolve().parents[2]
@@ -16,6 +17,7 @@ if str(project_root) not in sys.path:
 from src.shared.common import cfg, feature_cols_from_cfg, get_nested
 from src.client.data_pipeline import (
     FUTURE_RAIN_COL,
+    collect_eval_indices_capped,
     collect_test_indices_capped,
     load_sensor_data,
     partition_client_files,
@@ -36,6 +38,37 @@ def _normalize_report_tag(tag: str) -> str:
         return ""
     safe = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in raw)
     return safe.strip("_")
+
+
+def _parse_threshold_list(spec: str) -> list[float]:
+    raw = str(spec).strip()
+    if not raw:
+        return []
+    if ":" in raw:
+        parts = [p.strip() for p in raw.split(":")]
+        if len(parts) != 3:
+            raise ValueError("--scan-thresholds with ':' must be start:end:step")
+        start, end, step = (float(parts[0]), float(parts[1]), float(parts[2]))
+        if step <= 0:
+            raise ValueError("--scan-thresholds step must be > 0")
+        values: list[float] = []
+        x = start
+        # epsilon for float endpoint inclusion
+        while x <= end + 1e-12:
+            values.append(float(round(x, 6)))
+            x += step
+        return [v for v in values if 0.0 <= v <= 1.0]
+
+    values = []
+    for token in raw.split(","):
+        t = token.strip()
+        if not t:
+            continue
+        v = float(t)
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"threshold out of range [0,1]: {v}")
+        values.append(float(round(v, 6)))
+    return sorted(set(values))
 
 
 def _parse_timestamp(path: str) -> str:
@@ -84,56 +117,77 @@ def find_periodic_pair(
         or all cid in [1..num_clients] if num_clients is provided.
     """
     session_dir = project_root / "bestweights" / session_id
-    periodic_dir = session_dir / "periodic"
-    if not periodic_dir.is_dir():
+    if not session_dir.is_dir():
         return None
 
-    server_by_round: dict[int, str] = {}
-    for p in periodic_dir.glob("server_round_*.pth"):
-        try:
-            r = int(p.stem.split("_")[-1])
-        except ValueError:
-            continue
-        server_by_round[r] = str(p)
-    if not server_by_round:
+    periodic_roots: list[Path] = []
+    direct = session_dir / "periodic"
+    if direct.is_dir():
+        periodic_roots.append(direct)
+    for sub in sorted(session_dir.glob("*/periodic")):
+        if sub.is_dir():
+            periodic_roots.append(sub)
+    if not periodic_roots:
         return None
 
-    client_by_round: dict[int, dict[int, str]] = {}
-    for p in periodic_dir.glob("client_*_round_*.pth"):
-        parts = p.stem.split("_")
-        try:
-            cid = int(parts[1])
-            rnd = int(parts[3])
-        except (IndexError, ValueError):
+    best_candidate: tuple[int, float, str, dict[int, str]] | None = None
+    # Sort newest-first so ties prefer most recent scenario folder.
+    periodic_roots.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for periodic_dir in periodic_roots:
+        server_by_round: dict[int, str] = {}
+        for p in periodic_dir.glob("server_round_*.pth"):
+            try:
+                r = int(p.stem.split("_")[-1])
+            except ValueError:
+                continue
+            server_by_round[r] = str(p)
+        if not server_by_round:
             continue
-        client_by_round.setdefault(cid, {})[rnd] = str(p)
 
-    if target_round is not None:
-        candidate_rounds = [target_round]
-    else:
-        candidate_rounds = sorted(server_by_round.keys(), reverse=True)
+        client_by_round: dict[int, dict[int, str]] = {}
+        for p in periodic_dir.glob("client_*_round_*.pth"):
+            parts = p.stem.split("_")
+            try:
+                cid = int(parts[1])
+                rnd = int(parts[3])
+            except (IndexError, ValueError):
+                continue
+            client_by_round.setdefault(cid, {})[rnd] = str(p)
 
-    for rnd in candidate_rounds:
-        server_path = server_by_round.get(rnd)
-        if not server_path:
-            continue
-        cmap: dict[int, str] = {}
-        if num_clients is None:
-            expected_cids = sorted(cid for cid, by_round in client_by_round.items() if rnd in by_round)
+        if target_round is not None:
+            candidate_rounds = [target_round]
         else:
-            expected_cids = list(range(1, num_clients + 1))
-        if not expected_cids:
-            continue
-        ok = True
-        for cid in expected_cids:
-            cpath = client_by_round.get(cid, {}).get(rnd)
-            if not cpath:
-                ok = False
-                break
-            cmap[cid] = cpath
-        if ok:
-            return rnd, server_path, cmap
-    return None
+            candidate_rounds = sorted(server_by_round.keys(), reverse=True)
+
+        for rnd in candidate_rounds:
+            server_path = server_by_round.get(rnd)
+            if not server_path:
+                continue
+            cmap: dict[int, str] = {}
+            if num_clients is None:
+                expected_cids = sorted(cid for cid, by_round in client_by_round.items() if rnd in by_round)
+            else:
+                expected_cids = list(range(1, num_clients + 1))
+            if not expected_cids:
+                continue
+            ok = True
+            for cid in expected_cids:
+                cpath = client_by_round.get(cid, {}).get(rnd)
+                if not cpath:
+                    ok = False
+                    break
+                cmap[cid] = cpath
+            if not ok:
+                continue
+
+            candidate = (rnd, periodic_dir.stat().st_mtime, server_path, cmap)
+            if best_candidate is None or candidate[:2] > best_candidate[:2]:
+                best_candidate = candidate
+            break
+
+    if best_candidate is None:
+        return None
+    return best_candidate[0], best_candidate[2], best_candidate[3]
 
 
 def find_best_server(session_id: str | None = None) -> str:
@@ -273,12 +327,12 @@ def find_matching_clients(server_path: str, *, allow_cross_session_fallback: boo
 def _metrics_from_cm(tp: int, fn: int, fp: int, tn: int) -> dict[str, float | int]:
     total = max(1, tp + fn + fp + tn)
     accuracy = float((tp + tn) / total * 100.0)
-    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
-    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     f1 = (
         float(2.0 * recall * precision / (recall + precision))
-        if not np.isnan(recall) and not np.isnan(precision) and (recall + precision) > 0
-        else float("nan")
+        if (recall + precision) > 0
+        else 0.0
     )
     return {
         "accuracy": accuracy,
@@ -290,6 +344,23 @@ def _metrics_from_cm(tp: int, fn: int, fp: int, tn: int) -> dict[str, float | in
         "fp": int(fp),
         "tn": int(tn),
     }
+
+
+def _class_metrics_at_threshold(
+    *,
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    threshold: float,
+) -> dict[str, float | int]:
+    y_pred = (probs >= float(threshold)).astype(np.int32)
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    metrics = _metrics_from_cm(tp, fn, fp, tn)
+    metrics["pred_positive_rate"] = float(y_pred.mean())
+    metrics["threshold"] = float(threshold)
+    return metrics
 
 
 def _resolve_eval_settings(server_raw: dict | object) -> tuple[dict, str]:
@@ -308,7 +379,6 @@ def _resolve_eval_settings(server_raw: dict | object) -> tuple[dict, str]:
         return get_nested(cfg, path, default)
 
     settings = {
-        "test_days": int(_setting(("data", "test_days"), 14)),
         "end_date_str": str(_setting(("data_download", "end_date"), "2026-03-10T00:00:00")),
         "eval_max_samples": max(0, int(_setting(("training", "eval_max_samples_per_sensor"), 0))),
         "seq_len": int(_setting(("model", "seq_len"), 24)),
@@ -321,16 +391,23 @@ def _resolve_eval_settings(server_raw: dict | object) -> tuple[dict, str]:
         "num_clients": max(1, int(_setting(("federated", "num_clients"), 1))),
         "processed_dir": str(_setting(("data", "processed_dir"), "dataset/processed")),
         "active_features": feature_cols_from_cfg(snapshot),
-        "prob_threshold": float(rain_probability_threshold(config=snapshot)),
-        "rain_threshold": float(rain_threshold_mm(config=snapshot)),
-        "target_mode": str(target_transform_mode(config=snapshot)),
+        "prob_threshold": float(
+            _setting(("training", "rain_probability_threshold"), rain_probability_threshold())
+        ),
+        "rain_threshold": float(
+            _setting(("training", "rain_threshold_mm"), rain_threshold_mm())
+        ),
+        "target_mode": str(
+            _setting(("training", "target_transform"), target_transform_mode())
+        ).strip().lower(),
         "config_snapshot_used": snapshot is not None,
     }
     server_cfg = server_raw.get("config", {}) if isinstance(server_raw, dict) else {}
     if isinstance(server_cfg, dict) and server_cfg.get("hidden_size") is not None:
         settings["hidden_size"] = int(server_cfg.get("hidden_size"))
 
-    split_date = pd.Timestamp(settings["end_date_str"]).tz_localize(None) - pd.Timedelta(days=settings["test_days"])
+    val_end_str = str(_setting(("data", "val_end"), "2025-07-01"))
+    split_date = pd.Timestamp(val_end_str)
     settings["split_date"] = split_date
     return settings, source
 
@@ -352,6 +429,9 @@ def evaluate_client(
     active_features: list[str],
     prob_threshold: float,
     force_prob_threshold: float | None,
+    prefer_checkpoint_threshold: bool,
+    eval_phase: str,
+    scan_thresholds: list[float] | None,
     rain_threshold: float,
     target_mode: str,
 ) -> dict:
@@ -364,7 +444,6 @@ def evaluate_client(
     # ── Load checkpoint (supports both new dict format and old bare state_dict) ──
     raw = torch.load(client_path, map_location="cpu", weights_only=True)
     client_prob_threshold: float | None = None
-    checkpoint_cls_metrics: dict | None = None
     if isinstance(raw, dict) and "model_state_dict" in raw:
         # New format: full checkpoint dict
         state_dict   = raw["model_state_dict"]
@@ -378,8 +457,6 @@ def evaluate_client(
                 client_prob_threshold = float(cls_metrics.get("threshold"))
             except (TypeError, ValueError):
                 client_prob_threshold = None
-        if isinstance(cls_metrics, dict):
-            checkpoint_cls_metrics = cls_metrics
         print(f"\n[Client {client_id}] \U0001f4c4 Checkpoint dict \u2014 best_round={saved_round}, train_loss={saved_loss:.4f}")
     else:
         # Old format: bare state_dict
@@ -390,7 +467,7 @@ def evaluate_client(
     if force_prob_threshold is not None:
         effective_prob_threshold = float(force_prob_threshold)
         prob_threshold_source = "forced_cli"
-    elif client_prob_threshold is not None:
+    elif prefer_checkpoint_threshold and client_prob_threshold is not None:
         effective_prob_threshold = client_prob_threshold
         prob_threshold_source = "client_checkpoint"
     else:
@@ -450,17 +527,26 @@ def evaluate_client(
         for file in client_files:
             sensor_id = file.stem
             df = sensor_data_cache[file]
-            test_indices = collect_test_indices_capped(
-                df,
-                eval_max_samples=eval_max_samples,
-                min_history=seq_len,
-                horizon=horizon,
-            )
-            if len(test_indices) == 0:
-                print(f"  [WARNING] No valid test indices in {sensor_id} — skipped")
+            if eval_phase == "VAL":
+                eval_indices = collect_eval_indices_capped(
+                    df,
+                    target_phase="VAL",
+                    eval_max_samples=eval_max_samples,
+                    min_history=seq_len,
+                    horizon=horizon,
+                )
+            else:
+                eval_indices = collect_test_indices_capped(
+                    df,
+                    eval_max_samples=eval_max_samples,
+                    min_history=seq_len,
+                    horizon=horizon,
+                )
+            if len(eval_indices) == 0:
+                print(f"  [WARNING] No valid {eval_phase} indices in {sensor_id} — skipped")
                 continue
             
-            for idx in test_indices:
+            for idx in eval_indices:
                 # Resolve month from current timestamp
                 # Note: idx is the index label in indices, we need the timestamp at that index
                 try:
@@ -504,7 +590,6 @@ def evaluate_client(
             
     # Calculate Final Monthly Details
     monthly_details = []
-    from sklearn.metrics import accuracy_score, f1_score
     
     for m in range(1, 13):
         m_data = month_stats[m]
@@ -534,28 +619,27 @@ def evaluate_client(
     mae      = float(np.mean(np.abs(targets_arr - preds_arr)))
     probs_arr = np.array(all_probs)
     y_true = np.array([1 if is_rain(t, threshold=rain_threshold) else 0 for t in targets_arr], dtype=np.int32)
+    positive_rate = float(y_true.mean())
+    prob_mean = float(probs_arr.mean())
+    prob_std = float(probs_arr.std())
+    brier = float(np.mean((probs_arr - y_true) ** 2))
+    if np.unique(y_true).size >= 2:
+        roc_auc = float(roc_auc_score(y_true, probs_arr))
+    else:
+        roc_auc = 0.5
+    if int(y_true.sum()) > 0:
+        auprc = float(average_precision_score(y_true, probs_arr))
+    else:
+        auprc = 0.0
 
-    y_pred_cls = (probs_arr >= effective_prob_threshold).astype(np.int32)
-    cls_tp = int(((y_true == 1) & (y_pred_cls == 1)).sum())
-    cls_fn = int(((y_true == 1) & (y_pred_cls == 0)).sum())
-    cls_fp = int(((y_true == 0) & (y_pred_cls == 1)).sum())
-    cls_tn = int(((y_true == 0) & (y_pred_cls == 0)).sum())
-    cls_metrics = _metrics_from_cm(cls_tp, cls_fn, cls_fp, cls_tn)
+    cls_metrics = _class_metrics_at_threshold(
+        y_true=y_true,
+        probs=probs_arr,
+        threshold=effective_prob_threshold,
+    )
+    pred_positive_rate = float(cls_metrics["pred_positive_rate"])
     cls_source = "offline_recomputed"
     selected_cls = cls_metrics
-    if force_prob_threshold is None and isinstance(checkpoint_cls_metrics, dict):
-        try:
-            ck_phase = str(checkpoint_cls_metrics.get("phase", "")).strip().upper()
-            ck_tp = int(checkpoint_cls_metrics.get("tp", 0))
-            ck_fn = int(checkpoint_cls_metrics.get("fn", 0))
-            ck_fp = int(checkpoint_cls_metrics.get("fp", 0))
-            ck_tn = int(checkpoint_cls_metrics.get("tn", 0))
-            ck_total = ck_tp + ck_fn + ck_fp + ck_tn
-            if ck_phase == "TEST" and ck_total == total_batches and ck_total > 0:
-                selected_cls = _metrics_from_cm(ck_tp, ck_fn, ck_fp, ck_tn)
-                cls_source = "checkpoint_metrics"
-        except (TypeError, ValueError):
-            pass
 
     y_pred_op = np.array([1 if is_rain(p, threshold=rain_threshold) else 0 for p in preds_arr], dtype=np.int32)
     op_tp = int(((y_true == 1) & (y_pred_op == 1)).sum())
@@ -564,6 +648,17 @@ def evaluate_client(
     op_tn = int(((y_true == 0) & (y_pred_op == 0)).sum())
     op_metrics = _metrics_from_cm(op_tp, op_fn, op_fp, op_tn)
 
+    threshold_scan: list[dict[str, float | int]] = []
+    if scan_thresholds:
+        for thr in scan_thresholds:
+            threshold_scan.append(
+                _class_metrics_at_threshold(
+                    y_true=y_true,
+                    probs=probs_arr,
+                    threshold=float(thr),
+                )
+            )
+
     return {
         "client_id":   client_id,
         "best_round":  saved_round,
@@ -571,6 +666,13 @@ def evaluate_client(
         "samples":     total_batches,
         "mse":         mse,
         "mae":         mae,
+        "auprc":       auprc,
+        "roc_auc":     roc_auc,
+        "brier":       brier,
+        "positive_rate": positive_rate,
+        "pred_positive_rate": pred_positive_rate,
+        "prob_mean":   prob_mean,
+        "prob_std":    prob_std,
         "accuracy":    selected_cls["accuracy"],
         "recall":      selected_cls["recall"],
         "precision":   selected_cls["precision"],
@@ -601,6 +703,7 @@ def evaluate_client(
         "rain_threshold_mm": rain_threshold,
         "target_transform": target_mode,
         "monthly_details": monthly_details,
+        "threshold_scan": threshold_scan,
     }
 
 
@@ -617,6 +720,13 @@ def evaluate():
         help="Evaluate a specific session ID under bestweights/ and results/ (recommended).",
     )
     parser.add_argument(
+        "--eval-phase",
+        type=str,
+        default="test",
+        choices=["test", "val"],
+        help="Evaluation split to use: test or val (threshold tuning should use val).",
+    )
+    parser.add_argument(
         "--round",
         type=int,
         default=None,
@@ -628,10 +738,26 @@ def evaluate():
         help="Allow searching client checkpoints across all sessions if current session lacks clients.",
     )
     parser.add_argument(
+        "--allow-latest-best-fallback",
+        action="store_true",
+        help="Allow non-strict latest/best server-client pairing (debug only; less reliable).",
+    )
+    parser.add_argument(
         "--force-prob-threshold",
         type=float,
         default=None,
         help="Force one shared probability threshold in [0,1] for all clients (ignores checkpoint threshold).",
+    )
+    parser.add_argument(
+        "--prefer-checkpoint-threshold",
+        action="store_true",
+        help="Prefer per-client checkpoint threshold when available (default uses config threshold).",
+    )
+    parser.add_argument(
+        "--scan-thresholds",
+        type=str,
+        default="",
+        help="Threshold grid for scan (e.g. '0.1,0.2,0.3' or '0.1:0.9:0.05').",
     )
     parser.add_argument(
         "--report-tag",
@@ -648,16 +774,18 @@ def evaluate():
     report_tag = _normalize_report_tag(args.report_tag)
     if args.report_tag and not report_tag:
         raise ValueError("Invalid --report-tag: must contain at least one alphanumeric character.")
+    eval_phase = str(args.eval_phase).strip().upper()
+    scan_thresholds = _parse_threshold_list(args.scan_thresholds)
 
     print("\n" + "=" * 55)
-    print("   🚀 AUTO EVALUATION — ALL CLIENTS (TEST DATA)   ")
+    print(f"   🚀 AUTO EVALUATION — ALL CLIENTS ({eval_phase} DATA)   ")
     print("=" * 55)
 
     device = torch.device(args.device)
 
     # ── Step 1: Select session and checkpoint pairing mode ────────────
     selected_session = args.session or _find_latest_session_id()
-    pairing_mode = "latest_best"
+    pairing_mode = "strict_periodic"
 
     num_clients_hint = max(1, int(get_nested(cfg, ("federated", "num_clients"), 1)))
     paired = find_periodic_pair(
@@ -670,16 +798,22 @@ def evaluate():
         pairing_mode = f"periodic_round_{paired_round}"
         print(f"[INFO] Using strict paired periodic checkpoints at round {paired_round}")
     else:
+        round_hint = f", round={args.round}" if args.round is not None else ""
+        if not args.allow_latest_best_fallback:
+            raise FileNotFoundError(
+                f"No strict paired periodic checkpoints found for session={selected_session}{round_hint}. "
+                "Use --allow-latest-best-fallback for debug-only non-strict pairing."
+            )
         if args.round is not None:
             raise FileNotFoundError(
                 f"No strict paired periodic checkpoints found for session={selected_session}, round={args.round}."
             )
-        # Fallback keeps backward compatibility but may be less strict.
         server_path = find_best_server(session_id=selected_session)
         client_map = find_matching_clients(
             server_path,
             allow_cross_session_fallback=args.allow_cross_session_fallback,
         )
+        pairing_mode = "latest_best"
         print("[WARN] Falling back to latest/best checkpoint selection (non-strict pairing).")
 
     # ── Step 2: Summary of selected client checkpoints ───────────────
@@ -727,7 +861,8 @@ def evaluate():
     print(
         f"[INFO] Eval config source: {eval_cfg_source} | split_date={split_date} | "
         f"seq_len={seq_len} horizon={horizon} | per_sensor_cap={eval_max_samples if eval_max_samples > 0 else 'FULL'} | "
-        f"{threshold_text} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | device={device}"
+        f"{threshold_text} | rain_mm>{rain_threshold:.2f} | target_transform={target_mode} | phase={eval_phase} | "
+        f"threshold_source={'checkpoint_preferred' if args.prefer_checkpoint_threshold else 'config'} | device={device}"
     )
     if forced_prob_threshold is not None:
         print(
@@ -768,6 +903,9 @@ def evaluate():
             active_features=active_features,
             prob_threshold=prob_threshold,
             force_prob_threshold=forced_prob_threshold,
+            prefer_checkpoint_threshold=args.prefer_checkpoint_threshold,
+            eval_phase=eval_phase,
+            scan_thresholds=scan_thresholds,
             rain_threshold=rain_threshold,
             target_mode=target_mode,
         )
@@ -775,47 +913,108 @@ def evaluate():
             all_results.append(result)
             print(f"  ✅ Client {cid} | Samples={result['samples']:,} | "
                   f"MSE={result['mse']:.4f} | MAE={result['mae']:.4f} mm | "
-                  f"ClsF1={result['f1']:.3f} | OpF1={result['op_f1']:.3f} | "
-                  f"ClsR={result['recall']:.3f} | ClsP={result['precision']:.3f}")
+                  f"ClsF1={result['f1']:.3f} | PR-AUC={result['auprc']:.3f} | "
+                  f"ROC-AUC={result['roc_auc']:.3f} | Brier={result['brier']:.4f}")
 
     # ── Step 5: Print combined summary ─────────────────────────────────
     if not all_results:
         print("\n[ERROR] No clients were successfully evaluated.")
         return
 
-    W = 96  # table width
+    threshold_scan_summary: list[dict[str, float | int]] = []
+    recommended_threshold: float | None = None
+    if scan_thresholds:
+        for thr in scan_thresholds:
+            tp = fn = fp = tn = 0
+            total = 0
+            for r in all_results:
+                total += int(r["samples"])
+                scan_rows = r.get("threshold_scan", [])
+                found = next((m for m in scan_rows if abs(float(m["threshold"]) - float(thr)) <= 1e-12), None)
+                if found is None:
+                    continue
+                tp += int(found["tp"])
+                fn += int(found["fn"])
+                fp += int(found["fp"])
+                tn += int(found["tn"])
+            metrics = _metrics_from_cm(tp, fn, fp, tn)
+            threshold_scan_summary.append(
+                {
+                    "threshold": float(thr),
+                    "samples": int(total),
+                    "accuracy": float(metrics["accuracy"]),
+                    "recall": float(metrics["recall"]),
+                    "precision": float(metrics["precision"]),
+                    "f1": float(metrics["f1"]),
+                    "tp": int(tp),
+                    "fn": int(fn),
+                    "fp": int(fp),
+                    "tn": int(tn),
+                    "pred_positive_rate": float((tp + fp) / max(1, tp + fn + fp + tn)),
+                }
+            )
+        if threshold_scan_summary:
+            best = max(
+                threshold_scan_summary,
+                key=lambda x: (
+                    float(x["f1"]),
+                    float(x["precision"]),
+                    -abs(float(x["threshold"]) - float(prob_threshold)),
+                ),
+            )
+            recommended_threshold = float(best["threshold"])
+
+    W = 128  # table width
     print("\n" + "=" * W)
-    print("\U0001f3c6  FINAL EVALUATION REPORT (14-DAY TEST SET)")
+    print(f"\U0001f3c6  FINAL EVALUATION REPORT ({eval_phase} SET)")
     print(f"   Session           : {selected_session}")
     print(f"   Pairing mode      : {pairing_mode}")
     print(f"   Server checkpoint : {Path(server_path).name}  (round={server_round})")
     print(f"   Eval cfg source   : {eval_cfg_source}")
     if forced_prob_threshold is not None:
         print(f"   Forced threshold  : {forced_prob_threshold:.2f}")
+    if recommended_threshold is not None:
+        print(f"   Scan best threshold (by F1): {recommended_threshold:.2f}")
     print("=" * W)
     hdr = (f"  {'Client':<8} {'BestRound':>10} {'TrainLoss':>10}"
-           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'ClsAcc':>8}  {'ClsF1':>8}  {'OpF1':>8}")
+           f"  {'Samples':>8}  {'MSE':>8}  {'MAE':>8}  {'ClsAcc':>8}  {'ClsF1':>8}"
+           f"  {'PR-AUC':>8}  {'ROC-AUC':>8}  {'Brier':>8}  {'OpF1':>8}")
     sep = (f"  {'──────':<8} {'─────────':>10} {'─────────':>10}"
-           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'──────':>8}  {'──────':>8}  {'──────':>8}")
+           f"  {'───────':>8}  {'───────':>8}  {'───────':>8}  {'──────':>8}  {'──────':>8}"
+           f"  {'──────':>8}  {'───────':>8}  {'──────':>8}  {'──────':>8}")
     print(hdr)
     print(sep)
     for r in all_results:
         br  = str(r['best_round'])
         tl  = f"{r['train_loss']:.4f}" if not np.isnan(r['train_loss']) else "N/A"
         print(f"  {r['client_id']:<8} {br:>10} {tl:>10}"
-              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>7.2f}%  {r['f1']:>8.4f}  {r['op_f1']:>8.4f}")
+              f"  {r['samples']:>8,}  {r['mse']:>8.4f}  {r['mae']:>8.4f}  {r['accuracy']:>7.2f}%  {r['f1']:>8.4f}"
+              f"  {r['auprc']:>8.4f}  {r['roc_auc']:>8.4f}  {r['brier']:>8.4f}  {r['op_f1']:>8.4f}")
 
     if len(all_results) > 1:
         avg_mse = np.mean([r["mse"]      for r in all_results])
         avg_mae = np.mean([r["mae"]      for r in all_results])
         avg_acc = np.mean([r["accuracy"] for r in all_results])
-        avg_f1  = np.mean([r["f1"] for r in all_results if not np.isnan(r["f1"])]) if any(not np.isnan(r["f1"]) for r in all_results) else float("nan")
-        avg_op_f1 = np.mean([r["op_f1"] for r in all_results if not np.isnan(r["op_f1"])]) if any(not np.isnan(r["op_f1"]) for r in all_results) else float("nan")
+        avg_f1  = np.mean([r["f1"] for r in all_results])
+        avg_auprc = np.mean([r["auprc"] for r in all_results])
+        avg_roc_auc = np.mean([r["roc_auc"] for r in all_results])
+        avg_brier = np.mean([r["brier"] for r in all_results])
+        avg_op_f1 = np.mean([r["op_f1"] for r in all_results])
         tot     = sum(    r["samples"]   for r in all_results)
         print(sep)
         print(f"  {'AVERAGE':<8} {'':>10} {'':>10}"
-              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>7.2f}%  {avg_f1:>8.4f}  {avg_op_f1:>8.4f}")
+              f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>7.2f}%  {avg_f1:>8.4f}"
+              f"  {avg_auprc:>8.4f}  {avg_roc_auc:>8.4f}  {avg_brier:>8.4f}  {avg_op_f1:>8.4f}")
     print("=" * W + "\n")
+
+    if threshold_scan_summary:
+        print("Threshold scan summary (weighted/global confusion):")
+        print("  threshold  f1      precision  recall    pred_pos")
+        for row in threshold_scan_summary:
+            print(
+                f"  {row['threshold']:>8.2f}  {row['f1']:>6.4f}  {row['precision']:>9.4f}  "
+                f"{row['recall']:>7.4f}  {row['pred_positive_rate']:>8.4f}"
+            )
 
     results_dir = project_root / "results" / selected_session
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -826,7 +1025,25 @@ def evaluate():
         report_stem = f"{report_stem}_{report_tag}"
 
     report_csv = results_dir / f"{report_stem}.csv"
-    pd.DataFrame(all_results).to_csv(report_csv, index=False)
+    csv_rows = [{k: v for k, v in r.items() if k != "threshold_scan"} for r in all_results]
+    pd.DataFrame(csv_rows).to_csv(report_csv, index=False)
+    total_samples = float(sum(r["samples"] for r in all_results))
+    weighted = {
+        "mse": float(sum(r["mse"] * r["samples"] for r in all_results) / total_samples),
+        "mae": float(sum(r["mae"] * r["samples"] for r in all_results) / total_samples),
+        "accuracy": float(sum(r["accuracy"] * r["samples"] for r in all_results) / total_samples),
+        "f1": float(sum(r["f1"] * r["samples"] for r in all_results) / total_samples),
+        "auprc": float(sum(r["auprc"] * r["samples"] for r in all_results) / total_samples),
+        "roc_auc": float(sum(r["roc_auc"] * r["samples"] for r in all_results) / total_samples),
+        "brier": float(sum(r["brier"] * r["samples"] for r in all_results) / total_samples),
+        "positive_rate": float(sum(r["positive_rate"] * r["samples"] for r in all_results) / total_samples),
+        "pred_positive_rate": float(sum(r["pred_positive_rate"] * r["samples"] for r in all_results) / total_samples),
+        "tp": int(sum(r["tp"] for r in all_results)),
+        "fn": int(sum(r["fn"] for r in all_results)),
+        "fp": int(sum(r["fp"] for r in all_results)),
+        "tn": int(sum(r["tn"] for r in all_results)),
+    }
+
     report_json = results_dir / f"{report_stem}.json"
     summary = {
         "session": selected_session,
@@ -834,8 +1051,12 @@ def evaluate():
         "server_checkpoint": Path(server_path).name,
         "server_round": server_round,
         "report_tag": report_tag,
+        "strict_pairing_default": True,
+        "allow_latest_best_fallback": bool(args.allow_latest_best_fallback),
+        "prefer_checkpoint_threshold": bool(args.prefer_checkpoint_threshold),
         "forced_prob_threshold": forced_prob_threshold,
         "device": str(device),
+        "eval_phase": eval_phase,
         "split_date": str(split_date),
         "eval_max_samples_per_sensor": eval_max_samples,
         "eval_config_source": eval_cfg_source,
@@ -852,12 +1073,17 @@ def evaluate():
                 forced_prob_threshold if forced_prob_threshold is not None else prob_threshold
             ),
             "rain_probability_threshold_source": (
-                "forced_cli" if forced_prob_threshold is not None else "config_or_checkpoint"
+                "forced_cli"
+                if forced_prob_threshold is not None
+                else ("client_checkpoint" if args.prefer_checkpoint_threshold else "config")
             ),
             "rain_threshold_mm": rain_threshold,
             "target_transform": target_mode,
         },
         "num_clients_evaluated": len(all_results),
+        "weighted_overall": weighted,
+        "threshold_scan_summary": threshold_scan_summary,
+        "recommended_threshold_by_f1": recommended_threshold,
         "clients": all_results,
     }
     with open(report_json, "w") as f:

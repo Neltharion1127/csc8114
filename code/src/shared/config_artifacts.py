@@ -11,8 +11,8 @@ _MINIMAL_PATHS = (
     ("compression", "topk_ratio"),
     ("data", "feature_cols"),
     ("data", "processed_dir"),
-    ("data", "test_days"),
-    ("data", "val_days"),
+    ("data", "train_end"),
+    ("data", "val_end"),
     ("data_download", "end_date"),
     ("federated", "num_clients"),
     ("federated", "rho"),
@@ -27,11 +27,17 @@ _MINIMAL_PATHS = (
     ("profiler", "enabled"),
     ("scheduler", "enabled"),
     ("training", "checkpoint_interval"),
+    ("training", "classification_loss_type"),
+    ("training", "classification_positive_weight"),
     ("training", "classification_loss_weight"),
+    ("training", "focal_alpha"),
+    ("training", "focal_gamma"),
     ("training", "num_rounds"),
+    ("training", "rain_threshold_mm"),
     ("training", "rain_probability_threshold"),
     ("training", "regression_loss_weight"),
     ("training", "seed"),
+    ("training", "target_transform"),
 )
 
 
