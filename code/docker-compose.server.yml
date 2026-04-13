@@ -11,9 +11,11 @@ services:
       - PYTHONPATH=/app
       - FSL_DEVICE=cpu
       - FSL_CONFIG_PATH=/app/config.yaml
+      - FSL_MATRIX_CONFIG_PATH=/app/matrix.yaml
       - SESSION_ID=${SESSION_ID:-}
       - SCENARIO_ID=${SCENARIO_ID:-}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - ./matrix.yaml:/app/matrix.yaml:ro
       - ./results:/app/results
       - ./bestweights:/app/bestweights

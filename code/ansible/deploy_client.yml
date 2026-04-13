@@ -12,6 +12,7 @@
         mode: '0755'
       loop:
         - /home/pi/dataset/processed
+        - /home/pi/dataset/holdout
         - /home/pi/results
         - /home/pi/bestweights
 
@@ -28,6 +29,13 @@
       ansible.posix.synchronize:
         src: ../config.yaml
         dest: /home/pi/config.yaml
+        archive: false
+        checksum: true
+
+    - name: Sync matrix.yaml to Pi
+      ansible.posix.synchronize:
+        src: ../matrix.yaml
+        dest: /home/pi/matrix.yaml
         archive: false
         checksum: true
 
