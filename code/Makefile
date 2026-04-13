@@ -27,6 +27,11 @@
 DEFAULT_NUM_CLIENTS := $(shell grep "num_clients:" config.yaml | awk '{print $$2}')
 NUM_CLIENTS     ?= $(DEFAULT_NUM_CLIENTS)
 
+# Config file to deploy to VPS + Pis.
+# Defaults to config.yaml for manual runs.
+# set to a merged scenario config by run_experiment_matrix.py for matrix dist runs.
+DEPLOY_CONFIG   ?= config.yaml
+
 # Docker image coordinates
 REGISTRY        ?= cindyncl26
 CLIENT_IMAGE    ?= $(REGISTRY)/fsl-client:latest
@@ -237,6 +242,13 @@ native-run-single:
 	@set -e; \
 	pids=""; \
 	trap 'kill $$pids 2>/dev/null || true' INT TERM EXIT; \
+	if [ -n "$(SCENARIO_ID)" ]; then \
+		_fsl_cfg=$$($(PYTHON) -m src.shared.resolve_scenario_config "$(SCENARIO_ID)"); \
+		if [ -n "$$_fsl_cfg" ]; then \
+			export FSL_CONFIG_PATH="$$_fsl_cfg"; \
+			echo "[scenario] Merged config for $(SCENARIO_ID) → $$_fsl_cfg"; \
+		fi; \
+	fi; \
 	( \
 		PYTHONUNBUFFERED=1 FSL_DEVICE=$(SERVER_DEVICE) \
 		FSL_SERVER_HOST=$(SERVER_HOST) FSL_SERVER_BIND_HOST=$(SERVER_HOST) \
@@ -250,7 +262,7 @@ native-run-single:
 	echo "Waiting for server at $(SERVER_HOST):$(SERVER_PORT) (timeout $(STARTUP_TIMEOUT)s)..."; \
 	ready=0; \
 	for _ in $$(seq 1 $(STARTUP_TIMEOUT)); do \
-		if python -c \
+		if $(PYTHON) -c \
 			'import socket,sys; s=socket.socket(); s.settimeout(1); s.connect((sys.argv[1],int(sys.argv[2]))); s.close()' \
 			"$(SERVER_HOST)" "$(SERVER_PORT)" >/dev/null 2>&1; then \
 			ready=1; break; \
@@ -305,13 +317,18 @@ native-clean:
 # Sync config.yaml to VPS (scp) and all Pis (ansible).
 # Run this whenever config.yaml changes — no need to rebuild the image.
 dist-sync-config:
-	@echo "=== Syncing config.yaml and compose to VPS ==="
-	scp config.yaml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/config.yaml
+	@echo "=== Syncing config ($(DEPLOY_CONFIG)), matrix.yaml and compose to VPS ==="
+	scp $(DEPLOY_CONFIG) $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/config.yaml
+	scp matrix.yaml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/matrix.yaml
 	scp docker-compose.server.yml $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/docker-compose.server.yml
-	@echo "=== Syncing config.yaml to all Pis ==="
+	@echo "=== Syncing config ($(DEPLOY_CONFIG)) and matrix.yaml to all Pis ==="
 	ansible clients -i $(ANSIBLE_INV) \
 	  -m copy \
-	  -a "src=config.yaml dest=/home/pi/config.yaml" \
+	  -a "src=$(DEPLOY_CONFIG) dest=/home/pi/config.yaml" \
+	  --become
+	ansible clients -i $(ANSIBLE_INV) \
+	  -m copy \
+	  -a "src=matrix.yaml dest=/home/pi/matrix.yaml" \
 	  --become
 
 # Restart only the server container on VPS using docker compose.
@@ -522,7 +539,8 @@ plot-confusion:
 
 matrix:
 	@CMD="$(PYTHON) -m src.data.run_experiment_matrix \
-		--config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml)"; \
+		--config config.yaml \
+		--matrix-config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),matrix.yaml)"; \
 	if [ -n "$(ONLY)" ];    then CMD="$$CMD --only $(ONLY)"; fi; \
 	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
 	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \
@@ -530,7 +548,8 @@ matrix:
 
 matrix-dry-run:
 	@CMD="$(PYTHON) -m src.data.run_experiment_matrix \
-		--config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),config.yaml) --dry-run"; \
+		--config config.yaml \
+		--matrix-config $(if $(MATRIX_CONFIG),$(MATRIX_CONFIG),matrix.yaml) --dry-run"; \
 	if [ -n "$(ONLY)" ];    then CMD="$$CMD --only $(ONLY)"; fi; \
 	if [ -n "$(BACKEND)" ]; then CMD="$$CMD --backend $(BACKEND)"; fi; \
 	if [ -n "$(MAX_RUNS)" ]; then CMD="$$CMD --max-runs $(MAX_RUNS)"; fi; \

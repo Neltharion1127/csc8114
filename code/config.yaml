@@ -9,10 +9,14 @@ artifacts:
   config_snapshot_policy: minimal
 data:
   processed_dir: dataset/processed
-  # Monthly cyclic splitting
-  train_days: 20
-  val_days: 5
-  # test_days: Remaining days of the month
+  holdout_dir: dataset/holdout
+  # Chronological time-based splitting (2023-01-01 to 2026-03-12)
+  # TRAIN: 2023-01-01 → 2024-12-31 (~70%)
+  # VAL:   2025-01-01 → 2025-06-30 (~16%)
+  # TEST:  2025-07-01 → end        (~14%)
+  # Boundaries are exclusive upper bounds (ts < train_end → TRAIN, etc.)
+  train_end: "2025-01-01"
+  val_end:   "2025-07-01"
   # Feature columns consumed by model/data pipeline (preferred location)
   feature_cols:
     - Temperature
@@ -23,7 +27,7 @@ data:
 federated:
   num_clients: 11
   min_clients_per_round: 9
-  # 12 parquet files: client 1-10 get 1 file each; last client gets remaining files
+  # 11 training parquet files: strict 1:1 mapping, client N gets sorted_files[N-1]
   rho: 1
   # How long the server barrier waits for all active clients to submit weights.
   # 15s was fine for local Docker; real Pi → VPS latency needs a much larger window.
@@ -74,261 +78,6 @@ scheduler:
   rho_step: 1
   topk_multiplier: 1.5
   latency_ema_alpha: 0.2
-experiment_matrix:
-  # 3 latency profiles × 5 strategies = 15 scenarios × 2 seeds = 30 runs
-  # Latency ranges calibrated against Mao et al. 2017 (MEC survey):
-  #   Low  (~2ms):  WiFi/LAN edge deployment
-  #   Mid  (~8ms):  4G cellular MEC link
-  #   High (~50ms): NB-IoT / wide-area IoT
-  # Scheduler thresholds: float16@4ms, int8@10ms, topk@15ms
-  # Strategy axes (clean ablation):
-  #   S0: float32, rho=1, no scheduler  (baseline)
-  #   S1: float16, rho=1, no scheduler  (compression only - tier 1)
-  #   S2: int8,    rho=1, no scheduler  (compression only - tier 2)
-  #   S3: float32, rho=3, no scheduler  (sync interval only)
-  #   S4: float32, rho=dynamic, adaptive scheduler (joint adaptation)
-  seeds: [42, 52, 62]
-  runner:
-    backend: native
-    server_device: cpu
-    client_device: cpu
-    eval_device: cpu
-    startup_timeout: 120
-    summary_csv: results/matrix_summary.csv
-  scenarios:
-    # ── No latency (profiler off — clean baseline, no floor interference) ─
-    - id: "01"
-      description: "No latency | S0 baseline (float32, rho=1, no scheduler)"
-      overrides:
-        profiler:
-          enabled: false
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 1
-
-    - id: "02"
-      description: "No latency | S1 float16 compression only"
-      overrides:
-        profiler:
-          enabled: false
-        scheduler:
-          enabled: false
-        compression:
-          mode: float16
-        federated:
-          rho: 1
-
-    - id: "03"
-      description: "No latency | S2 int8 compression only"
-      overrides:
-        profiler:
-          enabled: false
-        scheduler:
-          enabled: false
-        compression:
-          mode: int8
-        federated:
-          rho: 1
-
-    - id: "04"
-      description: "No latency | S3 sync interval only (float32, rho=3)"
-      overrides:
-        profiler:
-          enabled: false
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 3
-
-    # ── Mid latency (~8ms base) ──────────────────────────────────────────
-    - id: "05"
-      description: "Mid latency | S0 baseline (float32, rho=1, no scheduler)"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 8.0
-            # offsets span float16 zone (8-9ms) to int8 zone (10-14ms)
-            # clients 1-4: ~8-9ms → float16; clients 5-11: ~10-14ms → int8
-            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
-            jitter_ms: 1.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 1
-
-    - id: "06"
-      description: "Mid latency | S1 float16 compression only"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
-            jitter_ms: 1.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float16
-        federated:
-          rho: 1
-
-    - id: "07"
-      description: "Mid latency | S2 int8 compression only"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
-            jitter_ms: 1.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: int8
-        federated:
-          rho: 1
-
-    - id: "08"
-      description: "Mid latency | S3 sync interval only (float32, rho=3)"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
-            jitter_ms: 1.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 3
-
-    - id: "09"
-      description: "Mid latency | S4 adaptive scheduler"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 8.0
-            client_offsets_ms: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
-            jitter_ms: 1.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: true
-        compression:
-          mode: float32
-        federated:
-          rho: 1
-
-    # ── High latency (~50ms base) ────────────────────────────────────────
-    - id: "10"
-      description: "High latency | S0 baseline (float32, rho=1, no scheduler)"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 50.0
-            # all clients 50-80ms → all exceed topk threshold (15ms), scheduler assigns topk/rho=4
-            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
-            jitter_ms: 5.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 1
-
-    - id: "11"
-      description: "High latency | S1 float16 compression only"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
-            jitter_ms: 5.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float16
-        federated:
-          rho: 1
-
-    - id: "12"
-      description: "High latency | S2 int8 compression only"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
-            jitter_ms: 5.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: int8
-        federated:
-          rho: 1
-
-    - id: "13"
-      description: "High latency | S3 sync interval only (float32, rho=3)"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
-            jitter_ms: 5.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: false
-        compression:
-          mode: float32
-        federated:
-          rho: 3
-
-    - id: "14"
-      description: "High latency | S4 adaptive scheduler"
-      overrides:
-        profiler:
-          enabled: true
-          latency_generator:
-            base_latency_ms: 50.0
-            client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
-            jitter_ms: 5.0
-            burst_every_steps: 0
-            burst_latency_ms: 0.0
-        scheduler:
-          enabled: true
-        compression:
-          mode: float32
-        federated:
-          rho: 1
 training:
   seed: 42
   # batch_size: 32  # unused (main training loop is step-based RPC, not DataLoader batch training)
@@ -336,13 +85,13 @@ training:
   classification_positive_weight: 1.1
   classification_loss_type: focal # weighted_bce | focal
   focal_gamma: 2.0
-  focal_alpha: 0.25 # [0,1] to enable alpha balancing; negative means disabled
+  focal_alpha: 0.75 # [0,1] to enable alpha balancing; negative means disabled
   rain_threshold_mm: 0.1
-  rain_probability_threshold: 0.34
+  rain_probability_threshold: 0.35
   local_steps: 10
   lr: 0.0005
   num_rounds: 30
-  rain_sample_ratio: 0.15
+  rain_sample_ratio: 0.30
   regression_loss_weight: 1.0
   target_transform: log1p
   start_delay: 8

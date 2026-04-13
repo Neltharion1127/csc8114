@@ -256,11 +256,16 @@ def _merge_rows_by_run_id(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run experiment matrix defined in config.yaml.")
+    parser = argparse.ArgumentParser(description="Run experiment matrix defined in matrix.yaml.")
     parser.add_argument(
         "--config",
         default=os.environ.get("FSL_CONFIG_PATH", "config.yaml"),
-        help="Matrix config file path (default: FSL_CONFIG_PATH or config.yaml)",
+        help="Base runtime config (default: FSL_CONFIG_PATH or config.yaml)",
+    )
+    parser.add_argument(
+        "--matrix-config",
+        default=os.environ.get("FSL_MATRIX_CONFIG_PATH", "matrix.yaml"),
+        help="Matrix definition file containing experiment_matrix (default: matrix.yaml)",
     )
     parser.add_argument(
         "--only",
@@ -278,11 +283,15 @@ def main() -> int:
     args = parser.parse_args()
 
     config_path = _resolve_path(args.config)
+    matrix_config_path = _resolve_path(args.matrix_config)
     root_cfg = _load_yaml(config_path)
-    matrix_cfg = root_cfg.get("experiment_matrix", {})
+    matrix_raw = _load_yaml(matrix_config_path)
+    matrix_cfg = matrix_raw.get("experiment_matrix", {})
     scenarios = matrix_cfg.get("scenarios", [])
     if not isinstance(scenarios, list) or not scenarios:
-        raise ValueError("config.experiment_matrix.scenarios must be a non-empty list.")
+        raise ValueError(
+            f"experiment_matrix.scenarios must be a non-empty list in {matrix_config_path}"
+        )
 
     seeds = matrix_cfg.get("seeds", [root_cfg.get("training", {}).get("seed", 42)])
     if not isinstance(seeds, list) or not seeds:
@@ -411,13 +420,16 @@ def main() -> int:
                     "AUTO_PLOT=0",
                 ]
             elif backend == "dist":
-                # Distributed: orchestrate VPS server + Raspberry Pi clients
+                # Distributed: orchestrate VPS server + Raspberry Pi clients.
+                # Pass the merged scenario config as DEPLOY_CONFIG so dist-sync-config
+                # pushes it (not the base config.yaml) to VPS and all Pis.
                 run_cmd = [
                     "make",
                     "dist-start",
                     f"SESSION_ID={main_session_id}",
                     f"SCENARIO_ID={scenario_id}",
                     f"NUM_CLIENTS={run_num_clients}",
+                    f"DEPLOY_CONFIG={run_config_path}",
                 ]
             else:
                 run_cmd = [
