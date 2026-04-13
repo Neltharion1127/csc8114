@@ -22,7 +22,7 @@ A fully functional, end-to-end FSL training platform built on a **gRPC microserv
   
   Decisions are driven by EMA-smoothed client-reported latency, enabling the system to dynamically adapt to heterogeneous and non-stationary network conditions without manual tuning.
 
-- **Reproducible Experiment Matrix** — 14 carefully designed scenarios × 10 random seeds, systematically decoupling the effects of latency profiles (none / light / medium / burst / extreme), compression modes, synchronisation intervals, and adaptive vs. static policies. All experiments are orchestrated via a single `config.yaml` and `make matrix` command.
+- **Reproducible Experiment Matrix** — 14 carefully designed scenarios × 3 random seeds, systematically decoupling the effects of latency profiles (none / mid / high), compression modes, synchronisation intervals, and adaptive vs. static policies. Scenarios are defined in `matrix.yaml` and run with a single `make matrix` command; `config.yaml` remains the clean single-run baseline.
 
 ### Key Results
 
@@ -42,7 +42,8 @@ No single strategy dominates — practical deployment should choose policies bas
 ```
 csc8114/
 ├── code/                        # FSL system implementation
-│   ├── config.yaml              # All training, model, and experiment configs
+│   ├── config.yaml              # Runtime config — model, training, data, comms
+│   ├── matrix.yaml              # Experiment matrix — 14 scenarios & seeds (ablation only)
 │   ├── Makefile                 # Build / run / plot automation
 │   ├── proto/fsl.proto          # gRPC protocol (4 RPCs)
 │   ├── src/
@@ -52,13 +53,15 @@ csc8114/
 │   │   ├── server/              # Forward service, FedAvg, adaptive scheduler
 │   │   ├── shared/              # Compression, serialisation, config, runtime
 │   │   └── data/                # Data download, evaluation, plotting
-│   ├── dataset/                 # Raw and processed data
+│   ├── dataset/
+│   │   ├── processed/           # 11 training sensor files (one per federated client)
+│   │   └── holdout/             # 1 holdout sensor (NCL_GATESHEAD — never seen during training)
 │   ├── bestweights/             # Model checkpoints (per session)
 │   └── results/                 # Training logs, evaluation reports, plots
 │
 └── paper/                       # IEEE conference paper (IEEEtran)
     ├── csc8114 assessment1.tex  
-    ├── csc8114.tex              # Main aper
+    ├── csc8114.tex              # Main paper
     ├── refs.bib                 # Bibliography
     └── diagrams/                # Architecture & sequence diagrams (Mermaid + PNG)
 ```
@@ -86,28 +89,59 @@ uv sync
 make download-data
 ```
 
-Downloads and preprocesses Open Meteo historical weather data for 12 Newcastle stations.
+Downloads Open-Meteo historical weather data (2023–2026) for 12 Newcastle stations:
 
-### Training (Native — Recommended)
+- **11 training locations** → `dataset/processed/` (one file per federated client, north bank of the Tyne)
+- **1 holdout location** → `dataset/holdout/` (NCL_GATESHEAD — south bank, geographically isolated, never seen during training)
+
+### Training (Native — Recommended for development)
 
 ```bash
-make clean-native
-make run-native
+make native-clean
+make native-run SCENARIO_ID=01                          # single scenario, all 11 clients
+make native-run SCENARIO_ID=01 NUM_CLIENTS=3            # quick local smoke test (3 clients)
+make native-run SCENARIO_ID=01 CLIENT_DEVICE=mps        # use Apple Silicon GPU
 ```
 
-This starts one server + 3 client processes locally with colour-prefixed logs, and auto-plots results on completion.
+Scenario IDs correspond to entries in `matrix.yaml`. The Makefile merges `config.yaml` + the scenario's overrides before launching.
 
-Override devices or address:
+### Training (Docker — single machine)
 
 ```bash
-make run-native SERVER_HOST=127.0.0.1 SERVER_DEVICE=cpu CLIENT_DEVICE=mps
+make docker-run NUM_CLIENTS=11 SCENARIO_ID=01   # server + 11 clients in containers
+make docker-clean                                # teardown
 ```
 
-### Training (Docker)
+### Training (Distributed — VPS server + 11 Raspberry Pis)
+
+Prerequisites: Tailscale overlay network set up, `ansible/inventory.ini` populated, Docker image pushed to Docker Hub.
 
 ```bash
-make run-network    # start
-make clean          # teardown
+# First time or after code changes: build and push a new image
+make dist-build IMAGE_TAG=sha-abc123
+
+# Sync configs, restart server on VPS, deploy clients to all Pis
+make dist-start IMAGE_TAG=sha-abc123
+
+# Follow live server logs
+make dist-logs
+
+# Fetch results back to Mac when done
+make dist-fetch
+```
+
+For a full experiment matrix over the cluster:
+
+```bash
+make matrix BACKEND=dist
+```
+
+Each scenario's merged config is automatically pushed to VPS and all Pis before that scenario starts — clients always run with the correct overrides applied.
+
+To wipe everything and start fresh:
+
+```bash
+make dist-restart
 ```
 
 ### Evaluation & Plotting
@@ -121,10 +155,14 @@ make plot-session SESSION=<session-id>        # plot specific session
 
 ### Experiment Matrix
 
+Scenarios and seeds are defined in `matrix.yaml`. Each scenario overrides `config.yaml` for that run only — processes never see the original base config during a matrix run.
+
 ```bash
-make matrix-dry-run                # preview scenario plan
-make matrix                        # run all 14 scenarios
-make matrix ONLY=M01,M10 MAX_RUNS=2  # run selected scenarios
+make matrix-dry-run                        # preview scenario plan
+make matrix                                # run all 14 scenarios × 3 seeds (native)
+make matrix BACKEND=dist                   # run on VPS + Pi cluster
+make matrix ONLY=01,09 MAX_RUNS=2          # run selected scenarios only
+make matrix MATRIX_CONFIG=my_matrix.yaml   # use a custom matrix file
 ```
 
 Run `make help` for the full command list.
@@ -192,32 +230,54 @@ Uses EMA-smoothed latency to escalate compression and synchronisation interval:
 
 ---
 
-## Configuration (`config.yaml`)
+## Configuration
 
-Key configuration sections:
+Two config files, two responsibilities:
 
-| Section               | Description                                                         |
-| --------------------- | ------------------------------------------------------------------- |
-| `model.*`             | LSTM hidden size, layers, sequence length, horizon                  |
-| `training.*`          | Learning rate, rounds, local steps, loss weights, focal loss params |
-| `compression.*`       | Default mode, top-k ratio                                           |
-| `federated.*`         | Number of clients, base ρ                                           |
-| `scheduler.*`         | Latency thresholds, ρ bounds, EMA alpha                             |
-| `profiler.*`          | Latency generator settings (base, offsets, jitter, burst)           |
-| `experiment_matrix.*` | 14 scenario definitions with per-scenario overrides                 |
+**`config.yaml`** — runtime config; what a single direct run actually uses:
+
+| Section         | Description                                                         |
+| --------------- | ------------------------------------------------------------------- |
+| `model.*`       | LSTM hidden size, layers, sequence length, horizon                  |
+| `training.*`    | Learning rate, rounds, local steps, loss weights, focal loss params |
+| `compression.*` | Default mode, top-k ratio                                           |
+| `federated.*`   | Number of clients, base ρ                                           |
+| `scheduler.*`   | Latency thresholds, ρ bounds, EMA alpha                             |
+| `profiler.*`    | Synthetic latency generator (base, offsets, jitter, burst)          |
+| `data.*`        | Dataset paths, train/val/test split boundaries                      |
+
+**`matrix.yaml`** — experiment matrix; only read by `make matrix`:
+
+| Section                        | Description                                        |
+| ------------------------------ | -------------------------------------------------- |
+| `experiment_matrix.seeds`      | Random seeds for repeated runs                     |
+| `experiment_matrix.runner.*`   | Backend (native/docker), devices, timeout          |
+| `experiment_matrix.scenarios`  | 14 scenario definitions with per-scenario overrides |
+
+Each scenario in `matrix.yaml` deep-merges its `overrides` onto `config.yaml` to produce a fully resolved per-run config. Training processes only ever see this merged result — they never read `matrix.yaml` directly.
 
 ---
 
-## Experiment Matrix (M01–M14)
+## Experiment Matrix (01–14)
 
-| Profile    | ID      | Compression                       | ρ               | Scheduler |
-| ---------- | ------- | --------------------------------- | --------------- | --------- |
-| No Latency | M01     | Float32 (fixed)                   | 1               | Disabled  |
-| No Latency | M02     | Starts Float32                    | Dynamic         | Enabled   |
-| Light      | M03–M04 | Float32 / Adaptive                | 1 / Dynamic     | Off / On  |
-| Medium     | M05–M10 | Float32 / INT8 / Top-k / Adaptive | 1 / 3 / Dynamic | Various   |
-| Burst      | M11–M12 | Float32 / Adaptive                | 1 / Dynamic     | Off / On  |
-| Extreme    | M13–M14 | INT8 / Adaptive                   | 1 / Dynamic     | Off / On  |
+Defined in `matrix.yaml`. 14 scenarios total (no-latency: S0-S3; mid/high: S0-S4), run with 3 seeds each.
+
+| Latency Profile  | ID  | Strategy (S)                        | Compression | ρ       | Scheduler |
+| ---------------- | --- | ----------------------------------- | ----------- | ------- | --------- |
+| No latency       | 01  | S0 — baseline                       | float32     | 1       | Off       |
+| No latency       | 02  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
+| No latency       | 03  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
+| No latency       | 04  | S3 — sync interval only             | float32     | 3       | Off       |
+| Mid (~8 ms)      | 05  | S0 — baseline                       | float32     | 1       | Off       |
+| Mid (~8 ms)      | 06  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
+| Mid (~8 ms)      | 07  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
+| Mid (~8 ms)      | 08  | S3 — sync interval only             | float32     | 3       | Off       |
+| Mid (~8 ms)      | 09  | S4 — adaptive (joint)               | float32     | dynamic | On        |
+| High (~50 ms)    | 10  | S0 — baseline                       | float32     | 1       | Off       |
+| High (~50 ms)    | 11  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
+| High (~50 ms)    | 12  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
+| High (~50 ms)    | 13  | S3 — sync interval only             | float32     | 3       | Off       |
+| High (~50 ms)    | 14  | S4 — adaptive (joint)               | float32     | dynamic | On        |
 
 ---
 

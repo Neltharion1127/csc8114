@@ -53,6 +53,9 @@ code/dataset/
 # IDEs & System
 .vscode/
 .DS_Store
+.claude
+AGENTS.md
+CLAUDE.md
 
 # Auto-generated gRPC code
 code/proto/*_pb2.py
@@ -61,3 +64,4 @@ code/proto/*_pb2_grpc.py
 # Training results & logs (runtime output, not source)
 code/results*/
 code/bestweights*/
+code/matrix_configs

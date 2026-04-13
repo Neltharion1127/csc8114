@@ -10,7 +10,8 @@
 # directly — they only ever see the merged result via FSL_CONFIG_PATH.
 
 experiment_matrix:
-  # 3 latency profiles × 5 strategies = 15 scenarios × 3 seeds = 45 runs
+  # 14 scenarios × 3 seeds = 42 runs
+  # (No-latency includes S0-S3; mid/high include S0-S4)
   # Latency ranges calibrated against Mao et al. 2017 (MEC survey):
   #   Low  (~2ms):  WiFi/LAN edge deployment
   #   Mid  (~8ms):  4G cellular MEC link
