@@ -3,7 +3,7 @@
 Scenario loop entry-point for fsl-server and fsl-client containers.
 
 When SCENARIO_ID is NOT set in the environment:
-  Reads all scenarios + seeds from config.yaml (experiment_matrix section)
+  Reads all scenarios + seeds from matrix.yaml (experiment_matrix section)
   and runs them sequentially, each with its own SCENARIO_ID subdirectory
   under bestweights/ and results/.
 
@@ -73,14 +73,19 @@ def main() -> None:
         os.execv(sys.executable, [sys.executable, "-u", "-m", node_module])
         return  # unreachable; execv replaces this process
 
-    # ── Multi-scenario mode: read scenarios from config.yaml ──────────────────
+    # ── Multi-scenario mode: read base config + matrix definition ─────────────
     config_path = Path(
         os.environ.get("FSL_CONFIG_PATH", str(PROJECT_ROOT / "config.yaml"))
     )
+    matrix_path = Path(
+        os.environ.get("FSL_MATRIX_CONFIG_PATH", str(PROJECT_ROOT / "matrix.yaml"))
+    )
     with config_path.open("r", encoding="utf-8") as fh:
         root_cfg: dict[str, Any] = yaml.safe_load(fh) or {}
+    with matrix_path.open("r", encoding="utf-8") as fh:
+        matrix_raw: dict[str, Any] = yaml.safe_load(fh) or {}
 
-    matrix_cfg = root_cfg.get("experiment_matrix", {})
+    matrix_cfg = matrix_raw.get("experiment_matrix", {})
     scenarios: list[dict[str, Any]] = matrix_cfg.get("scenarios", [])
 
     if not scenarios:
