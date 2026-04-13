@@ -477,7 +477,7 @@ eval-session:
 # Batch evaluation over multiple sessions; supports optional filters
 eval-batch:
 	@CMD="$(PYTHON) -m src.data.batch_run_evaluation \
-		--sessions-root $(if $(SESSIONS_ROOT),$(SESSIONS_ROOT),bestweights) \
+		--sessions-root $(if $(SESSION),bestweights/$(SESSION),$(if $(SESSIONS_ROOT),$(SESSIONS_ROOT),bestweights)) \
 		--device $(PLOT_DEVICE)"; \
 	if [ -n "$(ONLY)" ];             then CMD="$$CMD --only $(ONLY)"; fi; \
 	if [ -n "$(LIMIT)" ];            then CMD="$$CMD --limit $(LIMIT)"; fi; \

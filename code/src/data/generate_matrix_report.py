@@ -46,14 +46,32 @@ def main():
         
         import json
         safe_scen_name = str(rel_path).replace("/", "_").replace("\\", "_")
-        json_path = scen_dir / f"evaluation_report_{safe_scen_name}.json"
         
-        if not json_path.exists():
-            print(f"\n    [WARNING] No evaluation JSON found for {scen_name} at {json_path}. Please run `make eval-batch` first. Skip.")
+        # Priority 1: Check in global 'reports/' directory (new location)
+        reports_dir = project_root / "reports"
+        json_path_global = reports_dir / f"evaluation_report_{safe_scen_name}.json"
+        
+        # Priority 2: Check in scenario directory (old location)
+        json_path_local = scen_dir / f"evaluation_report_{safe_scen_name}.json"
+        
+        target_json = None
+        if json_path_global.exists():
+            target_json = json_path_global
+        elif json_path_local.exists():
+            target_json = json_path_local
+            
+        if not target_json:
+            # Fallback scan in reports/ if exact name match fails (handle slight diff in path joining)
+            possible_files = list(reports_dir.glob(f"evaluation_report_*_{scen_name}.json"))
+            if possible_files:
+                target_json = possible_files[0]
+
+        if not target_json:
+            print(f"\n    [WARNING] No evaluation JSON found for {scen_name}. Searched in:\n      - {json_path_global}\n      - {json_path_local}\n    Skip.")
             continue
             
         try:
-            with open(json_path, "r") as f:
+            with open(target_json, "r") as f:
                 data = json.load(f)
             
             # Use Client 1 as the representative for the scenario
@@ -177,6 +195,11 @@ def main():
         monthly_csv_path = project_root / "results" / args.session / f"Matrix_Station_Details_{args.session}.csv"
         df_monthly.to_csv(monthly_csv_path, index=False)
         print(f"\n📊  Report B (Scenarios x Stations) saved to: {monthly_csv_path}")
+        
+        # ALSO save to reports/ directory
+        reports_monthly_path = project_root / "reports" / f"Matrix_Station_Details_{args.session}.csv"
+        df_monthly.to_csv(reports_monthly_path, index=False)
+        print(f"📁  Copy saved to: {reports_monthly_path}")
 
     # 2. REPORT: PK Matrix (Report A)
     print("\n\n" + "="*80)
@@ -188,6 +211,11 @@ def main():
         global_csv_path = project_root / "results" / args.session / f"Matrix_Global_Summary_{args.session}.csv"
         df_global.to_csv(global_csv_path, index=False)
         print(f"\n\U0001f4be  Report A (Global Summary) saved to: {global_csv_path}")
+        
+        # ALSO save to reports/ directory
+        reports_global_path = project_root / "reports" / f"Matrix_Global_Summary_{args.session}.csv"
+        df_global.to_csv(reports_global_path, index=False)
+        print(f"📁  Copy saved to: {reports_global_path}")
 
 if __name__ == "__main__":
     main()

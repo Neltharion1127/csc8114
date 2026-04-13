@@ -1,0 +1,19 @@
+# Evaluation Reports
+reports/
+
+# Python caching
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Data and Artifacts (Optional, based on size)
+dataset/
+data/processed/
+bestweights/
+results/
+
+# Log files
+*.log

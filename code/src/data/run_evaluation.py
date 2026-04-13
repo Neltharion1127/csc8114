@@ -639,6 +639,11 @@ def evaluate():
         default="",
         help="Optional suffix for output report files (e.g. fixedthr034).",
     )
+    parser.add_argument(
+        "--report-dir",
+        default="reports",
+        help="Target directory for evaluation reports (default: reports).",
+    )
     args = parser.parse_args()
     forced_prob_threshold = None
     if args.force_prob_threshold is not None:
@@ -785,7 +790,7 @@ def evaluate():
 
     W = 96  # table width
     print("\n" + "=" * W)
-    print("\U0001f3c6  FINAL EVALUATION REPORT (14-DAY TEST SET)")
+    print("\U0001f3c6  FINAL EVALUATION REPORT (Monthly Test Days)")
     print(f"   Session           : {selected_session}")
     print(f"   Pairing mode      : {pairing_mode}")
     print(f"   Server checkpoint : {Path(server_path).name}  (round={server_round})")
@@ -817,17 +822,18 @@ def evaluate():
               f"  {tot:>8,}  {avg_mse:>8.4f}  {avg_mae:>8.4f}  {avg_acc:>7.2f}%  {avg_f1:>8.4f}  {avg_op_f1:>8.4f}")
     print("=" * W + "\n")
 
-    results_dir = project_root / "results" / selected_session
-    results_dir.mkdir(parents=True, exist_ok=True)
+    # Output paths
+    reports_root = project_root / args.report_dir
+    reports_root.mkdir(parents=True, exist_ok=True)
 
     safe_session_str = str(selected_session).replace("/", "_").replace("\\", "_")
     report_stem = f"evaluation_report_{safe_session_str}"
     if report_tag:
         report_stem = f"{report_stem}_{report_tag}"
 
-    report_csv = results_dir / f"{report_stem}.csv"
+    report_csv = reports_root / f"{report_stem}.csv"
     pd.DataFrame(all_results).to_csv(report_csv, index=False)
-    report_json = results_dir / f"{report_stem}.json"
+    report_json = reports_root / f"{report_stem}.json"
     summary = {
         "session": selected_session,
         "pairing_mode": pairing_mode,
