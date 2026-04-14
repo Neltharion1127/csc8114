@@ -10,6 +10,7 @@ Output: one parquet file per location in dataset/processed/,
         Columns: Timestamp, Temperature, Humidity, Pressure, Wind Speed, Rain, Sensor_Name
 """
 
+import time
 import requests
 import pandas as pd
 from pathlib import Path
@@ -113,15 +114,27 @@ def fetch_location(loc: dict) -> pd.DataFrame | None:
     return df
 
 
-def _download_locations(locations: list[dict], out_dir: Path) -> int:
-    """Download a list of locations into out_dir. Returns count of successes."""
+def _download_locations(locations: list[dict], out_dir: Path, delay_sec: float = 3.0) -> int:
+    """Download a list of locations into out_dir. Returns count of successes.
+
+    Skips locations whose parquet file already exists (resume-safe).
+    Waits delay_sec between requests to avoid 429 rate limiting.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     success = 0
-    for loc in locations:
+    for i, loc in enumerate(locations):
+        out_path = out_dir / f"{loc['name']}.parquet"
+        if out_path.exists():
+            print(f"  [{loc['name']}] Skipping (already downloaded)")
+            success += 1
+            continue
+
+        if i > 0:
+            time.sleep(delay_sec)
+
         print(f"  [{loc['name']}] Fetching...", end=" ", flush=True)
         try:
             df = fetch_location(loc)
-            out_path = out_dir / f"{loc['name']}.parquet"
             df.to_parquet(out_path, index=False)
             rain_rows = (df["Rain"] > 0).sum()
             print(f"✓  {len(df):,} rows | Rain: {rain_rows:,} samples ({100*rain_rows/len(df):.1f}%)")

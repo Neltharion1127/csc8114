@@ -82,16 +82,16 @@ training:
   seed: 42
   # batch_size: 32  # unused (main training loop is step-based RPC, not DataLoader batch training)
   classification_loss_weight: 2.0
-  classification_positive_weight: 1.1
+  classification_positive_weight: 1.0
   classification_loss_type: focal # weighted_bce | focal
   focal_gamma: 2.0
-  focal_alpha: 0.75 # [0,1] to enable alpha balancing; negative means disabled
-  rain_threshold_mm: 0.1
+  focal_alpha: -1 # [0,1] to enable alpha balancing; negative means disabled
+  rain_threshold_mm: 0.5
   rain_probability_threshold: 0.35
   local_steps: 10
   lr: 0.0005
-  num_rounds: 30
-  rain_sample_ratio: 0.30
+  num_rounds: 50
+  rain_sample_ratio: 0.15
   regression_loss_weight: 1.0
   target_transform: log1p
   start_delay: 8
@@ -99,14 +99,14 @@ training:
   mixed_precision: auto  # none | auto | bf16
   use_gpu: true # legacy switch (kept for backward compatibility)
   checkpoint_interval: 1  # Save a periodic checkpoint every N rounds
-  early_stopping_patience: 30
+  early_stopping_patience: 15
   eval_max_samples_per_sensor: 0
 server:
   log_flush_interval: 1000
   max_workers: 10
 
 data_download:
-  start_date: "2023-01-01T00:00:00"
+  start_date: "2015-01-01T00:00:00"
   end_date: "2026-03-31T00:00:00"
   # Legacy location kept for backward compatibility (new code prefers data.feature_cols)
   feature_cols:
