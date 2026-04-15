@@ -157,7 +157,7 @@ experiment_matrix:
           rho: 3
 
     - id: "09"
-      description: "Mid latency | S4 adaptive scheduler"
+      description: "Mid latency | S4 adaptive scheduler (compression only, rho fixed)"
       overrides:
         profiler:
           enabled: true
@@ -169,6 +169,7 @@ experiment_matrix:
             burst_latency_ms: 0.0
         scheduler:
           enabled: true
+          rho_step: 0
         compression:
           mode: float32
         federated:
@@ -249,7 +250,7 @@ experiment_matrix:
           rho: 3
 
     - id: "14"
-      description: "High latency | S4 adaptive scheduler"
+      description: "High latency | S4 adaptive scheduler (compression only, rho fixed)"
       overrides:
         profiler:
           enabled: true
@@ -261,6 +262,7 @@ experiment_matrix:
             burst_latency_ms: 0.0
         scheduler:
           enabled: true
+          rho_step: 0
         compression:
           mode: float32
         federated:

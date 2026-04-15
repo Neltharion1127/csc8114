@@ -109,6 +109,8 @@ def _read_eval_metrics(eval_json_path: Path) -> dict[str, Any]:
     macro_f1 = _mean([_safe_float(c.get("f1", 0.0)) for c in clients])
     mse_mean = _mean([_safe_float(c.get("mse", 0.0)) for c in clients])
     mae_mean = _mean([_safe_float(c.get("mae", 0.0)) for c in clients])
+    auprc_mean = _mean([_safe_float(c.get("auprc", 0.0)) for c in clients])
+    roc_auc_mean = _mean([_safe_float(c.get("roc_auc", 0.0)) for c in clients])
 
     micro_precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     micro_recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
@@ -136,11 +138,14 @@ def _read_eval_metrics(eval_json_path: Path) -> dict[str, Any]:
         "tn": tn,
         "mse_mean": mse_mean,
         "mae_mean": mae_mean,
+        "auprc_mean": auprc_mean,
+        "roc_auc_mean": roc_auc_mean,
     }
 
 
-def _read_server_metrics(session_dir: Path) -> dict[str, Any]:
-    logs = sorted(session_dir.glob("server_log_*.csv"))
+def _read_server_metrics(session_dir: Path, scenario_id: str | None = None) -> dict[str, Any]:
+    search_dir = session_dir / scenario_id if scenario_id else session_dir
+    logs = sorted(search_dir.glob("server_log_*.csv"))
     if not logs:
         return {}
     with logs[-1].open("r", encoding="utf-8", newline="") as f:
@@ -459,6 +464,8 @@ def main() -> int:
                         eval_device,
                         "--session",
                         session_id,
+                        "--scenario",
+                        scenario_id,
                     ],
                     env=env_local,
                     dry_run=False,
@@ -466,7 +473,7 @@ def main() -> int:
 
                 eval_json = _find_eval_json(PROJECT_ROOT / "results", session_id)
                 eval_metrics = _read_eval_metrics(eval_json)
-                server_metrics = _read_server_metrics(PROJECT_ROOT / "results" / session_id)
+                server_metrics = _read_server_metrics(PROJECT_ROOT / "results" / session_id, scenario_id)
         except Exception as exc:  # noqa: BLE001
             status = "failed"
             error = str(exc)

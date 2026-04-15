@@ -109,24 +109,33 @@ def find_periodic_pair(
     session_id: str,
     num_clients: int | None = None,
     target_round: int | None = None,
+    scenario_id: str | None = None,
 ) -> tuple[int, str, dict[int, str]] | None:
     """
     Find a strictly paired periodic checkpoint set:
       - server_round_<R>.pth
       - client_<cid>_round_<R>.pth for all available clients at round R,
         or all cid in [1..num_clients] if num_clients is provided.
+
+    If scenario_id is given, only the matching scenario subdirectory is searched.
     """
     session_dir = project_root / "bestweights" / session_id
     if not session_dir.is_dir():
         return None
 
     periodic_roots: list[Path] = []
-    direct = session_dir / "periodic"
-    if direct.is_dir():
-        periodic_roots.append(direct)
-    for sub in sorted(session_dir.glob("*/periodic")):
-        if sub.is_dir():
-            periodic_roots.append(sub)
+    if scenario_id:
+        # Narrow search to the specific scenario subdirectory only.
+        scenario_periodic = session_dir / scenario_id / "periodic"
+        if scenario_periodic.is_dir():
+            periodic_roots.append(scenario_periodic)
+    else:
+        direct = session_dir / "periodic"
+        if direct.is_dir():
+            periodic_roots.append(direct)
+        for sub in sorted(session_dir.glob("*/periodic")):
+            if sub.is_dir():
+                periodic_roots.append(sub)
     if not periodic_roots:
         return None
 
@@ -720,6 +729,13 @@ def evaluate():
         help="Evaluate a specific session ID under bestweights/ and results/ (recommended).",
     )
     parser.add_argument(
+        "--scenario",
+        type=str,
+        default=None,
+        help="Restrict checkpoint search to a specific scenario subdirectory (e.g. '07'). "
+             "Required when multiple scenarios share the same session (matrix runs).",
+    )
+    parser.add_argument(
         "--eval-phase",
         type=str,
         default="test",
@@ -792,6 +808,7 @@ def evaluate():
         session_id=selected_session,
         num_clients=num_clients_hint,
         target_round=args.round,
+        scenario_id=args.scenario or None,
     )
     if paired is not None:
         paired_round, server_path, client_map = paired
