@@ -23,7 +23,7 @@ class CompressionScheduler:
         self.base_rho = max(1, int(base_rho))
         self.min_rho = max(1, int(min_rho))
         self.max_rho = max(self.min_rho, int(max_rho))
-        self.rho_step = max(1, int(rho_step))
+        self.rho_step = max(0, int(rho_step))
         self.topk_threshold = float(int8_threshold) * float(topk_multiplier)
         self.latency_ema_alpha = float(latency_ema_alpha)
         self._client_state: dict[int, dict[str, float | int | str]] = {}
