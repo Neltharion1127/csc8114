@@ -1,8 +1,7 @@
----
-- name: Deploy FSL Client to Raspberry Pis
+- name: Phase 1 - Prepare and Pull FSL Client
   hosts: clients
   become: true
-  serial: 1  # Pull one Pi at a time to avoid Docker Hub rate limiting
+  serial: 3  # Increase batch size for faster pulling (but still limited to avoid Docker Hub rate limits)
 
   tasks:
     - name: Ensure directories exist
@@ -43,10 +42,17 @@
       ansible.builtin.shell: docker pull {{ client_image }}
       register: pull_result
       changed_when: "'Downloaded newer image' in pull_result.stdout"
+      tags: [pull]
 
+- name: Phase 2 - Start FSL Client (Simultaneous)
+  hosts: clients
+  become: true
+  serial: "100%"  # Ensure all Pis start training at the same time
+  tasks:
     - name: Remove old fsl-client container (if exists)
       ansible.builtin.shell: docker stop fsl-client 2>/dev/null; docker rm fsl-client 2>/dev/null; true
       changed_when: false
+      tags: [run]
 
     - name: Start fsl-client container
       ansible.builtin.shell: >
@@ -61,16 +67,20 @@
         -e FSL_DEVICE=cpu
         -v /home/pi/config.yaml:/app/config.yaml:ro
         -v /home/pi/dataset/processed:/app/dataset/processed:ro
+        -v /home/pi/matrix.yaml:/app/matrix.yaml:ro
         -v /home/pi/results:/app/results
         -v /home/pi/bestweights:/app/bestweights
         {{ client_image }}
         python src/nodes/client_node.py
+      tags: [run]
 
     - name: Show container status
       ansible.builtin.command: docker ps --filter name=fsl-client
       register: container_status
       changed_when: false
+      tags: [run]
 
     - name: Print container status
       ansible.builtin.debug:
         msg: "{{ container_status.stdout_lines }}"
+      tags: [run]
