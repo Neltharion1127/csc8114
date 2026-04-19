@@ -39,7 +39,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         ).to(self.device)
         self.optimizer = torch.optim.Adam(self.server_model.parameters(), lr=lr)
 
-        federated_cfg = cfg.get("federated", {})
+        federated_cfg = cfg.get("federated") or {}
         self.num_clients = federated_cfg.get("num_clients", 3)
         self.min_clients_per_round = federated_cfg.get("min_clients_per_round", 2)
         self.round_timeout_sec = federated_cfg.get("round_timeout_sec", 120.0)
@@ -113,6 +113,13 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
     def Register(self, request, context):
         """Assign a client id and return the shared session id."""
         with self._reg_lock:
+            # --- Scenario Validation via Metadata ---
+            metadata = dict(context.invocation_metadata())
+            client_scenario = metadata.get("scenario-id")
+            if client_scenario and self.scenario_id and client_scenario != self.scenario_id:
+                print(f"[SERVER] Rejecting registration from mismatched scenario: {client_scenario} != {self.scenario_id}")
+                return fsl_pb2.RegisterResponse(client_id=-1, total_clients=0, session_id="ERROR_SCENARIO_MISMATCH")
+
             client_name = request.client_name or f"client-{self._next_client_id}"
             requested_id = request.requested_client_id
 
@@ -147,6 +154,15 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
 
     def Forward(self, request, context):
         """Handle one forward request from a client."""
+        # --- Scenario Validation via Metadata ---
+        metadata = dict(context.invocation_metadata())
+        client_scenario = metadata.get("scenario-id")
+        if client_scenario and self.scenario_id and client_scenario != self.scenario_id:
+            return fsl_pb2.ForwardResponse(
+                status_message=f"Scenario mismatch: {client_scenario} != {self.scenario_id}",
+                success=False,
+            )
+
         try:
             client_id = getattr(request, "client_id", -1)
             reported_latency = getattr(request, "latency_ms", 0.0)
@@ -182,6 +198,14 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
 
     def Synchronize(self, request, context):
         """Aggregate client weights and return the latest global model."""
+        # --- Scenario Validation via Metadata ---
+        metadata = dict(context.invocation_metadata())
+        client_scenario = metadata.get("scenario-id")
+        if client_scenario and self.scenario_id and client_scenario != self.scenario_id:
+            context.set_details(f"Scenario mismatch: {client_scenario} != {self.scenario_id}")
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            return fsl_pb2.SyncResponse()
+
         try:
             local_weights = bytes_to_tensor(request.client_weights)
             return self.fedavg.synchronize(

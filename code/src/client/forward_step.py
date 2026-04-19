@@ -1,3 +1,4 @@
+import os
 import time
 
 import pandas as pd
@@ -93,7 +94,7 @@ def run_forward_step(
     if log_step_details:
         print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
 
-    response = stub.Forward(request)
+    response = stub.Forward(request, metadata=[("scenario-id", os.environ.get("SCENARIO_ID", ""))])
     latency_ms = (time.time() - start_time) * 1000.0 if profiler_enabled else 0.0
 
     if not response.success:

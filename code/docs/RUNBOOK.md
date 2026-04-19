@@ -168,3 +168,53 @@ ansible pi08 -i ansible/inventory.taisale.ini \
 | 清空 Pi 结果 | `make dist-clean-results` |
 | 构建并推送镜像到 Docker Hub | `make dist-build` |
 | 只跑指定场景 | `make matrix ONLY=05,06` |
+
+---
+
+## 10. Multi-Scenario Ablation Study (Automated) / 全自動消融實驗矩陣流程
+
+此流程專為連續運行 14 個消融場景所設計，具備 Metadata 標頭檢查與自動故障恢復能力。
+
+### Step 1: Nuclear Cleanup / 核彈級深度清理
+啟動前必須先清理所有機器，避免「幽靈程序」干擾同步：
+
+```bash
+# A. Mac 執行：殺死所有 Pi 上的殘留 Python 程序與容器，並清空 Pi 的結果與權重 (看到 FAILED 為正常)
+ansible clients -i ansible/inventory.ini -m shell \
+  -a "docker stop fsl-client; docker rm fsl-client; pkill -9 python; pkill -9 python3; rm -rf /home/pi/results/* /home/pi/bestweights/*" --become
+
+# B. Mac 執行：刪除 Pi 上未使用的舊鏡像 (釋放 1.6GB+ 磁碟空間)
+ansible clients -i ansible/inventory.ini -m shell \
+  -a "docker image prune -a -f" --become
+
+# C. VPS 執行：重設伺服器與「徹底清空」舊權重與結果
+docker compose -f docker-compose.server.yml down
+rm -rf ~/csc8114/code/bestweights/*
+rm -rf ~/csc8114/code/results/*
+```
+
+### Step 2: Build, Sync & Update / 建置與分發
+```bash
+# A. Mac 執行：重新封裝代碼 (Metadata 保險機制) 並推送
+make dist-build
+
+# B. Mac 執行：同步 matrix.yaml 配置
+make dist-sync-config
+
+# C. Mac 執行：讓樹莓派拉取最新鏡像
+ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini --tags "pull"
+
+# D. VPS 執行：讓伺服器拉取最新鏡像
+docker compose -f docker-compose.server.yml pull
+```
+
+### Step 3: Launch / 啟動全自動循環
+建議先啟動 Server，等待約 5 秒後再從 Mac 啟動 Client：
+
+```bash
+# 1. VPS 啟動 Server
+docker compose -f docker-compose.server.yml up -d
+
+# 2. Mac 啟動 Client 循環
+ansible-playbook ansible/deploy_client.yml -i ansible/inventory.ini --tags "run"
+```

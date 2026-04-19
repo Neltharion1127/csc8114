@@ -98,12 +98,15 @@ help:
 	@echo "  dist-load-image                   Save image from VPS → Mac → all Pis (offline)"
 	@echo "  dist-load-image-local             Build arm64 image on Mac → push to all Pis (no VPS/DockerHub needed)"
 	@echo "  dist-deploy        [IMAGE_TAG=x]  Ansible: deploy image to all Pis (Tailscale)"
+	@echo "  dist-logs                         View real-time logs from the VPS server"
+	@echo "  dist-clean-results                Erase ALL results on ALL Pi clients"
+	@echo "  dist-clean-server                 Erase results and weights on the VPS"
+	@echo "  dist-restart                      Nuclear restart: clean all + restart server"
 	@echo "  dist-deploy-check                 Ansible dry-run: preview changes without applying"
 	@echo "  dist-start         [IMAGE_TAG=x]  Full experiment: sync config → restart server → deploy Pis"
-	@echo "  dist-logs                         Tail live server logs from VPS"
-	@echo "  dist-clean-results                Delete results/ and bestweights/ on all Pis"
-	@echo "  dist-clean-server                 Delete results/ and bestweights/ on VPS"
-	@echo "  dist-restart                      Stop all + clear all results + fresh start"
+	@echo "  dist-fetch-server              Fetch results/bestweights from VPS (with periodic)"
+	@echo "  dist-fetch-clients             Fetch results/bestweights from all Pis (with periodic)"
+	@echo "  dist-fetch-all                 Fetch results/bestweights from both VPS and Pis (with periodic)"
 	@echo ""
 	@echo "── Evaluation (eval-*) ─────────────────────────────────────────"
 	@echo "  eval-latest                  Evaluate the most recent checkpoint session"
@@ -471,6 +474,25 @@ dist-fetch:
 	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/ ./results/
 	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/bestweights/ ./bestweights/
 	@echo "Results and Weights synchronized to local machine."
+
+dist-fetch-server:
+	@echo "=== Fetching results and bestweights from VPS (with periodic) ==="
+	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/ ./results/
+	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/bestweights/ ./bestweights/
+	@echo "✓ VPS results and bestweights synchronized."
+
+dist-fetch-clients:
+	@echo "=== Fetching results and bestweights from all Pis (with periodic) ==="
+	@ansible clients -i $(ANSIBLE_INV) -m synchronize \
+	  -a "src=/home/pi/results/ dest=$(PWD)/results/ mode=pull" \
+	  --become
+	@ansible clients -i $(ANSIBLE_INV) -m synchronize \
+	  -a "src=/home/pi/bestweights/ dest=$(PWD)/bestweights/ mode=pull" \
+	  --become
+	@echo "✓ All Pi results and bestweights synchronized."
+
+dist-fetch-all: dist-fetch-server dist-fetch-clients
+	@echo "✓ All server and client results synchronized."
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVALUATION  (eval-*)

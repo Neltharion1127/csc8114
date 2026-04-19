@@ -71,7 +71,7 @@
         -v /home/pi/results:/app/results
         -v /home/pi/bestweights:/app/bestweights
         {{ client_image }}
-        python src/nodes/client_node.py
+        python src/nodes/run_scenario_loop.py --role client
       tags: [run]
 
     - name: Show container status

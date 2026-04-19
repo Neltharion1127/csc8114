@@ -1,4 +1,5 @@
 import io
+import os
 import time
 from dataclasses import dataclass
 
@@ -45,7 +46,7 @@ def fed_avg_sync(
         f"(base_round={int(model_round)} local_epochs={int(local_epochs)})"
     )
     wait_start = time.time()
-    sync_res = stub.Synchronize(sync_req)
+    sync_res = stub.Synchronize(sync_req, metadata=[("scenario-id", os.environ.get("SCENARIO_ID", ""))])
     wait_elapsed_s = time.time() - wait_start
 
     round_number = int(getattr(sync_res, "round_number", model_round))

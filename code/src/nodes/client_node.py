@@ -99,16 +99,31 @@ class _ClientState:
 
 def _register(stub, state: _ClientState, client_name: str, requested_client_id: int) -> None:
     """
-    Register with the server (or re-register after a reconnect).
-    On the first call, populates identity fields on *state*.
-    On subsequent calls, verifies the server returned the same session to
-    detect an unexpected server restart.
+    Registers the client with the server to get a logical ID and session.
+    Retries indefinitely if a scenario mismatch is detected (waiting for server).
     """
-    reg = stub.Register(fsl_pb2.RegisterRequest(
-        client_name=client_name,
-        requested_client_id=requested_client_id,
-    ))
-    new_client_id, num_clients, new_session_id = reg.client_id, reg.total_clients, reg.session_id
+    scenario_id = os.environ.get("SCENARIO_ID", "")
+    while True:
+        try:
+            reg = stub.Register(
+                fsl_pb2.RegisterRequest(
+                    client_name=client_name,
+                    requested_client_id=requested_client_id,
+                ),
+                metadata=[("scenario-id", scenario_id)]
+            )
+            
+            if reg.session_id == "ERROR_SCENARIO_MISMATCH":
+                print(f"[CLIENT] Waiting for server to switch to scenario: {scenario_id}...")
+                time.sleep(10)
+                continue
+                
+            new_client_id, num_clients, new_session_id = reg.client_id, reg.total_clients, reg.session_id
+            break
+            
+        except grpc.RpcError as e:
+            print(f"[CLIENT] Registration failed (server might be restarting): {e.code()}")
+            time.sleep(10)
 
     if state.client_id is None:
         state.client_id = new_client_id
@@ -428,12 +443,15 @@ def _finalize_session(stub, state: _ClientState, epochs: int) -> None:
         total_runtime_s=time.time() - state.run_start_time,
         avg_steps_per_s=state.total_steps / max(1e-9, time.time() - state.run_start_time),
     )
-    completion = stub.NotifyCompletion(fsl_pb2.CompletionRequest(
-        client_id=state.client_id,
-        completed_epochs=state.completed_epochs or epochs,
-        total_steps=state.total_steps,
-        session_id=state.session_id,
-    ))
+    completion = stub.NotifyCompletion(
+        fsl_pb2.CompletionRequest(
+            client_id=state.client_id,
+            completed_epochs=state.completed_epochs or epochs,
+            total_steps=state.total_steps,
+            session_id=state.session_id,
+        ),
+        metadata=[("scenario-id", os.environ.get("SCENARIO_ID", ""))]
+    )
     print(
         f"[CLIENT {state.client_id}] Completion acknowledged by server "
         f"({completion.completed_clients}/{completion.total_clients})"
