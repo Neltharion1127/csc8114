@@ -60,7 +60,6 @@ def run_forward_step(
     with maybe_autocast(device):
         smashed_activation = client_model(input_tensor)
 
-    start_time = time.time()
     activation_bytes = compress(smashed_activation, compression_mode)
     payload_size = len(activation_bytes)
     if profiler_enabled:
@@ -74,8 +73,9 @@ def run_forward_step(
         if sleep_ms > 0.0:
             time.sleep(sleep_ms / 1000.0)
     else:
-        reported_latency_ms = 0.0
-    reported_payload_bytes = payload_size if profiler_enabled else 0
+        # Report last step's measured RTT so the scheduler sees real network latency.
+        reported_latency_ms = last_latency_ms
+    reported_payload_bytes = payload_size
     training_target = transform_target_scalar(target_value)
 
     request = fsl_pb2.ForwardRequest(
@@ -94,8 +94,9 @@ def run_forward_step(
     if log_step_details:
         print(f"[{phase}] Transmitting activations for {sensor_id}... Payload: {payload_size} bytes")
 
+    rpc_start = time.time()
     response = stub.Forward(request, metadata=[("scenario-id", os.environ.get("SCENARIO_ID", ""))])
-    latency_ms = (time.time() - start_time) * 1000.0 if profiler_enabled else 0.0
+    latency_ms = (time.time() - rpc_start) * 1000.0
 
     if not response.success:
         raise RuntimeError(response.status_message or "Server forward pass failed.")
