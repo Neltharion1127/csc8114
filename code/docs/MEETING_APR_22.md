@@ -52,24 +52,40 @@ Since the last meeting we have finalised the experiment matrix under two deploym
 | M13 | High (~50–80 ms) | S3 — Sync interval only | float32 | 3 | Off | 42, 52, 62 |
 | M14 | High (~50–80 ms) | S4 — Adaptive (compression only, ρ fixed) | auto | 1 | On | 42, 52, 62 |
 
-### Table 2 — Raspberry Pi Experiment Matrix (10 of 14 scenarios × 3 seeds = 30 runs completed)
+### Table 2 — Raspberry Pi Experiment Matrix
 
-| ID | Latency Regime | Strategy | Status |
-|---|---|---|---|
-| M01 | None | S0 Baseline | Done |
-| M02 | None | S1 float16 | Done |
-| M03 | None | S2 int8 | **Pending** |
-| M04 | None | S3 rho=3 | Done |
-| M05 | Low | S0 Baseline | Done |
-| M06 | Low | S1 float16 | Done |
-| M07 | Low | S2 int8 | **Pending** |
-| M08 | Low | S3 rho=3 | Done |
-| M09 | Low | S4 Adaptive | Done |
-| M10 | High | S0 Baseline | Done |
-| M11 | High | S1 float16 | Done |
-| M12 | High | S2 int8 | **Pending** |
-| M13 | High | S3 rho=3 | Done |
-| M14 | High | S4 Adaptive | **Pending** |
+Unlike simulation, Pi experiments do **not** use a latency profiler — real network latency between Raspberry Pi clients and the VPS server (over Tailscale) drives the system naturally. Two strategy variants are evaluated:
+
+| ID | Strategy | Compression | ρ | Scheduler | Seeds | Status |
+|---|---|---|---|---|---|---|
+| 01_05_10 | S0 — Baseline | float32 | 1 | Off | 42 | **Running** |
+| 09 | S4 — Adaptive (compression only, ρ fixed) | auto | 1 | On | 42 | **Running** |
+
+---
+
+## Metrics & Parameters
+
+### Evaluation Metrics
+
+| Metric | Meaning | Notes |
+|---|---|---|
+| **AUPRC** | Area Under the Precision-Recall Curve — ranking quality across all classification thresholds | Primary metric. Robust to class imbalance (~53% positive rate). Max = 1.0. |
+| **Macro F1** | Harmonic mean of precision & recall, averaged equally across both classes | Values near 0.697 indicate model collapse (all-positive prediction — precision collapses to the positive class rate). |
+| **MSE / MAE** | Regression head error in predicting rainfall amount (mm) | Measured after inverse log1p transform. Reflects quantity prediction quality, not just rain/no-rain. |
+| **Accuracy** | Fraction of correct binary predictions | Misleading under imbalance — a model predicting all rain gets ~53% for free. |
+| **Payload (B)** | Bytes transmitted per client per forward step (compressed activation) | Direct measure of communication cost. |
+
+### System Parameters
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| **ρ (rho)** | 1 or 3 | Sync interval — local training rounds between FedAvg aggregations. ρ=1: sync every round; ρ=3: less frequent. Higher ρ reduces communication but delays weight sharing. |
+| **Compression mode** | float32 / float16 / int8 / topk_int8 | How activations are encoded before transmission. float32=256 B; float16=128 B; int8=68 B; topk_int8≈52 B (top 12.5% elements, int8-quantised). |
+| **EMA latency** | α=0.2 | Exponential moving average of per-client round-trip latency. Smooths noise before scheduler decisions. |
+| **Scheduler thresholds** | 4 / 10 / 15 ms | EMA latency levels triggering compression escalation: <4 ms→float32; 4–10 ms→float16; 10–15 ms→int8; >15 ms→topk_int8. |
+| **rho_step** | 0 (S4) or 1 (S5) | Per-severity ρ increment. rho_step=0: ρ fixed (compression only); rho_step=1: ρ = base + severity (joint adaptation). |
+| **rain_threshold_mm** | 0.5 mm | Minimum 24 h cumulative rainfall to label a sample as rain (target=1). |
+| **prob_threshold** | 0.35 | Sigmoid output threshold for binary prediction. Set below 0.5 to improve recall on imbalanced data. |
 
 ---
 
