@@ -1,6 +1,6 @@
 compression:
   mode: float32
-  topk_ratio: 0.5
+  topk_ratio: 0.125
 console:
   log_step_details: false
   log_server_requests: false
@@ -10,13 +10,13 @@ artifacts:
 data:
   processed_dir: dataset/processed
   holdout_dir: dataset/holdout
-  # Chronological time-based splitting (2023-01-01 to 2026-03-12)
-  # TRAIN: 2023-01-01 → 2024-12-31 (~70%)
-  # VAL:   2025-01-01 → 2025-06-30 (~16%)
-  # TEST:  2025-07-01 → end        (~14%)
+  # Chronological time-based splitting (2015-01-01 to 2026-03-31)
+  # TRAIN: 2015-01-01 → 2023-12-31 (~80%)
+  # VAL:   2024-01-01 → 2024-12-31 (~9%)
+  # TEST:  2025-01-01 → end        (~11%)
   # Boundaries are exclusive upper bounds (ts < train_end → TRAIN, etc.)
-  train_end: "2025-01-01"
-  val_end:   "2025-07-01"
+  train_end: "2024-01-01"
+  val_end:   "2025-01-01"
   # Feature columns consumed by model/data pipeline (preferred location)
   feature_cols:
     - Temperature
@@ -30,11 +30,11 @@ federated:
   # 11 training parquet files: strict 1:1 mapping, client N gets sorted_files[N-1]
   rho: 1
   # How long the server barrier waits for all active clients to submit weights.
-  # 15s was fine for local Docker; real Pi → VPS latency needs a much larger window.
-  round_timeout_sec: 120
+  # 20s is sufficient for local native runs; increase to 150 for Pi → VPS.
+  round_timeout_sec: 20
   # After quorum is reached, wait this many extra seconds for stragglers before aggregating.
   # Set to 0 to aggregate immediately upon quorum.
-  grace_period_sec: 20
+  grace_period_sec: 1
 grpc:
   max_message_mb: 50
   server_host: fsl-server
@@ -94,7 +94,7 @@ training:
   rain_sample_ratio: 0.15
   regression_loss_weight: 1.0
   target_transform: log1p
-  start_delay: 8
+  start_delay: 3
   device: auto  # auto | cuda | mps | cpu
   mixed_precision: auto  # none | auto | bf16
   use_gpu: true # legacy switch (kept for backward compatibility)
@@ -103,7 +103,7 @@ training:
   eval_max_samples_per_sensor: 0
 server:
   log_flush_interval: 1000
-  max_workers: 10
+  max_workers: 25
 
 data_download:
   start_date: "2015-01-01T00:00:00"

@@ -23,6 +23,8 @@ class ServerReporter:
         print(f"[SERVER] Server log flush interval: {self.flush_interval} records")
 
     def record(self, log_entry: dict) -> None:
+        if not log_entry.get("is_training", 1):
+            return
         batch = None
         with self._lock:
             self.server_logs.append(log_entry)
