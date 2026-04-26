@@ -4,6 +4,7 @@ import os
 import re
 import socket
 import time
+import psutil
 from dataclasses import dataclass, field
 
 import torch
@@ -56,6 +57,23 @@ def _is_retriable(exc: grpc.RpcError) -> bool:
 
 # ── Persistent state ──────────────────────────────────────────────────────────
 
+    def get_system_metrics(self):
+        """Monitor CPU and Memory utilization."""
+        return {
+            "CPU_Percent": psutil.cpu_percent(interval=None),
+            "Mem_Percent": psutil.virtual_memory().percent
+        }
+
+    def get_model_size_bytes(self):
+        """Calculate total model size in bytes."""
+        param_size = 0
+        for param in self.client_model.parameters():
+            param_size += param.nelement() * param.element_size()
+        buffer_size = 0
+        for buffer in self.client_model.buffers():
+            buffer_size += buffer.nelement() * buffer.element_size()
+        return param_size + buffer_size
+
 @dataclass
 class _ClientState:
     """
@@ -69,6 +87,7 @@ class _ClientState:
     num_clients: int = 0
     session_dir: str | None = None
     periodic_dir: str | None = None
+    actual_seed: int | None = None
 
     # Set by _init_local (once per run, not per connection)
     client_model: ClientLSTM | None = None
@@ -93,6 +112,19 @@ class _ClientState:
     experimental_logs: list = field(default_factory=list)
     finalized: bool = False
     run_start_time: float = field(default_factory=time.time)
+
+    def get_system_metrics(self):
+        """Monitor CPU and Memory utilization."""
+        return {
+            "CPU_Percent": psutil.cpu_percent(interval=None),
+            "Mem_Percent": psutil.virtual_memory().percent
+        }
+
+    def get_model_size_bytes(self):
+        """Calculate total model size in bytes."""
+        param_size = sum(p.nelement() * p.element_size() for p in self.client_model.parameters())
+        buffer_size = sum(b.nelement() * b.element_size() for b in self.client_model.buffers())
+        return param_size + buffer_size
 
 
 # ── Step 1: Register ──────────────────────────────────────────────────────────
@@ -131,6 +163,7 @@ def _register(stub, state: _ClientState, client_name: str, requested_client_id: 
         state.num_clients = num_clients
         base_seed = cfg.get("training", {}).get("seed", 42)
         client_seed = (int(base_seed) + int(state.client_id)) if base_seed is not None else None
+        state.actual_seed = client_seed
         set_global_seed(client_seed, role=f"client-{state.client_id}")
         scenario_id = os.environ.get("SCENARIO_ID")
         if scenario_id:
@@ -140,7 +173,12 @@ def _register(stub, state: _ClientState, client_name: str, requested_client_id: 
         state.periodic_dir = os.path.join(state.session_dir, "periodic")
         os.makedirs(state.session_dir, exist_ok=True)
         os.makedirs(state.periodic_dir, exist_ok=True)
-        os.makedirs(os.path.join(project_root, "results"), exist_ok=True)
+        # Pre-create results/<session_id>[/<scenario_id>] so save_results never
+        # hits FileNotFoundError on the second (or later) seed run.
+        if scenario_id:
+            os.makedirs(os.path.join(project_root, "results", state.session_id, scenario_id), exist_ok=True)
+        else:
+            os.makedirs(os.path.join(project_root, "results", state.session_id), exist_ok=True)
     elif new_client_id != state.client_id or new_session_id != state.session_id:
         raise RuntimeError(
             f"Session mismatch on reconnect: "
@@ -152,6 +190,7 @@ def _register(stub, state: _ClientState, client_name: str, requested_client_id: 
     print(
         f"[CLIENT] Registered name: {client_name} | requested_id: {requested_client_id or 'auto'} "
         f"| assigned_id: {state.client_id} / {num_clients} | session: {state.session_id}"
+        f" | seed: {state.actual_seed}"
         + (" [resumed]" if state.start_epoch > 0 else "")
     )
 
@@ -361,6 +400,13 @@ def _run_single_epoch(stub, state: _ClientState, epoch: int, epochs: int) -> boo
             f"train_time={train_elapsed:.2f}s "
             f"train_throughput={epoch_train_steps / train_elapsed:.2f} steps/s"
         )
+        
+        # Log system metrics and epoch timing
+        metrics = state.get_system_metrics()
+        metrics["Epoch_Time_s"] = train_elapsed
+        metrics["Model_Size_Bytes"] = state.get_model_size_bytes()
+        for log in epoch_logs:
+            log.update(metrics)
 
     # --- Sync + validate (every rho epochs) ---
     sync_interval = max(1, int(state.train_state.rho))
@@ -424,13 +470,23 @@ def _run_single_epoch(stub, state: _ClientState, epoch: int, epochs: int) -> boo
 
 def _finalize_session(stub, state: _ClientState, epochs: int) -> None:
     """Save final results, print summary, and notify the server of completion."""
-    avg_latency, avg_bytes = summarize_logs(state.experimental_logs)
+    # Calculate avg system metrics
+    cpus = [log.get("CPU_Percent", 0.0) for log in state.experimental_logs if "CPU_Percent" in log]
+    mems = [log.get("Mem_Percent", 0.0) for log in state.experimental_logs if "Mem_Percent" in log]
+    avg_cpu = sum(cpus) / len(cpus) if cpus else 0.0
+    avg_mem = sum(mems) / len(mems) if mems else 0.0
+    total_runtime = time.time() - state.run_start_time
+
     save_results(
         state.client_id, state.experimental_logs, state.session_id,
         best_model_path=state.checkpoint_state.best_model_path,
         best_test_loss=state.checkpoint_state.best_test_loss if state.checkpoint_state.best_test_loss != float("inf") else None,
         avg_latency=avg_latency,
         avg_bytes=avg_bytes,
+        avg_cpu=avg_cpu,
+        avg_mem=avg_mem,
+        total_runtime_s=total_runtime,
+        actual_seed=state.actual_seed,
     )
     print_summary(
         client_id=state.client_id,
@@ -440,8 +496,11 @@ def _finalize_session(stub, state: _ClientState, epochs: int) -> None:
         avg_latency=avg_latency,
         avg_bytes=avg_bytes,
         best_model_path=state.checkpoint_state.best_model_path,
-        total_runtime_s=time.time() - state.run_start_time,
-        avg_steps_per_s=state.total_steps / max(1e-9, time.time() - state.run_start_time),
+        total_runtime_s=total_runtime,
+        avg_steps_per_s=state.total_steps / max(1e-9, total_runtime),
+        avg_cpu=avg_cpu,
+        avg_mem=avg_mem,
+        actual_seed=state.actual_seed,
     )
     completion = stub.NotifyCompletion(
         fsl_pb2.CompletionRequest(
@@ -531,6 +590,7 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
             best_test_loss=state.checkpoint_state.best_test_loss if state.checkpoint_state.best_test_loss != float("inf") else None,
             avg_latency=avg_latency,
             avg_bytes=avg_bytes,
+            actual_seed=state.actual_seed,
         )
 
 

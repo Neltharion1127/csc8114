@@ -52,6 +52,10 @@ def save_results(
     best_test_loss: float | None = None,
     avg_latency: float | None = None,
     avg_bytes: float | None = None,
+    avg_cpu: float | None = None,
+    avg_mem: float | None = None,
+    total_runtime_s: float | None = None,
+    actual_seed: int | None = None,
 ) -> None:
     scenario_id = os.environ.get("SCENARIO_ID")
     if scenario_id:
@@ -76,6 +80,10 @@ def save_results(
         "best_test_loss": best_test_loss,
         "avg_latency_ms": avg_latency,
         "avg_payload_bytes": avg_bytes,
+        "avg_cpu_percent": avg_cpu,
+        "avg_mem_percent": avg_mem,
+        "total_runtime_s": total_runtime_s,
+        "actual_seed": actual_seed,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),
         "config_snapshot_policy": resolve_config_snapshot_policy(),
@@ -101,6 +109,7 @@ def save_progress(
     best_test_loss: float | None = None,
     avg_latency: float | None = None,
     avg_bytes: float | None = None,
+    actual_seed: int | None = None,
 ) -> None:
     """
     Persist rolling progress to deterministic filenames so partial runs are recoverable.
@@ -125,7 +134,8 @@ def save_progress(
         "best_model_path": best_model_path,
         "best_test_loss": best_test_loss,
         "avg_latency_ms": avg_latency,
-        "avg_payload_bytes": avg_bytes,
+        "avg_bytes": avg_bytes,
+        "actual_seed": actual_seed,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),
         "config_snapshot_policy": resolve_config_snapshot_policy(),
@@ -151,6 +161,9 @@ def print_summary(
     best_model_path: str | None,
     total_runtime_s: float | None = None,
     avg_steps_per_s: float | None = None,
+    avg_cpu: float | None = None,
+    avg_mem: float | None = None,
+    actual_seed: int | None = None,
 ) -> None:
     print("\n" + "=" * 60)
     print(f"TRAINING COMPLETE: CLIENT {client_id} SUMMARY")
@@ -163,10 +176,16 @@ def print_summary(
         else "[INFO]  Best Test Loss (MSE)   : N/A"
     )
     print(f"[INFO]  Avg Latency per Pass   : {avg_latency:.2f} ms")
-    print(f"[INFO]  Avg Payload per Pass   : {avg_bytes / 1024:.2f} KB")
+    print(f"[INFO]  Avg Payload per Pass   : {avg_bytes / 1024:.2f} KB ({avg_bytes:.0f} bytes)")
     if total_runtime_s is not None:
         print(f"[INFO]  Total Runtime         : {total_runtime_s:.2f} s")
     if avg_steps_per_s is not None:
         print(f"[INFO]  Avg Throughput        : {avg_steps_per_s:.2f} steps/s")
+    if avg_cpu is not None:
+        print(f"[INFO]  Avg CPU Usage         : {avg_cpu:.1f} %")
+    if avg_mem is not None:
+        print(f"[INFO]  Avg Memory Usage      : {avg_mem:.1f} %")
+    if actual_seed is not None:
+        print(f"[INFO]  Actual Seed (client)  : {actual_seed}")
     print(f"[INFO]  Best Model Checkpoint  : {best_model_path}")
     print("=" * 60 + "\n")

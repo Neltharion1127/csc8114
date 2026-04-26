@@ -1036,8 +1036,12 @@ def evaluate():
     results_dir = project_root / "results" / selected_session
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_session_str = str(selected_session).replace("/", "_").replace("\\", "_")
-    report_stem = f"evaluation_report_{safe_session_str}"
+    if args.scenario:
+        report_stem = f"eval_{args.scenario}"
+    else:
+        safe_session_str = str(selected_session).replace("/", "_").replace("\\", "_")
+        report_stem = f"evaluation_report_{safe_session_str}"
+    
     if report_tag:
         report_stem = f"{report_stem}_{report_tag}"
 
@@ -1103,6 +1107,27 @@ def evaluate():
         "recommended_threshold_by_f1": recommended_threshold,
         "clients": all_results,
     }
+
+    # 🚀 ENHANCEMENT: Inject Training Phase Metadata (Runtime, CPU, etc.)
+    # We look for meta files in the same directory as the server weight
+    training_meta_files = list(Path(server_path).parent.glob("*_meta.json"))
+    if training_meta_files:
+        try:
+            runtimes, cpus, mems = [], [], []
+            for mf in training_meta_files:
+                with open(mf, "r") as f:
+                    mt = json.load(f)
+                    if mt.get("total_runtime_s"): runtimes.append(float(mt["total_runtime_s"]))
+                    if mt.get("avg_cpu_percent"): cpus.append(float(mt["avg_cpu_percent"]))
+                    if mt.get("avg_mem_percent"): mems.append(float(mt["avg_mem_percent"]))
+            
+            if runtimes: summary["training_total_runtime_s"] = round(sum(runtimes)/len(runtimes), 2)
+            if cpus: summary["training_avg_cpu_percent"] = round(sum(cpus)/len(cpus), 1)
+            if mems: summary["training_avg_mem_percent"] = round(sum(mems)/len(mems), 1)
+            print(f"[INFO] Injected training metrics: Runtime={summary.get('training_total_runtime_s')}s")
+        except Exception as e:
+            print(f"[WARN] Failed to inject training metadata: {e}")
+
     with open(report_json, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"[INFO] Saved evaluation CSV : {report_csv}")

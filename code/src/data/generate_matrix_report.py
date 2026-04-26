@@ -113,11 +113,37 @@ def main():
             "Acc_Avg": round(avg_acc, 4),
             "Latency_ms": 0.0,
             "Traffic_KB": 0.0,
+            "Runtime_s": 0.0,
+            "CPU_Avg": 0.0,
+            "Mem_Avg": 0.0,
             "Station_Profiles": monthly_profile.to_dict(orient="records")
         }
 
         # Efficiency metrics
         logs = list(scen_dir.glob("training_log_client*.csv"))
+        meta_files = list(scen_dir.glob("*_meta.json"))
+
+        if meta_files:
+            try:
+                # Use the first meta file as representative, or average them if multiple
+                runtimes = []
+                cpus = []
+                mems = []
+                for mf in meta_files:
+                    with open(mf, "r") as f:
+                        mdata = json.load(f)
+                        if "total_runtime_s" in mdata and mdata["total_runtime_s"]:
+                            runtimes.append(float(mdata["total_runtime_s"]))
+                        if "avg_cpu_percent" in mdata and mdata["avg_cpu_percent"]:
+                            cpus.append(float(mdata["avg_cpu_percent"]))
+                        if "avg_mem_percent" in mdata and mdata["avg_mem_percent"]:
+                            mems.append(float(mdata["avg_mem_percent"]))
+                
+                if runtimes: scen_summary["Runtime_s"] = round(sum(runtimes)/len(runtimes), 1)
+                if cpus: scen_summary["CPU_Avg"] = round(sum(cpus)/len(cpus), 1)
+                if mems: scen_summary["Mem_Avg"] = round(sum(mems)/len(mems), 1)
+            except: pass
+
         if logs:
             try:
                 df_logs = pd.concat([pd.read_csv(f) for f in logs])
@@ -143,27 +169,27 @@ def main():
     station_rows = []
     for s in summary_list:
         print(f"\n📁  Scenario: {s['Scenario']}")
-        print(f"{'Month':<15} | {'F1':<8} | {'Acc':<8} | {'MSE':<10} | {'Latency':<8} | {'Traffic':<8}")
-        print("-" * 75)
+        print(f"{'Month':<15} | {'F1':<8} | {'Acc':<8} | {'Latency':<8} | {'Traffic':<8} | {'Runtime':<8} | {'CPU':<6}")
+        print("-" * 85)
         
         # Define month order for sorting
         month_order = [
             "January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"
         ]
-        sorted_profiles = sorted(s['Station_Profiles'], 
-                                 key=lambda x: month_order.index(x['Month']) if x['Month'] in month_order else 99)
         
+        sorted_profiles = sorted(
+            s["Station_Profiles"], 
+            key=lambda x: month_order.index(x["Month"]) if x["Month"] in month_order else 99
+        )
+
         for m in sorted_profiles:
-            st_name = m['Month']
-            
-            # Print console row
-            print(f"{st_name:<15} | {m['F1']:<8.4f} | {m['Acc']:<8.4f} | {m['MSE']:<10.6f} | {s['Latency_ms']:<8.1f} | {s['Traffic_KB']:<8.1f}")
+            print(f"{m['Month']:<15} | {m['F1']:<8.4f} | {m['Acc']:<8.4f} | {s['Latency_ms']:<8.1f} | {s['Traffic_KB']:<8.1f} | {s['Runtime_s']:<8.1f} | {s['CPU_Avg']:<6.1f}%")
             
             # Prepare row for CSV
             station_rows.append({
                 "Scenario": s['Scenario'],
-                "Station": st_name,
+                "Station": m['Month'],
                 "F1": round(m['F1'], 4),
                 "Accuracy": round(m['Acc'], 4),
                 "MSE": round(m['MSE'], 6),
