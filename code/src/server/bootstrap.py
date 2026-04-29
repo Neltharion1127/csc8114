@@ -66,5 +66,6 @@ def run_server(servicer) -> None:
         print("[SERVER] Executing safety mechanism: Flushing remaining logs...")
         if hasattr(servicer, "flush_logs"):
             servicer.flush_logs()
-        server.stop(0)
+        # Give a 1s grace period for pending RPC threads to finish to avoid "terminate called" crash.
+        server.stop(1).wait()
         print("[SERVER] Shutdown complete.")

@@ -55,6 +55,12 @@ def save_results(
     avg_cpu: float | None = None,
     avg_mem: float | None = None,
     total_runtime_s: float | None = None,
+    model_size_bytes: int | None = None,
+    net_sent_mb: float | None = None,
+    net_recv_mb: float | None = None,
+    mem_peak_mb: float | None = None,
+    sync_bytes_sent_mb: float | None = None,
+    sync_bytes_recv_mb: float | None = None,
     actual_seed: int | None = None,
 ) -> None:
     scenario_id = os.environ.get("SCENARIO_ID")
@@ -83,6 +89,12 @@ def save_results(
         "avg_cpu_percent": avg_cpu,
         "avg_mem_percent": avg_mem,
         "total_runtime_s": total_runtime_s,
+        "model_size_bytes": model_size_bytes,
+        "net_sent_mb": net_sent_mb,
+        "net_recv_mb": net_recv_mb,
+        "mem_peak_mb": mem_peak_mb,
+        "sync_bytes_sent_mb": sync_bytes_sent_mb,
+        "sync_bytes_recv_mb": sync_bytes_recv_mb,
         "actual_seed": actual_seed,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),
@@ -109,6 +121,7 @@ def save_progress(
     best_test_loss: float | None = None,
     avg_latency: float | None = None,
     avg_bytes: float | None = None,
+    model_size_bytes: int | None = None,
     actual_seed: int | None = None,
 ) -> None:
     """
@@ -135,6 +148,7 @@ def save_progress(
         "best_test_loss": best_test_loss,
         "avg_latency_ms": avg_latency,
         "avg_bytes": avg_bytes,
+        "model_size_bytes": model_size_bytes,
         "actual_seed": actual_seed,
         "profiler_enabled": cfg.get("profiler", {}).get("enabled", True),
         "scheduler_enabled": cfg.get("scheduler", {}).get("enabled", True),

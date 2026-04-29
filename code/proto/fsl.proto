@@ -88,6 +88,9 @@ service FSLService {
     // Registration: Client registers and receives an assigned ID
     rpc Register(RegisterRequest) returns (RegisterResponse);
 
+    // Get current server status (Scenario ID, Session ID)
+    rpc GetInfo(Empty) returns (ServerInfo);
+
     // The core function: Send activations, get gradients back
     rpc Forward(ForwardRequest) returns (ForwardResponse);
 
@@ -96,4 +99,12 @@ service FSLService {
 
     // Final notification sent by a client after it has completed training
     rpc NotifyCompletion(CompletionRequest) returns (CompletionResponse);
+}
+
+message Empty {}
+
+message ServerInfo {
+    string scenario_id = 1;
+    string session_id = 2;
+    int32 current_round = 3;
 }

@@ -114,6 +114,7 @@ def main():
             "Latency_ms": 0.0,
             "Traffic_KB": 0.0,
             "Runtime_s": 0.0,
+            "Throughput_s": 0.0,
             "CPU_Avg": 0.0,
             "Mem_Avg": 0.0,
             "Station_Profiles": monthly_profile.to_dict(orient="records")
@@ -142,6 +143,10 @@ def main():
                 if runtimes: scen_summary["Runtime_s"] = round(sum(runtimes)/len(runtimes), 1)
                 if cpus: scen_summary["CPU_Avg"] = round(sum(cpus)/len(cpus), 1)
                 if mems: scen_summary["Mem_Avg"] = round(sum(mems)/len(mems), 1)
+                
+                # Calculation Throughput from aggregate samples
+                if scen_summary["Runtime_s"] > 0:
+                    scen_summary["Throughput_s"] = round(avg_samples * eval_settings.get("num_clients", 1) / scen_summary["Runtime_s"], 1)
             except: pass
 
         if logs:
@@ -169,8 +174,8 @@ def main():
     station_rows = []
     for s in summary_list:
         print(f"\n📁  Scenario: {s['Scenario']}")
-        print(f"{'Month':<15} | {'F1':<8} | {'Acc':<8} | {'Latency':<8} | {'Traffic':<8} | {'Runtime':<8} | {'CPU':<6}")
-        print("-" * 85)
+        print(f"{'Month':<15} | {'F1':<8} | {'Acc':<8} | {'Latency':<8} | {'Traffic':<8} | {'Runtime':<8} | {'Thrpt':<8}")
+        print("-" * 90)
         
         # Define month order for sorting
         month_order = [
@@ -184,7 +189,7 @@ def main():
         )
 
         for m in sorted_profiles:
-            print(f"{m['Month']:<15} | {m['F1']:<8.4f} | {m['Acc']:<8.4f} | {s['Latency_ms']:<8.1f} | {s['Traffic_KB']:<8.1f} | {s['Runtime_s']:<8.1f} | {s['CPU_Avg']:<6.1f}%")
+            print(f"{m['Month']:<15} | {m['F1']:<8.4f} | {m['Acc']:<8.4f} | {s['Latency_ms']:<8.1f} | {s['Traffic_KB']:<8.1f} | {s['Runtime_s']:<8.1f} | {s['Throughput_s']:<8.1f}")
             
             # Prepare row for CSV
             station_rows.append({

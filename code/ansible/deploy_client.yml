@@ -1,7 +1,12 @@
 - name: Phase 1 - Prepare and Pull FSL Client
   hosts: clients
   become: true
-  serial: 3  # Increase batch size for faster pulling (but still limited to avoid Docker Hub rate limits)
+  serial: 3
+  vars:
+    session_id: "manual_run"
+    scenario_id: ""
+    image_tag: "latest"
+    client_image: "{{ registry | default('cindyncl26') }}/fsl-client:{{ image_tag }}"
 
   tasks:
     - name: Ensure directories exist
@@ -47,7 +52,12 @@
 - name: Phase 2 - Start FSL Client (Simultaneous)
   hosts: clients
   become: true
-  serial: "100%"  # Ensure all Pis start training at the same time
+  serial: "100%"
+  vars:
+    session_id: "manual_run"
+    scenario_id: ""
+    image_tag: "latest"
+    client_image: "{{ registry | default('cindyncl26') }}/fsl-client:{{ image_tag }}"
   tasks:
     - name: Remove old fsl-client container (if exists)
       ansible.builtin.shell: docker stop fsl-client 2>/dev/null; docker rm fsl-client 2>/dev/null; true
@@ -65,6 +75,8 @@
         -e PYTHONUNBUFFERED=1
         -e PYTHONPATH=/app
         -e FSL_DEVICE=cpu
+        -e SESSION_ID={{ session_id }}
+        -e SCENARIO_ID={{ scenario_id }}
         -v /home/pi/config.yaml:/app/config.yaml:ro
         -v /home/pi/dataset/processed:/app/dataset/processed:ro
         -v /home/pi/matrix.yaml:/app/matrix.yaml:ro

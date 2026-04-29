@@ -127,6 +127,17 @@ def run_forward_step(
     if scheduler_enabled and getattr(response, "next_rho", 0) > 0:
         next_rho = int(response.next_rho)
 
+    # Sparsity ratio: how much of the activation was actually transmitted
+    # For topk modes: k/n ratio from config; for dense modes: 1.0 (100%)
+    if "topk" in compression_mode:
+        raw_ratio = cfg.get("compression", {}).get("topk_ratio", 0.125)
+        try:
+            sparsity_ratio = float(raw_ratio)
+        except (TypeError, ValueError):
+            sparsity_ratio = 0.5
+    else:
+        sparsity_ratio = 1.0
+
     return {
         "Target": target_value,
         "Prediction": prediction_val,
@@ -137,6 +148,8 @@ def run_forward_step(
         "RegressionLoss": regression_loss,
         "LatencyMs": float(latency_ms),
         "PayloadBytes": reported_payload_bytes,
+        "CompressionMode": compression_mode,       # 這一步實際使用的壓縮模式
+        "SparsityRatio": round(sparsity_ratio, 4), # topk 只傳送了幾%的參數 (1.0 = 全部)
         "NextCompression": next_compression_mode,
         "NextRho": int(next_rho),
         "ProfilerEnabled": int(profiler_enabled),

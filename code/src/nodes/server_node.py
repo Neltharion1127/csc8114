@@ -110,6 +110,14 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
         self.scheduler_enabled = scheduler_cfg.get("enabled", True)
         self.reporter = ServerReporter(session_id=self.session_id, session_dir=self.results_dir)
 
+    def GetInfo(self, request, context):
+        """Return basic server status metadata."""
+        return fsl_pb2.ServerInfo(
+            scenario_id=self.scenario_id or "unknown",
+            session_id=self.session_id or "unknown",
+            current_round=self.fedavg.current_round
+        )
+
     def Register(self, request, context):
         """Assign a client id and return the shared session id."""
         with self._reg_lock:

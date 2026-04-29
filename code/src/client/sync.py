@@ -17,6 +17,8 @@ class SyncResult:
     applied_round: int
     refresh_only: bool
     status_message: str
+    sync_bytes_sent: int = 0   # bytes sent (client weights upload)
+    sync_bytes_recv: int = 0   # bytes received (global weights download)
 
 
 def fed_avg_sync(
@@ -79,6 +81,9 @@ def fed_avg_sync(
     if status_message:
         print(f"[CLIENT {client_id}] Sync status: {status_message}")
 
+    sync_bytes_sent = len(client_weights_bytes)
+    sync_bytes_recv = len(sync_res.global_weights) if sync_res.global_weights else 0
+
     return SyncResult(
         client_model=client_model,
         round_number=round_number,
@@ -86,4 +91,6 @@ def fed_avg_sync(
         applied_round=applied_round,
         refresh_only=refresh_only,
         status_message=status_message,
+        sync_bytes_sent=sync_bytes_sent,
+        sync_bytes_recv=sync_bytes_recv,
     )

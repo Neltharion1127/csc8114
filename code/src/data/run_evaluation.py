@@ -1033,21 +1033,82 @@ def evaluate():
                 f"{row['recall']:>7.4f}  {row['pred_positive_rate']:>8.4f}"
             )
 
-    results_dir = project_root / "results" / selected_session
-    results_dir.mkdir(parents=True, exist_ok=True)
+    bw_session_dir = project_root / "bestweights" / selected_session
+    try:
+        rel_path = Path(server_path).relative_to(bw_session_dir)
+        scenario_part = rel_path.parts[0] if len(rel_path.parts) > 1 and rel_path.parts[0] != "periodic" else ""
+    except ValueError:
+        scenario_part = ""
+
+    save_dir = project_root / "results" / selected_session
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    results_dir = save_dir / scenario_part if scenario_part else save_dir
 
     if args.scenario:
-        report_stem = f"eval_{args.scenario}"
+        report_stem = f"{args.scenario}_eval_report"
+    elif scenario_part:
+        report_stem = f"{scenario_part}_eval_report"
     else:
         safe_session_str = str(selected_session).replace("/", "_").replace("\\", "_")
-        report_stem = f"evaluation_report_{safe_session_str}"
+        report_stem = f"{safe_session_str}_eval_report"
     
     if report_tag:
         report_stem = f"{report_stem}_{report_tag}"
 
-    report_csv = results_dir / f"{report_stem}.csv"
-    csv_rows = [{k: v for k, v in r.items() if k != "threshold_scan"} for r in all_results]
-    pd.DataFrame(csv_rows).to_csv(report_csv, index=False)
+    import re
+    training_meta_files = list(results_dir.glob("*_meta.json"))
+    client_telemetry = {}
+    for mf in training_meta_files:
+        if "progress" in mf.name:
+            continue
+        try:
+            m = re.search(r'client(\d+)', mf.name)
+            if m:
+                with open(mf, "r") as f:
+                    client_telemetry[int(m.group(1))] = json.load(f)
+        except Exception:
+            pass
+
+    for r in all_results:
+        cid = r["client_id"]
+        tm = client_telemetry.get(cid, {})
+        r["cpu_percent"] = round(float(tm["avg_cpu_percent"]), 1) if tm.get("avg_cpu_percent") is not None else np.nan
+        r["mem_percent"] = round(float(tm["avg_mem_percent"]), 1) if tm.get("avg_mem_percent") is not None else np.nan
+        r["runtime_s"] = round(float(tm["total_runtime_s"]), 1) if tm.get("total_runtime_s") is not None else np.nan
+
+        msb = tm.get("model_size_bytes")
+        r["model_size_mb"] = round(msb / (1024 * 1024), 2) if msb is not None else np.nan
+        
+        apb = tm.get("avg_payload_bytes")
+        r["payload_bytes"] = round(float(apb), 1) if apb is not None else np.nan
+        
+        alm = tm.get("avg_latency_ms")
+        r["latency_ms"] = round(float(alm), 1) if alm is not None else np.nan
+        
+        rt = tm.get("total_runtime_s")
+        r["throughput_sps"] = round(r.get("samples", 0) / rt, 1) if rt and float(rt) > 0 else np.nan
+        r["net_sent_mb"] = tm.get("net_sent_mb", np.nan)
+        r["net_recv_mb"] = tm.get("net_recv_mb", np.nan)
+        r["mem_peak_mb"] = tm.get("mem_peak_mb", np.nan)
+        r["sync_bytes_sent_mb"] = tm.get("sync_bytes_sent_mb", np.nan)
+        r["sync_bytes_recv_mb"] = tm.get("sync_bytes_recv_mb", np.nan)
+        # 數據量吞吐量: (平均每步傳輸量 × 總步數) / 訓練時間 (KB/s)
+        num_records = tm.get("num_records")
+        if apb and num_records and rt and float(rt) > 0:
+            r["data_throughput_kbps"] = round(
+                (float(apb) * int(num_records) / 1024) / float(rt), 2
+            )
+        else:
+            r["data_throughput_kbps"] = np.nan
+        # 總傳輸量 (MB)：全訓練過程所有 Forward Pass 的 Payload 合計
+        # 對應 Results Table 的 Traff (payload) 欄位
+        if apb and num_records:
+            r["total_payload_mb"] = round(float(apb) * int(num_records) / (1024 * 1024), 4)
+        else:
+            r["total_payload_mb"] = np.nan
+
+    # 🚀 CALCULATE AGGREGATED TELEMETRY & WEIGHTED METRICS (Move up for CSV inclusion)
     total_samples = float(sum(r["samples"] for r in all_results))
     weighted = {
         "mse": float(sum(r["mse"] * r["samples"] for r in all_results) / total_samples),
@@ -1065,7 +1126,97 @@ def evaluate():
         "tn": int(sum(r["tn"] for r in all_results)),
     }
 
-    report_json = results_dir / f"{report_stem}.json"
+    # Fetch and aggregate hardware telemetry
+    sys_telemetry = {}
+    if training_meta_files:
+        try:
+            runtimes, cpus, mems = [], [], []
+            net_sent, net_recv, mem_peaks = [], [], []
+            sync_sent, sync_recv = [], []
+            for mf in training_meta_files:
+                if "progress" in mf.name: continue
+                with open(mf, "r") as f:
+                    mt = json.load(f)
+                    if mt.get("total_runtime_s"): runtimes.append(float(mt["total_runtime_s"]))
+                    if mt.get("avg_cpu_percent"): cpus.append(float(mt["avg_cpu_percent"]))
+                    if mt.get("avg_mem_percent"): mems.append(float(mt["avg_mem_percent"]))
+                    if mt.get("net_sent_mb"): net_sent.append(float(mt["net_sent_mb"]))
+                    if mt.get("net_recv_mb"): net_recv.append(float(mt["net_recv_mb"]))
+                    if mt.get("mem_peak_mb"): mem_peaks.append(float(mt["mem_peak_mb"]))
+                    if mt.get("sync_bytes_sent_mb"): sync_sent.append(float(mt["sync_bytes_sent_mb"]))
+                    if mt.get("sync_bytes_recv_mb"): sync_recv.append(float(mt["sync_bytes_recv_mb"]))
+            
+            if runtimes: sys_telemetry["avg_runtime_s"] = round(sum(runtimes)/len(runtimes), 2)
+            if cpus: sys_telemetry["avg_cpu_percent"] = round(sum(cpus)/len(cpus), 1)
+            if mems: sys_telemetry["avg_mem_percent"] = round(sum(mems)/len(mems), 1)
+            if net_sent: sys_telemetry["total_net_sent_mb"] = round(sum(net_sent), 2)
+            if net_recv: sys_telemetry["total_net_recv_mb"] = round(sum(net_recv), 2)
+            if mem_peaks: sys_telemetry["avg_mem_peak_mb"] = round(sum(mem_peaks)/len(mem_peaks), 2)
+            if sync_sent: sys_telemetry["total_sync_sent_mb"] = round(sum(sync_sent), 4)
+            if sync_recv: sys_telemetry["total_sync_recv_mb"] = round(sum(sync_recv), 4)
+            if sys_telemetry.get("avg_runtime_s", 0) > 0:
+                sys_telemetry["throughput_sps"] = round(total_samples / sys_telemetry["avg_runtime_s"], 2)
+                # 系統級數據量吞吐量：所有 Client 傳輸 Bytes 總和 / 平均訓練時間
+                total_payload_bytes = sum(
+                    float(r.get("payload_bytes", 0) or 0)
+                    * float(client_telemetry.get(cid, {}).get("num_records", 0) or 0)
+                    for cid, r in zip(
+                        [res.get("client_id") for res in all_results],
+                        all_results
+                    )
+                )
+                if total_payload_bytes > 0:
+                    sys_telemetry["data_throughput_kbps"] = round(
+                        (total_payload_bytes / 1024) / sys_telemetry["avg_runtime_s"], 2
+                    )
+        except Exception:
+            pass
+
+    report_csv = save_dir / f"{report_stem}.csv"
+    
+    # 重新整理每一行的順序，確保 monthly_details 在最後
+    csv_rows = []
+    for r in all_results:
+        # 先抓取所有非 monthly_details 且非 threshold_scan 的欄位
+        row = {k: v for k, v in r.items() if k not in ["threshold_scan", "monthly_details"]}
+        # 最後補上 monthly_details
+        row["monthly_details"] = r.get("monthly_details")
+        csv_rows.append(row)
+
+    # 準備 Summary 行
+    summary_row = {
+        "client_id": "SUMMARY",
+        "samples": int(total_samples),
+        "mse": weighted["mse"],
+        "mae": weighted["mae"],
+        "accuracy": weighted["accuracy"],
+        "f1": weighted["f1"],
+        "auprc": weighted["auprc"],
+        "roc_auc": weighted["roc_auc"],
+        "brier": weighted["brier"],
+        "tp": weighted["tp"],
+        "fn": weighted["fn"],
+        "fp": weighted["fp"],
+        "tn": weighted["tn"],
+        "cpu_percent": sys_telemetry.get("avg_cpu_percent", np.nan),
+        "mem_percent": sys_telemetry.get("avg_mem_percent", np.nan),
+        "runtime_s": sys_telemetry.get("avg_runtime_s", np.nan),
+        "throughput_sps": sys_telemetry.get("throughput_sps", np.nan),
+        "data_throughput_kbps": sys_telemetry.get("data_throughput_kbps", np.nan),
+        "total_payload_mb": round(sum(r.get("total_payload_mb", 0) or 0 for r in all_results), 4),
+        "net_sent_mb": sys_telemetry.get("total_net_sent_mb", np.nan),
+        "net_recv_mb": sys_telemetry.get("total_net_recv_mb", np.nan),
+        "mem_peak_mb": sys_telemetry.get("avg_mem_peak_mb", np.nan),
+        "sync_bytes_sent_mb": sys_telemetry.get("total_sync_sent_mb", np.nan),
+        "sync_bytes_recv_mb": sys_telemetry.get("total_sync_recv_mb", np.nan),
+        "monthly_details": "" # Summary 行留空
+    }
+    csv_rows.append(summary_row)
+    
+    # 直接儲存 (Pandas 會遵循第一個 dict 的 keys 順序)
+    pd.DataFrame(csv_rows).to_csv(report_csv, index=False)
+
+    report_json = save_dir / f"{report_stem}.json"
     summary = {
         "session": selected_session,
         "pairing_mode": pairing_mode,
@@ -1108,25 +1259,26 @@ def evaluate():
         "clients": all_results,
     }
 
-    # 🚀 ENHANCEMENT: Inject Training Phase Metadata (Runtime, CPU, etc.)
-    # We look for meta files in the same directory as the server weight
-    training_meta_files = list(Path(server_path).parent.glob("*_meta.json"))
-    if training_meta_files:
-        try:
-            runtimes, cpus, mems = [], [], []
-            for mf in training_meta_files:
-                with open(mf, "r") as f:
-                    mt = json.load(f)
-                    if mt.get("total_runtime_s"): runtimes.append(float(mt["total_runtime_s"]))
-                    if mt.get("avg_cpu_percent"): cpus.append(float(mt["avg_cpu_percent"]))
-                    if mt.get("avg_mem_percent"): mems.append(float(mt["avg_mem_percent"]))
-            
-            if runtimes: summary["training_total_runtime_s"] = round(sum(runtimes)/len(runtimes), 2)
-            if cpus: summary["training_avg_cpu_percent"] = round(sum(cpus)/len(cpus), 1)
-            if mems: summary["training_avg_mem_percent"] = round(sum(mems)/len(mems), 1)
-            print(f"[INFO] Injected training metrics: Runtime={summary.get('training_total_runtime_s')}s")
-        except Exception as e:
-            print(f"[WARN] Failed to inject training metadata: {e}")
+    # 🚀 Inject Training Phase Metadata into Summary
+    if sys_telemetry:
+        summary.update({
+            "training_total_runtime_s": sys_telemetry.get("avg_runtime_s"),
+            "training_avg_cpu_percent": sys_telemetry.get("avg_cpu_percent"),
+            "training_avg_mem_percent": sys_telemetry.get("avg_mem_percent"),
+            "training_throughput_samples_s": sys_telemetry.get("throughput_sps"),
+        })
+        
+        print("\n" + "=" * W)
+        print(f"🌡️  HARDWARE TELEMETRY & EFFICIENCY")
+        print("=" * W)
+        print(f"   Total Runtime      : {sys_telemetry.get('avg_runtime_s', 'N/A')} s")
+        print(f"   System Throughput  : {sys_telemetry.get('throughput_sps', 'N/A')} samples/s")
+        print(f"   Average CPU Usage  : {sys_telemetry.get('avg_cpu_percent', 'N/A')} %")
+        print(f"   Average Memory     : {sys_telemetry.get('avg_mem_percent', 'N/A')} %")
+        print("=" * W + "\n")
+    else:
+        print(f"[WARN] No training metadata found in {results_dir}")
+
 
     with open(report_json, "w") as f:
         json.dump(summary, f, indent=2)

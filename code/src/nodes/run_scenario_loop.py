@@ -89,16 +89,76 @@ def main() -> None:
             with tmp_config.open("w", encoding="utf-8") as fh:
                 yaml.safe_dump(run_cfg, fh, sort_keys=False)
 
+
             env = os.environ.copy()
             env["SESSION_ID"] = session_id
             env["SCENARIO_ID"] = run_id
             env["FSL_CONFIG_PATH"] = str(tmp_config)
 
-            # --- Start Subprocess ---
-            try:
-                proc = subprocess.Popen([sys.executable, "-u", "-m", node_module], cwd=str(PROJECT_ROOT), env=env)
+            # --- Synchronisation Barrier (Client Only) ---
+            if args.role == "client":
+                # Prioritize environment variable over config file for distributed runs
+                server_host = os.environ.get("FSL_SERVER_HOST") or run_cfg.get("grpc", {}).get("server_host", "localhost")
+                server_port = run_cfg.get("grpc", {}).get("server_port", 50051)
                 
-                # Setup signal handling to kill child if loop is killed
+                print(f"[SCENARIO LOOP] Client waiting for Server ({server_host}:{server_port}) to switch to {run_id}...")
+                
+                # Use dynamic loading to find files exactly where Server/Client nodes expect them
+                import importlib.util
+                def load_module(name, path):
+                    spec = importlib.util.spec_from_file_location(name, path)
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+
+                try:
+                    fsl_pb2 = load_module("fsl_pb2", str(PROJECT_ROOT / "proto" / "fsl_pb2.py"))
+                    fsl_pb2_grpc = load_module("fsl_pb2_grpc", str(PROJECT_ROOT / "proto" / "fsl_pb2_grpc.py"))
+                    import grpc
+                except Exception as e:
+                    print(f"[SCENARIO LOOP] Critical: Could not find gRPC generated files in proto/: {e}")
+                    sys.exit(1)
+                
+                while True:
+                    try:
+                        channel = grpc.insecure_channel(f"{server_host}:{server_port}")
+                        stub = fsl_pb2_grpc.FSLServiceStub(channel)
+                        # Use the Heartbeat/GetInfo endpoint to ask the server its current ID
+                        empty_msg = getattr(fsl_pb2, 'Empty')()
+                        response = stub.GetInfo(empty_msg, timeout=2.0)
+                        current_server_sid = getattr(response, 'scenario_id', 'unknown')
+                        
+                        if current_server_sid == run_id:
+                            print(f"[SCENARIO LOOP] Server is READY for {run_id}. Proceeding.")
+                            break
+                        else:
+                            print(f"[SCENARIO LOOP] Server is in mismatching scenario: {current_server_sid} != {run_id}. Waiting 3s...")
+                    except Exception:
+                        # Server might be offline or starting up
+                        print(f"[SCENARIO LOOP] Server ({server_host}:{server_port}) is offline or restarting. Waiting 3s...")
+                    
+                    time.sleep(3)
+
+            # --- Start Subprocess with Logging ---
+            log_dir = PROJECT_ROOT / "results" / "logs" / session_id
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file_path = log_dir / f"{run_id}.log"
+            
+            print(f"[SCENARIO LOOP] Logging to: {log_file_path}")
+            
+            try:
+                # We use pipe to capture output so we can save it to file AND show it on console
+                proc = subprocess.Popen(
+                    [sys.executable, "-u", "-m", node_module],
+                    cwd=str(PROJECT_ROOT),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+                
+                # Setup signal handling
                 def handle_signal(sig, frame):
                     print(f"\n[SCENARIO LOOP] Signal received. Terminating {run_id}...")
                     proc.terminate()
@@ -107,9 +167,18 @@ def main() -> None:
                 signal.signal(signal.SIGINT, handle_signal)
                 signal.signal(signal.SIGTERM, handle_signal)
                 
+                # Use a file to save the log
+                with open(log_file_path, "w", encoding="utf-8") as log_fh:
+                    # Stream output line by line
+                    for line in proc.stdout:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                        log_fh.write(line)
+                        log_fh.flush()
+                
                 rc = proc.wait()
             except Exception as e:
-                print(f"[SCENARIO LOOP] Error: {e}")
+                print(f"[SCENARIO LOOP] Error during subprocess execution: {e}")
                 rc = -1
 
             if rc != 0:

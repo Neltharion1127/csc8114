@@ -408,7 +408,10 @@ def main() -> int:
         if backend == "native":
             cleanup_cmd = ["make", "native-clean"]
         elif backend == "dist":
-            cleanup_cmd = []  # dist-start handles its own teardown
+            # For distributed mode, we MUST ensure the remote VPS server is killed 
+            # and results are cleared before the next scenario starts.
+            cleanup_cmd = ["make", "dist-server-restart"] # Using restart as cleanup is fine if followed by start
+            # Actually, let's just make it call dist-server-restart specifically
         else:
             cleanup_cmd = ["make", "docker-clean"]
         if cleanup_cmd:

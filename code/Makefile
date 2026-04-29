@@ -477,14 +477,18 @@ dist-fetch:
 
 dist-fetch-server:
 	@echo "=== Fetching results and bestweights from VPS (with periodic) ==="
-	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/ ./results/
+	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/logs/ ./results/logs/server/
+	@rsync -azP --exclude='logs/' $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/results/ ./results/
 	@rsync -azP $(VPS_USER)@$(VPS_HOST_DEPLOY):~/csc8114/code/bestweights/ ./bestweights/
 	@echo "✓ VPS results and bestweights synchronized."
 
 dist-fetch-clients:
 	@echo "=== Fetching results and bestweights from all Pis (with periodic) ==="
 	@ansible clients -i $(ANSIBLE_INV) -m synchronize \
-	  -a "src=/home/pi/results/ dest=$(PWD)/results/ mode=pull" \
+	  -a "src=/home/pi/results/ dest=$(PWD)/results/ mode=pull rsync_opts=--exclude=logs/" \
+	  --become
+	@ansible clients -i $(ANSIBLE_INV) -m synchronize \
+	  -a "src=/home/pi/results/logs/ dest=$(PWD)/results/logs/{{ inventory_hostname }}/ mode=pull" \
 	  --become
 	@ansible clients -i $(ANSIBLE_INV) -m synchronize \
 	  -a "src=/home/pi/bestweights/ dest=$(PWD)/bestweights/ mode=pull" \

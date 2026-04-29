@@ -112,16 +112,36 @@ class _ClientState:
     experimental_logs: list = field(default_factory=list)
     finalized: bool = False
     run_start_time: float = field(default_factory=time.time)
+    # Sync transmission tracking
+    total_sync_bytes_sent: int = 0
+    total_sync_bytes_recv: int = 0
 
     def get_system_metrics(self):
-        """Monitor CPU and Memory utilization."""
+        """Monitor CPU, Memory (RSS), and Network utilization."""
+        import psutil
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        net_info = psutil.net_io_counters()
+        
+        current_rss_mb = mem_info.rss / (1024 * 1024)
+        if not hasattr(self, "_peak_rss_mb"):
+            self._peak_rss_mb = current_rss_mb
+        else:
+            self._peak_rss_mb = max(self._peak_rss_mb, current_rss_mb)
+            
         return {
             "CPU_Percent": psutil.cpu_percent(interval=None),
-            "Mem_Percent": psutil.virtual_memory().percent
+            "Mem_Percent": psutil.virtual_memory().percent,
+            "Mem_RSS_MB": round(current_rss_mb, 2),
+            "Mem_Peak_MB": round(self._peak_rss_mb, 2),
+            "Net_Sent_MB": round(net_info.bytes_sent / (1024 * 1024), 2),
+            "Net_Recv_MB": round(net_info.bytes_recv / (1024 * 1024), 2)
         }
 
     def get_model_size_bytes(self):
         """Calculate total model size in bytes."""
+        if self.client_model is None:
+            return 0
         param_size = sum(p.nelement() * p.element_size() for p in self.client_model.parameters())
         buffer_size = sum(b.nelement() * b.element_size() for b in self.client_model.buffers())
         return param_size + buffer_size
@@ -259,9 +279,12 @@ def _init_local(state: _ClientState, data_dir: str, compression_mode: str) -> No
             f"Client {state.client_id} has 0 validation samples. "
             "Check dataset timestamps and train_end/val_end configuration."
         )
+    data_cfg = cfg.get("data", {})
+    str_train_end = data_cfg.get("train_end", "2024-12-31")
+    str_val_end = data_cfg.get("val_end", "2025-06-30")
     print(
-        f"[CLIENT {state.client_id}] Chronological split | TRAIN: ≤2024-12-31 "
-        f"| VAL: 2025-01-01→2025-06-30 | TEST: ≥2025-07-01 | horizon={state.target_horizon}h"
+        f"[CLIENT {state.client_id}] Chronological split | TRAIN: <{str_train_end} "
+        f"| VAL: {str_train_end}→<{str_val_end} | TEST: >={str_val_end} | horizon={state.target_horizon}h"
     )
     base_rho = max(1, int(cfg.get("federated", {}).get("rho", 1)))
     state.train_state = SchedulerState(compression_mode=compression_mode, rho=base_rho)
@@ -422,6 +445,8 @@ def _run_single_epoch(stub, state: _ClientState, epoch: int, epochs: int) -> boo
             state.client_model = sync_result.client_model
             state.current_round = max(state.current_round, sync_result.round_number)
             state.model_round = max(state.model_round, sync_result.round_number)
+            state.total_sync_bytes_sent += sync_result.sync_bytes_sent
+            state.total_sync_bytes_recv += sync_result.sync_bytes_recv
         except Exception as exc:
             print(f"[CLIENT {state.client_id}] Sync failed: {exc}")
             if "Timeout waiting for global model aggregation" in str(exc):
@@ -462,6 +487,7 @@ def _run_single_epoch(stub, state: _ClientState, epoch: int, epochs: int) -> boo
         best_test_loss=state.checkpoint_state.best_test_loss if state.checkpoint_state.best_test_loss != float("inf") else None,
         avg_latency=avg_latency,
         avg_bytes=avg_bytes,
+        model_size_bytes=state.get_model_size_bytes(),
     )
     return False
 
@@ -475,7 +501,15 @@ def _finalize_session(stub, state: _ClientState, epochs: int) -> None:
     mems = [log.get("Mem_Percent", 0.0) for log in state.experimental_logs if "Mem_Percent" in log]
     avg_cpu = sum(cpus) / len(cpus) if cpus else 0.0
     avg_mem = sum(mems) / len(mems) if mems else 0.0
+    
+    # Track Peak Memory and Total Network
+    final_metrics = state.get_system_metrics()
+    net_sent_mb = final_metrics["Net_Sent_MB"]
+    net_recv_mb = final_metrics["Net_Recv_MB"]
+    mem_peak_mb = final_metrics["Mem_Peak_MB"]
+
     total_runtime = time.time() - state.run_start_time
+    avg_latency, avg_bytes = summarize_logs(state.experimental_logs)
 
     save_results(
         state.client_id, state.experimental_logs, state.session_id,
@@ -486,6 +520,12 @@ def _finalize_session(stub, state: _ClientState, epochs: int) -> None:
         avg_cpu=avg_cpu,
         avg_mem=avg_mem,
         total_runtime_s=total_runtime,
+        model_size_bytes=state.get_model_size_bytes(),
+        net_sent_mb=net_sent_mb,
+        net_recv_mb=net_recv_mb,
+        mem_peak_mb=mem_peak_mb,
+        sync_bytes_sent_mb=round(state.total_sync_bytes_sent / (1024 * 1024), 4),
+        sync_bytes_recv_mb=round(state.total_sync_bytes_recv / (1024 * 1024), 4),
         actual_seed=state.actual_seed,
     )
     print_summary(
@@ -584,12 +624,22 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
 
     if not state.finalized and state.client_id is not None and state.session_id is not None:
         avg_latency, avg_bytes = summarize_logs(state.experimental_logs)
+        cpus = [log.get("CPU_Percent", 0.0) for log in state.experimental_logs if "CPU_Percent" in log]
+        mems = [log.get("Mem_Percent", 0.0) for log in state.experimental_logs if "Mem_Percent" in log]
+        avg_cpu = sum(cpus) / len(cpus) if cpus else 0.0
+        avg_mem = sum(mems) / len(mems) if mems else 0.0
+        total_runtime = time.time() - state.run_start_time
+
         save_results(
             state.client_id, state.experimental_logs, state.session_id,
             best_model_path=state.checkpoint_state.best_model_path,
             best_test_loss=state.checkpoint_state.best_test_loss if state.checkpoint_state.best_test_loss != float("inf") else None,
             avg_latency=avg_latency,
             avg_bytes=avg_bytes,
+            avg_cpu=avg_cpu,
+            avg_mem=avg_mem,
+            total_runtime_s=total_runtime,
+            model_size_bytes=state.get_model_size_bytes(),
             actual_seed=state.actual_seed,
         )
 

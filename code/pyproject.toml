@@ -15,6 +15,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "tqdm>=4.66",
     "pyarrow>=23.0.1",
+    "psutil>=5.9.8",
 ]
 
 
