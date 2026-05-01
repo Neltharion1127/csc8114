@@ -37,6 +37,7 @@ class FedAvgCoordinator:
         min_clients_per_round: int = 2,
         round_timeout_sec: float = 15.0,
         grace_period_sec: float = 0.0,
+        max_staleness: int = 0,
     ):
         self.num_clients = num_clients
         self.hidden_size = hidden_size
@@ -47,6 +48,10 @@ class FedAvgCoordinator:
         self.min_clients_per_round = max(1, int(min_clients_per_round))
         self.round_timeout_sec = max(0.1, float(round_timeout_sec))
         self.grace_period_sec = max(0.0, float(grace_period_sec))
+        # max_staleness=0: strict synchronous FedAvg (legacy default).
+        # max_staleness=N: accept updates up to N rounds stale; weight by
+        # local_epochs / (1 + staleness) to discount older contributions.
+        self.max_staleness = max(0, int(max_staleness))
         self._quorum_reached_at: float | None = None
         self._startup_deadline: float | None = None
 
@@ -148,18 +153,24 @@ class FedAvgCoordinator:
                 )
 
             if base_round < self.current_round:
+                staleness = self.current_round - base_round
+                if staleness > self.max_staleness:
+                    print(
+                        f"[FED AVG] Rejecting overly stale update from Client:{client_id} "
+                        f"(staleness={staleness} > max_staleness={self.max_staleness})"
+                    )
+                    return self._build_sync_response_locked(
+                        accepted=False,
+                        applied_round=0,
+                        refresh_only=True,
+                        status_message=(
+                            f"Stale update rejected: staleness={staleness} "
+                            f"exceeds max_staleness={self.max_staleness}."
+                        ),
+                    )
                 print(
-                    f"[FED AVG] Rejecting stale update from Client:{client_id} "
-                    f"(base_round={base_round}, current_round={self.current_round})"
-                )
-                return self._build_sync_response_locked(
-                    accepted=False,
-                    applied_round=0,
-                    refresh_only=True,
-                    status_message=(
-                        f"Stale update rejected: client base_round={base_round}, "
-                        f"server current_round={self.current_round}."
-                    ),
+                    f"[FED AVG] Accepting stale update from Client:{client_id} "
+                    f"(staleness={staleness}, max_staleness={self.max_staleness})"
                 )
 
             if base_round > self.current_round:
@@ -340,14 +351,24 @@ class FedAvgCoordinator:
             f"waited={barrier_elapsed_s:.2f}s)"
         )
 
-        total_epochs = sum(u.local_epochs for u in pending_updates)
-        if total_epochs <= 0:
-            total_epochs = len(pending_updates)
+        # Staleness-discounted weighting: w_i = local_epochs_i / (1 + staleness_i)
+        # When max_staleness=0 all staleness values are 0, reducing to plain
+        # local-epoch-weighted FedAvg (identical to prior behaviour).
+        raw_weights = [
+            u.local_epochs / (1.0 + max(0, self.current_round - u.base_round))
+            for u in pending_updates
+        ]
+        total_weight = sum(raw_weights) or float(len(pending_updates))
+        stalenesses = [max(0, self.current_round - u.base_round) for u in pending_updates]
+        print(
+            f"[FED AVG] Staleness per client: "
+            + ", ".join(f"C{u.client_id}={s}" for u, s in zip(pending_updates, stalenesses))
+        )
         self.global_weights = copy.deepcopy(pending_updates[0].weights)
         for key in self.global_weights.keys():
             self.global_weights[key] = sum(
-                u.weights[key] * (u.local_epochs / total_epochs)
-                for u in pending_updates
+                u.weights[key] * (w / total_weight)
+                for u, w in zip(pending_updates, raw_weights)
             )
 
         self.client_weights_buffer = {}

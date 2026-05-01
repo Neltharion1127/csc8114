@@ -569,6 +569,11 @@ def run_all_client(data_dir: str = "dataset/processed", epochs: int = 10) -> Non
     On transient gRPC failures the connection is re-established and training
     resumes from the last committed epoch (up to _MAX_RECONNECT attempts).
     """
+    # Prevent PyTorch from spawning multiple BLAS threads per process.
+    # With 11 client processes on 12 vCPUs, each process should own exactly
+    # one core; letting PyTorch use all 12 threads causes 132-thread contention
+    # and turns a 15 ms LSTM backward into 7+ seconds.
+    torch.set_num_threads(max(1, int(cfg.get("training", {}).get("torch_num_threads", 1))))
     target_address = resolve_server_address()
     compression_mode = cfg.get("compression", {}).get("mode", "float32")
     epochs = cfg.get("training", {}).get("num_rounds", epochs)

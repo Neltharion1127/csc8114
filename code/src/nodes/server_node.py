@@ -90,6 +90,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
             min_clients_per_round=self.min_clients_per_round,
             round_timeout_sec=self.round_timeout_sec,
             grace_period_sec=self.grace_period_sec,
+            max_staleness=federated_cfg.get("max_staleness", 0),
         )
 
         scheduler_cfg = cfg.get("scheduler", {})
@@ -296,6 +297,7 @@ class FSLServerServicer(fsl_pb2_grpc.FSLServiceServicer):
 
 
 def serve():
+    torch.set_num_threads(max(1, int(cfg.get("training", {}).get("torch_num_threads", 1))))
     run_server(FSLServerServicer())
 
 

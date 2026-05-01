@@ -52,11 +52,8 @@ class CompressionScheduler:
                 state["latency_ema"] = latency_ema
 
                 # Escalate compression level and synchronization interval with network pressure.
-                # severity=3 combines topk sparsification with int8 quantization.
-                if latency_ema > self.topk_threshold:
-                    severity = 3
-                    mode = "topk_int8"
-                elif latency_ema > self.int8_threshold:
+                # Three levels: float32 → float16 → int8 (severity 0/1/2).
+                if latency_ema > self.int8_threshold:
                     severity = 2
                     mode = "int8"
                 elif latency_ema > self.float16_threshold:

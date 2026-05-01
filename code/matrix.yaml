@@ -177,7 +177,7 @@ experiment_matrix:
           rho: 1
 
     - id: "L10"
-      description: "Low latency | S5 joint adaptive scheduler (compression + rho, rho_step=1)"
+      description: "Low latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, async FedAvg)"
       overrides:
         profiler:
           enabled: true
@@ -194,6 +194,7 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
+          max_staleness: 3
 
     # ── High latency (~50ms base) ────────────────────────────────────────
     - id: "H11"
@@ -289,7 +290,7 @@ experiment_matrix:
           rho: 1
 
     - id: "H16"
-      description: "High latency | S5 joint adaptive scheduler (compression + rho, rho_step=1)"
+      description: "High latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, async FedAvg)"
       overrides:
         profiler:
           enabled: true
@@ -306,3 +307,25 @@ experiment_matrix:
           mode: float32
         federated:
           rho: 1
+          max_staleness: 3
+
+    # ── Mixed latency (heterogeneous clients) ───────────────────────────
+    - id: "M17"
+      description: "Mixed latency | 4 no-lat + 4 low-lat + 3 high-lat | joint adaptive + async FedAvg"
+      overrides:
+        profiler:
+          enabled: true
+          latency_generator:
+            base_latency_ms: 0.0
+            client_offsets_ms: [0.0, 0.0, 0.0, 0.0, 8.0, 8.0, 8.0, 8.0, 50.0, 50.0, 50.0]
+            jitter_ms: 2.0
+            burst_every_steps: 0
+            burst_latency_ms: 0.0
+        scheduler:
+          enabled: true
+          rho_step: 1
+        compression:
+          mode: float32
+        federated:
+          rho: 1
+          max_staleness: 3

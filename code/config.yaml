@@ -35,6 +35,10 @@ federated:
   # After quorum is reached, wait this many extra seconds for stragglers before aggregating.
   # Set to 0 to aggregate immediately upon quorum.
   grace_period_sec: 1
+  # Async FedAvg staleness tolerance: accept client updates up to this many rounds
+  # behind the server's current round. 0 = strict synchronous FedAvg (default).
+  # Set to max_rho (e.g. 3) for scenarios with heterogeneous rho across clients.
+  max_staleness: 0
 grpc:
   max_message_mb: 50
   server_host: fsl-server
@@ -80,6 +84,7 @@ scheduler:
   latency_ema_alpha: 0.2
 training:
   seed: 42
+  torch_num_threads: 1  # threads per process; set to 1 when running multi-process on CPU
   # batch_size: 32  # unused (main training loop is step-based RPC, not DataLoader batch training)
   classification_loss_weight: 2.0
   classification_positive_weight: 1.0
@@ -87,7 +92,7 @@ training:
   focal_gamma: 2.0
   focal_alpha: -1 # [0,1] to enable alpha balancing; negative means disabled
   rain_threshold_mm: 0.5
-  rain_probability_threshold: 0.35
+  rain_probability_threshold: 0.5
   local_steps: 10
   lr: 0.0005
   num_rounds: 50
