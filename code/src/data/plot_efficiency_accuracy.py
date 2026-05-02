@@ -84,22 +84,22 @@ OUT_PNG = RESULTS_DIR / "graphics" / "fig3_efficiency_accuracy.png"
 # --- Scenario metadata ------------------------------------------------------
 # (latency_group, compression_label, point_label)
 SCENARIO_META = {
-    "05": ("Mid (10 ms)",  "float32",  "float32"),
-    "06": ("Mid (10 ms)",  "float16",  "float16"),
-    "07": ("Mid (10 ms)",  "int8",     "int8"),
-    "09": ("Mid (10 ms)",  "Adaptive", "Adaptive"),
-    "10": ("High (63 ms)", "float32",  "float32"),
-    "11": ("High (63 ms)", "float16",  "float16"),
-    "12": ("High (63 ms)", "int8",     "int8"),
-    "14": ("High (63 ms)", "Adaptive", "Adaptive"),
+    "L05": ("Low (~8 ms)",   "float32",  "float32"),
+    "L06": ("Low (~8 ms)",   "float16",  "float16"),
+    "L07": ("Low (~8 ms)",   "int8",     "int8"),
+    "L09": ("Low (~8 ms)",   "Adaptive", "Adaptive"),
+    "H11": ("High (~50 ms)", "float32",  "float32"),
+    "H12": ("High (~50 ms)", "float16",  "float16"),
+    "H13": ("High (~50 ms)", "int8",     "int8"),
+    "H15": ("High (~50 ms)", "Adaptive", "Adaptive"),
 }
 # No-latency scenarios used only for the ceiling reference line
-NO_LAT_IDS = {"01", "02", "03"}
+NO_LAT_IDS = {"N01", "N02", "N03"}
 
 # Colorblind-safe palette (Wong 2011)
 GROUP_COLORS = {
-    "Mid (10 ms)":  "#009E73",   # green
-    "High (63 ms)": "#D55E00",   # vermillion
+    "Low (~8 ms)":   "#009E73",   # green
+    "High (~50 ms)": "#D55E00",   # vermillion
 }
 
 # Marker per compression mode
@@ -118,14 +118,14 @@ MARKER_SIZES = {
 
 # Nudge labels to avoid overlap: (dx, dy) in data units
 LABEL_OFFSET = {
-    "05": ( 2, -0.0008),   # mid float32
-    "06": ( 2,  0.0005),   # mid float16
-    "07": (-2, -0.0010),   # mid int8
-    "09": ( 2,  0.0005),   # mid adaptive
-    "10": ( 2, -0.0008),   # high float32
-    "11": ( 2,  0.0005),   # high float16
-    "12": (-2, -0.0010),   # high int8
-    "14": ( 2,  0.0005),   # high adaptive
+    "L05": ( 2, -0.0008),
+    "L06": ( 2,  0.0005),
+    "L07": (-2, -0.0010),
+    "L09": ( 2,  0.0005),
+    "H11": ( 2, -0.0008),
+    "H12": ( 2,  0.0005),
+    "H13": (-2, -0.0010),
+    "H15": ( 2,  0.0005),
 }
 
 
@@ -138,7 +138,6 @@ def load_data() -> tuple[pd.DataFrame, float]:
     ceiling_auprc is the mean AUPRC across no-latency scenarios (M01-M03).
     """
     df = pd.read_csv(RESULTS_DIR / "matrix_summary.csv", dtype={"scenario_id": str})
-    df["scenario_id"] = df["scenario_id"].str.zfill(2)
 
     # No-latency ceiling
     ceiling = df[df["scenario_id"].isin(NO_LAT_IDS)]["auprc_mean"].mean()

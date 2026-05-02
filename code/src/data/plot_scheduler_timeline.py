@@ -67,16 +67,16 @@ plt.rcParams.update({
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-SESSION     = "2026-04-21_00-51-00"
-SCENARIO    = "09"
+SESSION     = "2026-04-30_01-17-30"
+SCENARIO    = "L09"
 OUT_PDF     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.pdf"
 OUT_PNG     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.png"
 
 # Clients to display and their latency profile descriptions
 CLIENTS = [
-    (1,  "Client 1 (~1.5 ms)"),
-    (5,  "Client 5 (~5.5 ms)"),
-    (8,  "Client 8 (~10.5 ms)"),
+    (1,  "Client 1 (~8.0 ms)"),
+    (5,  "Client 5 (~10.0 ms)"),
+    (11, "Client 11 (~14.0 ms)"),
 ]
 
 # Scheduler thresholds (must match config.yaml → scheduler section)

@@ -77,7 +77,7 @@ plt.rcParams.update({
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
 # All six scenarios live in the same matrix session
-SESSION = "2026-04-15_01-15-14"
+SESSION = "2026-04-30_01-17-30"
 OUT_PDF = RESULTS_DIR / "graphics" / "fig5_rho_convergence.pdf"
 OUT_PNG = RESULTS_DIR / "graphics" / "fig5_rho_convergence.png"
 
@@ -85,20 +85,20 @@ OUT_PNG = RESULTS_DIR / "graphics" / "fig5_rho_convergence.png"
 # (scenario_id, rho, latency_group_label)
 # Only include the baseline (float32) scenarios to isolate the rho effect.
 PAIRS = [
-    ("01", 1, "No latency"),
-    ("04", 3, "No latency"),
-    ("05", 1, "Mid (10 ms)"),
-    ("08", 3, "Mid (10 ms)"),
-    ("10", 1, "High (63 ms)"),
-    ("13", 3, "High (63 ms)"),
+    ("N01", 1, "No latency"),
+    ("N04", 3, "No latency"),
+    ("L05", 1, "Low (~8 ms)"),
+    ("L08", 3, "Low (~8 ms)"),
+    ("H11", 1, "High (~50 ms)"),
+    ("H14", 3, "High (~50 ms)"),
 ]
-LATENCY_GROUPS = ["No latency", "Mid (10 ms)", "High (63 ms)"]
+LATENCY_GROUPS = ["No latency", "Low (~8 ms)", "High (~50 ms)"]
 
 # Wong (2011) colorblind-safe palette, one colour per latency group
 GROUP_COLORS = {
-    "No latency":   "#0072B2",   # blue
-    "Mid (10 ms)":  "#009E73",   # green
-    "High (63 ms)": "#D55E00",   # vermillion
+    "No latency":    "#0072B2",   # blue
+    "Low (~8 ms)":   "#009E73",   # green
+    "High (~50 ms)": "#D55E00",   # vermillion
 }
 
 
@@ -155,7 +155,7 @@ def load_scenario(scenario_id: str, rho: int) -> tuple[np.ndarray, np.ndarray, n
     std    = pivot.std(axis=1).fillna(0).values
 
     max_r = int(rounds.max()) if len(rounds) else 0
-    print(f"  M{scenario_id} (rho={rho}): {len(log_files)} seeds, "
+    print(f"  {scenario_id} (rho={rho}): {len(log_files)} seeds, "
           f"common rounds 1–{max_r}")
     return rounds, mean, std
 

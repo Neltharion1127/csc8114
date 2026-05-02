@@ -89,38 +89,40 @@ def _find_session(session_id: str | None) -> Path:
 # Evaluation helper (lightweight — mirrors evaluate_client in run_evaluation.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _eval_pair(client_state: dict, server_state: dict,
-               hidden_size: int, device: torch.device,
-               test_days: int, seq_len: int, horizon: int, input_size: int, lstm_dropout: float) -> float:
-    """
-    Run the split-inference model on the test set.
-    Returns average MSE over all test samples.
-    """
-def _eval_pair(client_model, server_model, test_data_cache, device):
+def _eval_pair(client_model, server_model, test_data_cache, device, batch_size=512):
     """
     Run evaluation using a pre-loaded cache of test samples.
     test_data_cache: list of (input_tensor, target_tensor) tuples
+    Uses batched inference for speed.
     """
-    criterion = nn.MSELoss()
     prob_threshold = rain_probability_threshold()
-    total_loss, total_batches = 0.0, 0
+    total_se, total_n = 0.0, 0
+
+    xs = torch.cat([x for x, _ in test_data_cache], dim=0)
+    ys = torch.cat([y for _, y in test_data_cache], dim=0).squeeze(1)  # (N,)
 
     with torch.no_grad():
-        for x, y in test_data_cache:
-            # Shift to device
-            x_dev, y_dev = x.to(device), y.to(device)
-            # Run inference
-            smashed = client_model(x_dev)
-            rain_logit, rain_amount = server_model(smashed)
-            
-            rain_prob = torch.sigmoid(rain_logit).item()
-            pred_val = inverse_target_scalar(rain_amount.item()) if rain_prob >= prob_threshold else 0.0
-            
-            pred = torch.tensor([[pred_val]], dtype=torch.float32, device=device)
-            total_loss += criterion(pred, y_dev).item()
-            total_batches += 1
+        for start in range(0, len(xs), batch_size):
+            xb = xs[start:start + batch_size].to(device)
+            yb = ys[start:start + batch_size].to(device)
 
-    return total_loss / total_batches if total_batches > 0 else float("nan")
+            smashed = client_model(xb)
+            rain_logit, rain_amount = server_model(smashed)
+
+            rain_probs = torch.sigmoid(rain_logit).squeeze(1)       # (B,)
+            amounts    = rain_amount.squeeze(1)                      # (B,)
+
+            preds = torch.where(
+                rain_probs >= prob_threshold,
+                torch.tensor([inverse_target_scalar(v.item()) for v in amounts],
+                             dtype=torch.float32, device=device),
+                torch.zeros(len(amounts), device=device),
+            )
+
+            total_se += ((preds - yb) ** 2).sum().item()
+            total_n  += len(yb)
+
+    return total_se / total_n if total_n > 0 else float("nan")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,24 +215,28 @@ def main():
     test_data_cache = []
     if data_dir:
         features_cfg = cfg.get("data", {}).get("feature_cols", ["Temperature", "Humidity", "Pressure", "Wind Speed", "Rain"])
-        for file in sorted(data_dir.glob("*.parquet")):
-            df = load_sensor_data(str(file), horizon=horizon)
-            test_indices = collect_test_indices(df, min_history=seq_len, horizon=horizon)
-            for idx in test_indices:
-                target_val = float(df.iloc[idx][FUTURE_RAIN_COL])
-                window = df.iloc[idx - seq_len : idx]
-                feat = window[features_cfg].apply(pd.to_numeric, errors="coerce").fillna(0).values
-                test_data_cache.append((
-                    torch.tensor(feat, dtype=torch.float32).unsqueeze(0),
-                    torch.tensor([[target_val]], dtype=torch.float32)
-                ))
+        eval_cid = eval_client_ids[0]
+        all_files = sorted(data_dir.glob("*.parquet"))
+        # Each client is assigned one file by sorted order; use that client's file only
+        client_file = all_files[eval_cid - 1] if eval_cid - 1 < len(all_files) else all_files[0]
+        print(f"Loading test data from: {client_file.name}")
+        df = load_sensor_data(str(client_file), horizon=horizon)
+        test_indices = collect_test_indices(df, min_history=seq_len, horizon=horizon)
+        for idx in test_indices:
+            target_val = float(df.iloc[idx][FUTURE_RAIN_COL])
+            window = df.iloc[idx - seq_len : idx]
+            feat = window[features_cfg].apply(pd.to_numeric, errors="coerce").fillna(0).values
+            test_data_cache.append((
+                torch.tensor(feat, dtype=torch.float32).unsqueeze(0),
+                torch.tensor([[target_val]], dtype=torch.float32)
+            ))
     print(f"✅ Cached {len(test_data_cache)} test samples.\n")
 
     # ── Evaluate every (client, round) pair ──────────────────────────────────
     # Structure: results[client_id] = [(round, train_loss, test_mse), ...]
     results: dict[int, list[tuple[int, float, float]]] = {}
 
-    for cid in client_ids_sorted:
+    for cid in eval_client_ids:
         ckpts = sorted(
             glob.glob(str(periodic_dir / f"client_{cid}_round_*.pth")),
             key=_parse_round

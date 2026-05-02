@@ -19,6 +19,7 @@ from src.client.data_pipeline import (
     FUTURE_RAIN_COL,
     collect_eval_indices_capped,
     collect_test_indices_capped,
+    get_dataset_split,
     load_sensor_data,
     partition_client_files,
 )
@@ -528,9 +529,14 @@ def evaluate_client(
     sensor_data_cache: dict[Path, pd.DataFrame] = {}
     for file in client_files:
         sensor_data_cache[file] = load_sensor_data(str(file), horizon=horizon)
-    all_combined = pd.concat(sensor_data_cache.values())
-    feat_mean = all_combined[active_features].mean().values
-    feat_std = all_combined[active_features].std().values + 1e-9
+    # Use TRAIN-period rows only — matches the normalization used during training
+    train_frames = [
+        df[np.array([get_dataset_split(ts) == "TRAIN" for ts in df.index])]
+        for df in sensor_data_cache.values()
+    ]
+    train_combined = pd.concat([f for f in train_frames if not f.empty])
+    feat_mean = train_combined[active_features].mean().values
+    feat_std = train_combined[active_features].std().values + 1e-9
 
     with torch.no_grad():
         for file in client_files:
@@ -626,6 +632,13 @@ def evaluate_client(
     preds_arr   = np.array(all_preds)
     mse      = total_loss / total_batches
     mae      = float(np.mean(np.abs(targets_arr - preds_arr)))
+    rain_mask = np.array([is_rain(t, threshold=rain_threshold) for t in targets_arr])
+    if rain_mask.any():
+        rain_mse = float(np.mean((targets_arr[rain_mask] - preds_arr[rain_mask]) ** 2))
+        rain_mae = float(np.mean(np.abs(targets_arr[rain_mask] - preds_arr[rain_mask])))
+    else:
+        rain_mse = float("nan")
+        rain_mae = float("nan")
     probs_arr = np.array(all_probs)
     y_true = np.array([1 if is_rain(t, threshold=rain_threshold) else 0 for t in targets_arr], dtype=np.int32)
     positive_rate = float(y_true.mean())
@@ -675,6 +688,8 @@ def evaluate_client(
         "samples":     total_batches,
         "mse":         mse,
         "mae":         mae,
+        "rain_mse":    rain_mse,
+        "rain_mae":    rain_mae,
         "auprc":       auprc,
         "roc_auc":     roc_auc,
         "brier":       brier,
@@ -1124,6 +1139,8 @@ def evaluate():
         "fn": int(sum(r["fn"] for r in all_results)),
         "fp": int(sum(r["fp"] for r in all_results)),
         "tn": int(sum(r["tn"] for r in all_results)),
+        "rain_mse": float(np.nanmean([r.get("rain_mse", float("nan")) for r in all_results])),
+        "rain_mae": float(np.nanmean([r.get("rain_mae", float("nan")) for r in all_results])),
     }
 
     # Fetch and aggregate hardware telemetry
@@ -1189,6 +1206,8 @@ def evaluate():
         "samples": int(total_samples),
         "mse": weighted["mse"],
         "mae": weighted["mae"],
+        "rain_mse": weighted["rain_mse"],
+        "rain_mae": weighted["rain_mae"],
         "accuracy": weighted["accuracy"],
         "f1": weighted["f1"],
         "auprc": weighted["auprc"],

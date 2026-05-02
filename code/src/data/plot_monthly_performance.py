@@ -68,14 +68,17 @@ plt.rcParams.update({
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-SESSION     = "2026-04-16_09-48-06"
-CSV_PATH    = RESULTS_DIR / SESSION / f"evaluation_report_{SESSION}.csv"
+SESSION     = "2026-04-30_01-17-30"
+CSV_PATH    = RESULTS_DIR / SESSION / "N01_eval_report_fixed38.csv"
 OUT_PDF     = RESULTS_DIR / "graphics" / "figB_monthly_performance.pdf"
 OUT_PNG     = RESULTS_DIR / "graphics" / "figB_monthly_performance.png"
 
-# Test period runs Jul 2025 → Mar 2026 (months 07–12 = 2025, 01–03 = 2026)
-MONTH_ORDER  = ["07", "08", "09", "10", "11", "12", "01", "02", "03"]
-MONTH_LABELS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+# Test period: Jan 2025 → Mar 2026 (15 months).
+# Months 01-03 aggregate both 2025 and 2026 data (eval groups by month only).
+# Display Apr 2025 – Dec 2025 first, then Jan–Mar (combined avg, marked with *).
+MONTH_ORDER  = ["04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03"]
+MONTH_LABELS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                "Jan*", "Feb*", "Mar*"]
 WINTER_MONTHS = {"11", "12", "01", "02"}   # grey shading
 
 BAR_COLOR_F1  = "#0072B2"   # blue  (Wong 2011)
@@ -90,6 +93,7 @@ def load_monthly() -> pd.DataFrame:
     with columns: month, F1, MSE, client_id.
     """
     df = pd.read_csv(CSV_PATH)
+    df = df[df["client_id"] != "SUMMARY"].dropna(subset=["monthly_details"])
     records = []
     for _, row in df.iterrows():
         md = ast.literal_eval(row["monthly_details"])
@@ -126,7 +130,7 @@ def aggregate(tidy: pd.DataFrame) -> pd.DataFrame:
 # --- Drawing ----------------------------------------------------------------
 
 def draw(stats: pd.DataFrame) -> None:
-    fig, (ax_f1, ax_mse) = plt.subplots(2, 1, figsize=(3.5, 3.8), sharex=True)
+    fig, (ax_f1, ax_mse) = plt.subplots(2, 1, figsize=(4.5, 3.8), sharex=True)
 
     x = np.arange(len(MONTH_ORDER))
 
@@ -171,7 +175,7 @@ def draw(stats: pd.DataFrame) -> None:
 
     ax_mse.set_xticks(x)
     ax_mse.set_xticklabels(MONTH_LABELS)
-    ax_mse.set_xlabel("Month (Jul 2025 – Mar 2026)")
+    ax_mse.set_xlabel("Month (Apr 2025 – Mar 2026; * = avg of 2025 & 2026)")
 
     # Shared legend: winter shading
     winter_patch = mpatches.Patch(facecolor="#e8e8e8", edgecolor="#cccccc",

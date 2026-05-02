@@ -90,20 +90,20 @@ OUT_PNG = RESULTS_DIR / "graphics" / "fig2_compression_auprc.png"
 # Adaptive is only present at Mid and High latency (scheduler stays at float32
 # when there is no network pressure).
 SCENARIO_META = {
-    "01": ("No latency",   "float32"),
-    "02": ("No latency",   "float16"),
-    "03": ("No latency",   "int8"),
-    "05": ("Mid (10 ms)",  "float32"),
-    "06": ("Mid (10 ms)",  "float16"),
-    "07": ("Mid (10 ms)",  "int8"),
-    "09": ("Mid (10 ms)",  "Adaptive"),
-    "10": ("High (63 ms)", "float32"),
-    "11": ("High (63 ms)", "float16"),
-    "12": ("High (63 ms)", "int8"),
-    "14": ("High (63 ms)", "Adaptive"),
+    "N01": ("No latency",   "float32"),
+    "N02": ("No latency",   "float16"),
+    "N03": ("No latency",   "int8"),
+    "L05": ("Low (~8 ms)",  "float32"),
+    "L06": ("Low (~8 ms)",  "float16"),
+    "L07": ("Low (~8 ms)",  "int8"),
+    "L09": ("Low (~8 ms)",  "Adaptive"),
+    "H11": ("High (~50 ms)", "float32"),
+    "H12": ("High (~50 ms)", "float16"),
+    "H13": ("High (~50 ms)", "int8"),
+    "H15": ("High (~50 ms)", "Adaptive"),
 }
 
-LATENCY_ORDER     = ["No latency", "Mid (10 ms)", "High (63 ms)"]
+LATENCY_ORDER     = ["No latency", "Low (~8 ms)", "High (~50 ms)"]
 COMPRESSION_ORDER = ["float32", "float16", "int8", "Adaptive"]
 
 # Colorblind-safe palette (Wong 2011)
@@ -119,7 +119,6 @@ COLORS = {
 
 def load_data() -> pd.DataFrame:
     df = pd.read_csv(RESULTS_DIR / "matrix_summary.csv", dtype={"scenario_id": str})
-    df["scenario_id"] = df["scenario_id"].str.zfill(2)
     df = df[df["scenario_id"].isin(SCENARIO_META)]
     df["latency_group"] = df["scenario_id"].map(lambda s: SCENARIO_META[s][0])
     df["compression"]   = df["scenario_id"].map(lambda s: SCENARIO_META[s][1])
@@ -155,11 +154,11 @@ def _payload_label(comp: str, stats: pd.DataFrame) -> str:
         row = stats[stats["compression"] == comp].iloc[0]
         return f"float32 (baseline, {row['payload_b']:.0f} B)"
     if comp == "Adaptive":
-        mid  = stats[(stats["compression"] == comp) & (stats["latency_group"] == "Mid (10 ms)")]
-        high = stats[(stats["compression"] == comp) & (stats["latency_group"] == "High (63 ms)")]
+        low  = stats[(stats["compression"] == comp) & (stats["latency_group"] == "Low (~8 ms)")]
+        high = stats[(stats["compression"] == comp) & (stats["latency_group"] == "High (~50 ms)")]
         parts = []
-        if not mid.empty:
-            parts.append(f"mid {mid.iloc[0]['payload_b']:.0f} B")
+        if not low.empty:
+            parts.append(f"low {low.iloc[0]['payload_b']:.0f} B")
         if not high.empty:
             parts.append(f"high {high.iloc[0]['payload_b']:.0f} B")
         return f"Adaptive ({' / '.join(parts)})"
