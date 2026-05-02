@@ -1,221 +1,191 @@
 # Federated Split Learning for Rainfall Prediction
 
-This project implements a split-learning + federated-aggregation pipeline for rainfall prediction using multi-sensor weather time series.
+A split-learning + federated-aggregation system for 24-hour rainfall prediction across 11 weather stations (Newcastle area, UK). The neural network is split between edge clients (LSTM encoder) and a central server (MLP predictor). Clients transmit compressed intermediate activations over gRPC rather than raw data. An adaptive scheduler jointly controls compression mode (float32 / float16 / int8) and sync interval (ρ) based on measured per-step network latency.
 
-Current default workflow is Makefile-driven and supports:
-- Native run: one local server process + N local client processes
-- Docker run: one server container + N client containers
-- Auto plotting after training
-
-## 1. Environment Setup
+## Quick Start
 
 ```bash
-uv sync
+uv sync                  # install dependencies
+make compile-proto       # regenerate gRPC stubs (only needed if proto changes)
+make download-data       # download and preprocess sensor data
+make native-run          # train: 1 server + 11 clients locally
 ```
 
-## 2. Key Commands
+## Dataset
 
-Run `make help` for the full list.
+- **Source**: Open-Meteo historical weather API, 11 stations around Newcastle upon Tyne
+- **Period**: 2015-01-01 – 2026-03-31 (hourly)
+- **Target**: sum of rainfall over the next 24 h (`future_rain`)
+- **Split** (absolute date boundaries, configured in `config.yaml`):
 
-### Proto / Data
+| Phase | Range | Rows/sensor |
+|-------|-------|-------------|
+| TRAIN | < 2024-01-01 | ~78 900 |
+| VAL   | 2024-01-01 – 2024-12-31 | ~8 800 |
+| TEST  | ≥ 2025-01-01 | ~10 900 |
+
+## Training
+
+### Native (recommended for development)
 
 ```bash
-make compile-proto
-make download-data
+make native-clean
+make native-run                                         # uses config.yaml defaults
+make native-run NUM_CLIENTS=3 CLIENT_DEVICE=mps         # override device
 ```
 
-- `compile-proto`: regenerate gRPC Python stubs from `proto/fsl.proto`
-- `download-data`: download and preprocess data via `src.data.data_download_openmeteo`
-
-### Training (Recommended: Native)
+### Docker (single-machine simulation)
 
 ```bash
-make clean-native
-make run-native
+make docker-run NUM_CLIENTS=11
 ```
 
-Notes:
-- `run-native` starts server first, waits for readiness, then starts all clients.
-- Log output is color-prefixed by process (`server`, `client-1`, `client-2`, ...).
-- Training completion triggers automatic plotting (`make plot-latest`).
-
-Useful overrides:
+### Distributed (VPS server + Raspberry Pi clients)
 
 ```bash
-make run-native SERVER_HOST=127.0.0.1 SERVER_PORT=50051 SERVER_DEVICE=cpu CLIENT_DEVICE=mps
+make dist-start
 ```
 
-### Training (Docker)
+## Experiment Matrix
+
+17 scenarios defined in `matrix.yaml`, covering three latency conditions × compression mode × sync interval (ρ):
+
+| Prefix | Latency | Scenarios |
+|--------|---------|-----------|
+| N01–N04 | No latency (profiler off) | baseline, float16, int8, ρ=3 |
+| L05–L10 | Low (~8 ms) | float32, float16, int8, ρ=3, Adaptive, Async |
+| H11–H16 | High (~50 ms) | float32, float16, int8, ρ=3, Adaptive, Async |
+| M17 | Mixed (per-client offsets) | Adaptive |
 
 ```bash
-make run-network
+make matrix                          # run all 17 scenarios (3 seeds each)
+make matrix ONLY=L09,H15 MAX_RUNS=1  # run selected scenarios
+make matrix-dry-run                  # preview without running
 ```
 
-Alias:
+Results land in `results/<session>/<scenario>/` and `bestweights/<session>/<scenario>/`.
+
+## Evaluation
 
 ```bash
-make test-network
+# Evaluate one scenario (threshold fixed at 0.38)
+uv run python src/data/run_evaluation.py \
+    --session 2026-04-30_01-17-30 \
+    --scenario N01 \
+    --force-prob-threshold 0.38 \
+    --report-tag fixed38 \
+    --device mps
+
+# Re-evaluate all 17 scenarios in one go
+bash run_eval_all.sh
+
+# Rebuild matrix_summary.csv from all eval reports
+uv run python src/data/build_matrix_summary.py
 ```
 
-Cleanup:
+### Current sessions
+
+| Session | Scenarios |
+|---------|-----------|
+| `2026-04-30_01-17-30` | N01–N04, L05–L09, H11–H14 |
+| `2026-04-30_16-04-59` | L10, H15, H16, M17 |
+
+Eval reports used for analysis: `*_eval_report_fixed38.csv` (threshold = 0.38, derived from N01 val scan).
+
+### Key metrics
+
+- **AUPRC** — primary classification metric (threshold-free)
+- **ROC-AUC** — secondary classification metric
+- **F1** — at threshold 0.38
+- **MSE / MAE** — over all test samples (including dry days); `rain_mse` / `rain_mae` columns report rain-event-only errors
+
+## Paper Figures
+
+All scripts are in `src/data/`. Run from `code/`:
 
 ```bash
-make clean
+uv run python src/data/plot_compression_auprc.py      # Fig 2: AUPRC by compression & latency
+uv run python src/data/plot_efficiency_accuracy.py    # Fig 3: accuracy–bandwidth scatter
+uv run python src/data/plot_rho_convergence.py        # Fig 5: rho=1 vs rho=3 convergence
+uv run python src/data/plot_scheduler_timeline.py     # Fig A: adaptive scheduler timeline
+uv run python src/data/plot_monthly_performance.py    # Fig B: monthly F1 & MSE (Apr 2025–Mar 2026)
 ```
 
-## 3. Plotting
+Outputs go to `results/graphics/` as both `.pdf` (for LaTeX) and `.png` (preview).
 
-Plot latest session:
+## Output Structure
 
-```bash
-make plot-latest
+```
+bestweights/<session>/<scenario>/
+  best_client_<i>_round_<r>_model_<ts>.pth   # best checkpoint per client
+  periodic/
+    client_<i>_round_<r>.pth                 # per-round paired checkpoints
+    server_round_<r>.pth
+
+results/<session>/
+  <scenario>/
+    training_log_client<i>_<ts>.csv          # step-level: loss, latency, payload
+    training_log_client<i>_meta.json         # best checkpoint path + config
+    server_log_<session>.csv                 # per-round aggregation
+  <scenario>_eval_report_fixed38.csv/.json   # test metrics (source of truth)
+  graphics/
+    fig2_compression_auprc.pdf/.png
+    fig3_efficiency_accuracy.pdf/.png
+    fig5_rho_convergence.pdf/.png
+    figA_scheduler_timeline.pdf/.png
+    figB_monthly_performance.pdf/.png
+  matrix_summary.csv                         # one row per scenario, all key metrics
 ```
 
-Plot one specific session:
+## Key Source Files
 
-```bash
-make plot-session SESSION=2026-03-13_03-19-17
-```
+| File | Role |
+|------|------|
+| `src/nodes/server_node.py` | gRPC server entry point |
+| `src/nodes/client_node.py` | gRPC client entry point |
+| `src/server/forward_service.py` | Forward RPC: loss, gradient, scheduler directives |
+| `src/server/fedavg.py` | FedAvg coordinator with barrier + grace period |
+| `src/server/scheduler.py` | Adaptive compression/ρ state machine |
+| `src/client/training_loop.py` | Train/val epochs, checkpoint tracking |
+| `src/client/forward_step.py` | Forward/backward RPC calls |
+| `src/shared/compression.py` | float32 / float16 / int8 compression modes |
+| `src/data/run_experiment_matrix.py` | Spawns 17-scenario ablation matrix |
+| `src/data/run_evaluation.py` | Offline test evaluation |
+| `src/data/build_matrix_summary.py` | Aggregates eval reports → matrix_summary.csv |
 
-Only confusion matrix:
+## Configuration (`config.yaml`)
 
-```bash
-make plot-confusion SESSION=2026-03-13_03-19-17
-```
+Key sections:
 
-Generated outputs are written under `results/<session>/`.
+```yaml
+data:
+  train_end: "2024-01-01"   # exclusive upper bound for TRAIN phase
+  val_end:   "2025-01-01"   # exclusive upper bound for VAL phase
 
-## 4. Runtime Structure
+model:
+  hidden_size: 64
+  num_layers: 2
+  seq_len: 48               # 48-hour input window
+  input_size: 5
 
-- Server entry: `src/nodes/server_node.py`
-- Client entry: `src/nodes/client_node.py`
+training:
+  lr: 0.0005
+  num_rounds: 30
+  target_transform: log1p   # rainfall target in log1p space
+  rain_threshold_mm: 0.1
+  rain_probability_threshold: 0.38
 
-Core modules:
-- Client flow: `src/client/*` (`training_loop.py`, `forward_step.py`, `sync.py`, `checkpointing.py`, `reporting.py`)
-- Server flow: `src/server/*` (`forward_service.py`, `fedavg.py`, `scheduler.py`, `reporting.py`, `bootstrap.py`)
+federated:
+  num_clients: 11
+  min_clients_per_round: 9
+  rho: 1                    # sync interval (steps between FedAvg rounds)
 
-## 5. Important Configs (`config.yaml`)
+compression:
+  mode: float32             # float32 | float16 | int8
 
-### Training
-- `training.num_rounds`
-- `training.local_steps`
-- `training.lr`
-- `training.seed`
-- `training.early_stopping_patience`
-- `training.eval_max_samples_per_sensor`
-
-### Classification Behavior
-- `training.classification_loss_type`: `weighted_bce` or `focal`
-- `training.focal_gamma`
-- `training.focal_alpha`
-- `training.classification_positive_weight`
-- `training.rain_threshold_mm`
-- `training.rain_probability_threshold`
-
-### System
-- `federated.num_clients`
-- `scheduler.enabled`
-- `profiler.enabled`
-- `server.log_flush_interval`
-- `experiment_matrix.*` (batch experiment definitions and runner settings)
-- `FSL_CONFIG_PATH` (optional env var to run with an alternate YAML config)
-- `experiment_matrix.runner.backend`: `native` or `docker`
-
-## 6. Output Directories
-
-- Model checkpoints: `bestweights/<session>/`
-- Client logs and metadata: `results/<session>/training_log_client*.csv` and `*_meta.json`
-- Server logs: `results/<session>/server_log_<session>.csv`
-- Plots:
-  - `training_curve_<session>.png`
-  - `server_metrics_<session>.png`
-  - `confusion_matrix_<session>.png`
-  - `confusion_matrix_metrics_<session>.csv`
-
-## 7. Latest Baseline (Session `2026-03-13_21-45-05`)
-
-This is the current reference run after tightening train/val/test logic and strict checkpoint pairing.
-
-Time windows used in this run:
-- Train: `< 2026-02-10 00:00:00`
-- Validation: `[2026-02-10 00:00:00, 2026-02-24 00:00:00)`
-- Test: `>= 2026-02-24 00:00:00`
-
-Final test metrics (`results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.csv`):
-- Client 1: Recall `0.4495`, Precision `0.6106`, F1 `0.5178`
-- Client 2: Recall `0.4691`, Precision `0.6486`, F1 `0.5444`
-- Client 3: Recall `0.4710`, Precision `0.6008`, F1 `0.5280`
-- Average: Recall `0.4632`, Precision `0.6200`, F1 `0.5301`
-
-Config highlights used in this baseline (`config.yaml`):
-- `data.test_days: 14`
-- `data.val_days: 14`
-- `training.classification_loss_type: focal`
-- `training.classification_loss_weight: 2.0`
-- `training.classification_positive_weight: 1.1`
-- `training.rain_probability_threshold: 0.34`
-- `training.rain_sample_ratio: 0.15`
-- `training.regression_loss_weight: 1.0`
-
-## 8. How To Use Result Data
-
-Recommended order for analysis/reporting:
-- Use `evaluation_report_<session>.json` / `.csv` as the source of truth for final TEST metrics.
-- Use `training_log_client*.csv` for training/validation behavior and sample-level debugging.
-- Use `server_log_<session>.csv` for aggregation/system diagnostics.
-- Use `training_log_client*_meta.json` to recover exact run config and best checkpoint path.
-
-Important files for session `2026-03-13_21-45-05`:
-- `results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.json`
-- `results/2026-03-13_21-45-05/evaluation_report_2026-03-13_21-45-05.csv`
-- `results/2026-03-13_21-45-05/training_log_client1_20260313_214619.csv` (and client2/client3 equivalents)
-- `results/2026-03-13_21-45-05/server_log_2026-03-13_21-45-05.csv`
-- `bestweights/2026-03-13_21-45-05/periodic/` (strictly paired per-round checkpoints)
-
-Strict evaluation behavior:
-- `run_evaluation.py` first tries strict periodic pairing (`server_round_R` + all `client_i_round_R`).
-- If strict pairing exists, it evaluates that exact round as `pairing_mode=periodic_round_R`.
-- Classification metrics are recomputed offline by default (`cls_metric_source=offline_recomputed`) unless checkpoint metrics are explicitly marked as TEST and sample counts match.
-- Evaluation loads thresholds and related settings from the checkpoint `config_snapshot` when available, to avoid config drift.
-
-Useful commands:
-
-Evaluate latest bestweights session:
-```bash
-make eval-latest
-```
-
-Evaluate a specific session:
-```bash
-make eval-session SESSION=2026-03-13_21-45-05 PLOT_DEVICE=cpu
-```
-
-Evaluate a specific round with strict pairing:
-```bash
-python -m src.data.run_evaluation --session 2026-03-13_21-45-05 --round 30 --device cpu
-```
-
-Generate plots for a specific session:
-```bash
-make plot-session SESSION=2026-03-13_21-45-05 PLOT_DEVICE=cpu
-```
-
-Dry-run matrix plan from `config.yaml`:
-```bash
-make matrix-dry-run
-```
-
-Run full matrix:
-```bash
-make matrix
-```
-
-Run selected scenarios only:
-```bash
-make matrix ONLY=M01,M10 MAX_RUNS=2
-```
-
-Run matrix on Docker backend:
-```bash
-make matrix BACKEND=docker
+scheduler:
+  enabled: true
+  float16_threshold_ms: 4.0
+  int8_threshold_ms: 10.0
+  ema_alpha: 0.2
 ```
