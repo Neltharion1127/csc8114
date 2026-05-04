@@ -13,7 +13,7 @@
 
 .PHONY: help compile-proto download-data \
         docker-run docker-run-single docker-build docker-clean \
-        native-run native-run-single native-server native-clients native-check-port native-clean \
+        native-run native-run-single native-server native-clients native-check-port native-clean native-clean-results native-reset \
         dist-build dist-deploy dist-deploy-check dist-start dist-logs \
         dist-sync-config dist-server-restart dist-load-image dist-load-image-local dist-clean-results dist-clean-server \
         dist-restart \
@@ -307,9 +307,17 @@ native-check-port:
 
 # Kill any lingering native server/client Python processes
 native-clean:
-	@pkill -f "src.nodes.client_node" 2>/dev/null || true
-	@pkill -f "src.nodes.server_node" 2>/dev/null || true
+	@pgrep -f "src.nodes.client_node" | xargs -r kill -9 2>/dev/null || true
+	@pgrep -f "src.nodes.server_node" | xargs -r kill -9 2>/dev/null || true
+	@pgrep -f "run_experiment_matrix" | xargs -r kill -9 2>/dev/null || true
+	@sleep 1
 	@echo "Native processes stopped."
+
+native-clean-results:
+	@rm -rf results/ bestweights/
+	@echo "results/ and bestweights/ deleted."
+
+native-reset: native-clean native-clean-results
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DISTRIBUTED  (dist-*)

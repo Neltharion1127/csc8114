@@ -1,6 +1,6 @@
 # CSC8114 Group 9 — Joint Computation and Communication Optimisation in Federated Split Learning for IoT Rainfall Prediction
 
-> A production-grade Federated Split Learning system with adaptive communication control for real-time IoT rainfall prediction.
+> A research prototype / experimental platform Federated Split Learning system with adaptive communication control for real-time IoT rainfall prediction.
 
 ## Overview
 
@@ -22,18 +22,21 @@ A fully functional, end-to-end FSL training platform built on a **gRPC microserv
   
   Decisions are driven by EMA-smoothed client-reported latency, enabling the system to dynamically adapt to heterogeneous and non-stationary network conditions without manual tuning.
 
-- **Reproducible Experiment Matrix** — 14 carefully designed scenarios × 3 random seeds, systematically decoupling the effects of latency profiles (none / mid / high), compression modes, synchronisation intervals, and adaptive vs. static policies. Scenarios are defined in `matrix.yaml` and run with a single `make matrix` command; `config.yaml` remains the clean single-run baseline.
+- **Reproducible Experiment Matrix** — 17 carefully designed scenarios × 3 random seeds, systematically decoupling the effects of latency profiles (none / low / high / mixed), compression modes, synchronisation intervals, and adaptive vs. static policies. Scenarios are defined in `matrix.yaml` and run with a single `make matrix` command; `config.yaml` remains the clean single-run baseline.
 
 ### Key Results
 
+Measured across 17 scenarios × 3 seeds; baseline is N01 (float32, no latency, ρ=1, F1=0.520, AUPRC=0.649).
+
 | Finding | Detail |
 | ------- | ------ |
-| INT8 compression | **−73.4% payload** (256 B → 68 B) with only −0.037 Macro F1 |
-| ρ = 3 sync interval | **−54.6% runtime**, server rounds 30 → 10, only −0.016 Macro F1 |
-| Adaptive under burst latency | **−20.7% payload** with near-zero F1 impact |
-| Adaptive under extreme latency | **−63.4% runtime** with moderate F1 trade-off |
+| INT8 compression (no latency) | **−73.4% payload** (256 B → 68 B), AUPRC 0.649 → 0.651 (stable) |
+| ρ = 3 sync interval (no latency) | AUPRC 0.649 → 0.661 (+0.012); fewer aggregation rounds, similar quality |
+| Adaptive under low latency (~8 ms) | **−63.9% payload** (256 B → 92 B), AUPRC 0.649 → 0.648 (stable) |
+| Adaptive under high latency (~50 ms) | **−73.4% payload** (256 B → 68 B), AUPRC 0.649 → 0.650 (stable) |
+| AUPRC stability | Ranges 0.648–0.661 across all 17 scenarios — quality robust to compression and latency |
 
-No single strategy dominates — practical deployment should choose policies based on bandwidth budget, latency stability, and acceptable accuracy degradation.
+Compression reduces bandwidth by up to 73% with negligible AUPRC loss (<0.002). The adaptive scheduler automatically selects the appropriate compression tier (float16 under low latency, int8 under high latency) without manual tuning.
 
 ---
 
@@ -43,7 +46,7 @@ No single strategy dominates — practical deployment should choose policies bas
 csc8114/
 ├── code/                        # FSL system implementation
 │   ├── config.yaml              # Runtime config — model, training, data, comms
-│   ├── matrix.yaml              # Experiment matrix — 14 scenarios & seeds (ablation only)
+│   ├── matrix.yaml              # Experiment matrix — 17 scenarios & seeds (ablation only)
 │   ├── Makefile                 # Build / run / plot automation
 │   ├── proto/fsl.proto          # gRPC protocol (4 RPCs)
 │   ├── src/
@@ -98,18 +101,16 @@ Downloads Open-Meteo historical weather data (2023–2026) for 12 Newcastle stat
 
 ```bash
 make native-clean
-make native-run SCENARIO_ID=01                          # single scenario, all 11 clients
-make native-run SCENARIO_ID=01 NUM_CLIENTS=3            # quick local smoke test (3 clients)
-make native-run SCENARIO_ID=01 CLIENT_DEVICE=mps        # use Apple Silicon GPU
+make native-run                                         # uses config.yaml defaults
+make native-run NUM_CLIENTS=3                           # quick local smoke test
+make native-run CLIENT_DEVICE=mps                       # use Apple Silicon GPU
 ```
-
-Scenario IDs correspond to entries in `matrix.yaml`. The Makefile merges `config.yaml` + the scenario's overrides before launching.
 
 ### Training (Docker — single machine)
 
 ```bash
-make docker-run NUM_CLIENTS=11 SCENARIO_ID=01   # server + 11 clients in containers
-make docker-clean                                # teardown
+make docker-run NUM_CLIENTS=11   # server + 11 clients in containers
+make docker-clean                # teardown
 ```
 
 ### Training (Distributed — VPS server + 11 Raspberry Pis)
@@ -147,10 +148,23 @@ make dist-restart
 ### Evaluation & Plotting
 
 ```bash
-make eval-latest                              # evaluate latest session
-make eval-session SESSION=<session-id>        # evaluate specific session
-make plot-latest                              # plot latest session
-make plot-session SESSION=<session-id>        # plot specific session
+# Re-evaluate all 17 scenarios
+bash run_eval_all.sh
+
+# Or evaluate a single scenario
+uv run python src/data/run_evaluation.py \
+    --session 2026-05-03_00-20-00 --scenario N01 \
+    --eval-max-samples 0 --device mps
+
+# Aggregate all eval reports into one CSV
+uv run python src/data/build_matrix_summary.py
+
+# Regenerate paper figures (output → results/graphics/)
+uv run python src/data/plot_compression_auprc.py      # Fig 2
+uv run python src/data/plot_efficiency_accuracy.py    # Fig 3
+uv run python src/data/plot_rho_convergence.py        # Fig 5
+uv run python src/data/plot_scheduler_timeline.py     # Fig A
+uv run python src/data/plot_monthly_performance.py    # Fig B
 ```
 
 ### Experiment Matrix
@@ -159,10 +173,8 @@ Scenarios and seeds are defined in `matrix.yaml`. Each scenario overrides `confi
 
 ```bash
 make matrix-dry-run                        # preview scenario plan
-make matrix                                # run all 14 scenarios × 3 seeds (native)
-make matrix BACKEND=dist                   # run on VPS + Pi cluster
-make matrix ONLY=01,09 MAX_RUNS=2          # run selected scenarios only
-make matrix MATRIX_CONFIG=my_matrix.yaml   # use a custom matrix file
+make matrix                                # run all 17 scenarios × 3 seeds (native)
+make matrix ONLY=L09,H15 MAX_RUNS=1        # run selected scenarios only
 ```
 
 Run `make help` for the full command list.
@@ -184,7 +196,7 @@ Run `make help` for the full command list.
            │ Backward     │ (FedAvg)     │ Complete
            │              │              │
 ┌──────────▼──────────────▼──────────────▼────────────────┐
-│              gRPC Clients (×3)                          │
+│              gRPC Clients (×11)                         │
 │  ┌──────────┐  ┌──────────────┐  ┌──────────────────┐  │
 │  │ClientLSTM│  │Training Loop │  │  Compression &   │  │
 │  │(2L LSTM) │  │(local steps) │  │  Latency Report  │  │
@@ -252,32 +264,35 @@ Two config files, two responsibilities:
 | ------------------------------ | -------------------------------------------------- |
 | `experiment_matrix.seeds`      | Random seeds for repeated runs                     |
 | `experiment_matrix.runner.*`   | Backend (native/docker), devices, timeout          |
-| `experiment_matrix.scenarios`  | 14 scenario definitions with per-scenario overrides |
+| `experiment_matrix.scenarios`  | 17 scenario definitions with per-scenario overrides |
 
 Each scenario in `matrix.yaml` deep-merges its `overrides` onto `config.yaml` to produce a fully resolved per-run config. Training processes only ever see this merged result — they never read `matrix.yaml` directly.
 
 ---
 
-## Experiment Matrix (01–14)
+## Experiment Matrix (N01–M17)
 
-Defined in `matrix.yaml`. 14 scenarios total (no-latency: S0-S3; mid/high: S0-S4), run with 3 seeds each.
+Defined in `matrix.yaml`. 17 scenarios total, run with 3 seeds each. Results land in `results/<session>/<scenario>/` and `bestweights/<session>/<scenario>/`.
 
-| Latency Profile  | ID  | Strategy (S)                        | Compression | ρ       | Scheduler |
-| ---------------- | --- | ----------------------------------- | ----------- | ------- | --------- |
-| No latency       | 01  | S0 — baseline                       | float32     | 1       | Off       |
-| No latency       | 02  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
-| No latency       | 03  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
-| No latency       | 04  | S3 — sync interval only             | float32     | 3       | Off       |
-| Mid (~8 ms)      | 05  | S0 — baseline                       | float32     | 1       | Off       |
-| Mid (~8 ms)      | 06  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
-| Mid (~8 ms)      | 07  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
-| Mid (~8 ms)      | 08  | S3 — sync interval only             | float32     | 3       | Off       |
-| Mid (~8 ms)      | 09  | S4 — adaptive (joint)               | float32     | dynamic | On        |
-| High (~50 ms)    | 10  | S0 — baseline                       | float32     | 1       | Off       |
-| High (~50 ms)    | 11  | S1 — compression only (tier 1)      | float16     | 1       | Off       |
-| High (~50 ms)    | 12  | S2 — compression only (tier 2)      | int8        | 1       | Off       |
-| High (~50 ms)    | 13  | S3 — sync interval only             | float32     | 3       | Off       |
-| High (~50 ms)    | 14  | S4 — adaptive (joint)               | float32     | dynamic | On        |
+| ID  | Latency Profile   | Compression | ρ       | Scheduler      | AUPRC  | F1     | Payload |
+| --- | ----------------- | ----------- | ------- | -------------- | ------ | ------ | ------- |
+| N01 | No latency        | float32     | 1       | Off            | 0.6490 | 0.5199 | 256 B   |
+| N02 | No latency        | float16     | 1       | Off            | 0.6510 | 0.5266 | 128 B   |
+| N03 | No latency        | int8        | 1       | Off            | 0.6513 | 0.6089 | 68 B    |
+| N04 | No latency        | float32     | 3       | Off            | 0.6608 | 0.5729 | 256 B   |
+| L05 | Low (~8 ms)       | float32     | 1       | Off            | 0.6493 | 0.5267 | 256 B   |
+| L06 | Low (~8 ms)       | float16     | 1       | Off            | 0.6496 | 0.5187 | 128 B   |
+| L07 | Low (~8 ms)       | int8        | 1       | Off            | 0.6490 | 0.5331 | 68 B    |
+| L08 | Low (~8 ms)       | float32     | 3       | Off            | 0.6592 | 0.5544 | 256 B   |
+| L09 | Low (~8 ms)       | dynamic     | 1       | Adaptive       | 0.6482 | 0.5200 | 92 B    |
+| L10 | Low (~8 ms)       | dynamic     | dynamic | Adaptive + ρ   | 0.6577 | 0.5747 | 92 B    |
+| H11 | High (~50 ms)     | float32     | 1       | Off            | 0.6490 | 0.5580 | 256 B   |
+| H12 | High (~50 ms)     | float16     | 1       | Off            | 0.6483 | 0.5246 | 128 B   |
+| H13 | High (~50 ms)     | int8        | 1       | Off            | 0.6486 | 0.5078 | 68 B    |
+| H14 | High (~50 ms)     | float32     | 3       | Off            | 0.6554 | 0.5426 | 256 B   |
+| H15 | High (~50 ms)     | dynamic     | 1       | Adaptive       | 0.6497 | 0.6277 | 68 B    |
+| H16 | High (~50 ms)     | dynamic     | dynamic | Adaptive + ρ   | 0.6567 | 0.5525 | 68 B    |
+| M17 | Mixed (per-client)| dynamic     | dynamic | Adaptive + ρ   | 0.6571 | 0.6066 | 127 B   |
 
 ---
 
@@ -286,17 +301,20 @@ Defined in `matrix.yaml`. 14 scenarios total (no-latency: S0-S3; mid/high: S0-S4
 Each training session produces:
 
 ```
-bestweights/<session>/           # Model checkpoints
-  ├── server_head_round_*.pth    # Latest server checkpoint
-  └── periodic/                  # Periodic paired checkpoints
+bestweights/<session>/<scenario>/
+  ├── best_client_<i>_round_<r>_model_<ts>.pth   # best checkpoint per client
+  └── periodic/
+      ├── client_<i>_round_<r>.pth               # per-round paired checkpoints
+      └── server_round_<r>.pth
 
-results/<session>/               # Logs, metrics, plots
-  ├── training_log_client*.csv   # Per-client training/validation logs
-  ├── server_log_*.csv           # Server-side aggregation logs
-  ├── evaluation_report_*.json   # Final test metrics (source of truth)
-  ├── training_curve_*.png       # Training curves
-  ├── server_metrics_*.png       # Server metrics
-  └── confusion_matrix_*.png     # Confusion matrices
+results/<session>/
+  ├── <scenario>/
+  │   ├── training_log_client<i>_<ts>.csv         # step-level: loss, latency, payload
+  │   ├── training_log_client<i>_meta.json        # best checkpoint path + config
+  │   └── server_log_<session>.csv                # per-round aggregation
+  ├── <scenario>_eval_report.csv/.json             # test metrics (source of truth)
+  ├── graphics/                                   # paper figures (pdf + png)
+  └── matrix_summary.csv                          # one row per scenario, all key metrics
 ```
 
 ---
@@ -307,10 +325,10 @@ The IEEE conference paper is in `paper/`. To compile:
 
 ```bash
 cd paper/
-pdflatex "csc8114 accessment1.tex"
-bibtex "csc8114 accessment1"
-pdflatex "csc8114 accessment1.tex"
-pdflatex "csc8114 accessment1.tex"
+pdflatex csc8114.tex
+bibtex csc8114
+pdflatex csc8114.tex
+pdflatex csc8114.tex
 ```
 
 > Run `pdflatex` three times to resolve all cross-references and citations.

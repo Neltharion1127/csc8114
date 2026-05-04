@@ -796,6 +796,12 @@ def evaluate():
         default="",
         help="Optional suffix for output report files (e.g. fixedthr034).",
     )
+    parser.add_argument(
+        "--eval-max-samples",
+        type=int,
+        default=None,
+        help="Override eval_max_samples_per_sensor from config (0 = full dataset).",
+    )
     args = parser.parse_args()
     forced_prob_threshold = None
     if args.force_prob_threshold is not None:
@@ -872,6 +878,8 @@ def evaluate():
     head_width = eval_settings["head_width"]
     head_dropout = eval_settings["head_dropout"]
     eval_max_samples = eval_settings["eval_max_samples"]
+    if args.eval_max_samples is not None:
+        eval_max_samples = max(0, args.eval_max_samples)
     num_clients = eval_settings["num_clients"]
     processed_dir = eval_settings["processed_dir"]
     active_features = eval_settings["active_features"]

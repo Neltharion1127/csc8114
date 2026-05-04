@@ -67,7 +67,7 @@ plt.rcParams.update({
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-SESSION     = "2026-04-30_01-17-30"
+SESSION     = "2026-05-03_00-20-00"
 SCENARIO    = "L09"
 OUT_PDF     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.pdf"
 OUT_PNG     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.png"

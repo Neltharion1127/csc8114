@@ -469,6 +469,8 @@ def main() -> int:
                         session_id,
                         "--scenario",
                         scenario_id,
+                        "--eval-max-samples",
+                        "0",
                     ],
                     env=env_local,
                     dry_run=False,

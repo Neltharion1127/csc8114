@@ -77,7 +77,7 @@ plt.rcParams.update({
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
 # All six scenarios live in the same matrix session
-SESSION = "2026-04-30_01-17-30"
+SESSION = "2026-05-03_00-20-00"
 OUT_PDF = RESULTS_DIR / "graphics" / "fig5_rho_convergence.pdf"
 OUT_PNG = RESULTS_DIR / "graphics" / "fig5_rho_convergence.png"
 

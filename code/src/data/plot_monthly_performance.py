@@ -68,8 +68,8 @@ plt.rcParams.update({
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-SESSION     = "2026-04-30_01-17-30"
-CSV_PATH    = RESULTS_DIR / SESSION / "N01_eval_report_fixed38.csv"
+SESSION     = "2026-05-03_00-20-00"
+CSV_PATH    = RESULTS_DIR / SESSION / "N01_eval_report.csv"
 OUT_PDF     = RESULTS_DIR / "graphics" / "figB_monthly_performance.pdf"
 OUT_PNG     = RESULTS_DIR / "graphics" / "figB_monthly_performance.png"
 

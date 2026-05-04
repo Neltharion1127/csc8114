@@ -96,7 +96,7 @@ training:
   local_steps: 10
   lr: 0.0005
   num_rounds: 50
-  rain_sample_ratio: 0.15
+  rain_sample_ratio: 0.45
   regression_loss_weight: 1.0
   target_transform: log1p
   start_delay: 3
