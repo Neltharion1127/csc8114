@@ -296,6 +296,19 @@ Defined in `matrix.yaml`. 17 scenarios total, run with 3 seeds each. Results lan
 
 ---
 
+## Ablation Study Results
+
+Results averaged across 3 random seeds (42, 52, 62). Values shown as **mean ± std**.
+Communication cost metrics (`total_payload_mb`, `sync_sent_mb`) are **summed** across seeds to reflect aggregate system cost.
+
+| Scenario | AUPRC | ROC-AUC | F1 | total\_payload\_mb (sum) | sync\_sent\_mb (sum) | throughput\_sps | runtime\_s | mem\_peak\_mb | cpu\_percent | latency\_ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P1: float32, rho=1 (Baseline) | 0.6542 ± 0.0062 | 0.7150 ± 0.0063 | 0.6287 ± 0.0428 | 2576.37 | 239.08 | 7.70 ± 1.63 | 16054.9 ± 3553.6 | 678.0 ± 52.2 | 19.2 ± 0.3% | 27.09 ± 0.28 |
+| P2: float16, rho=1 | 0.6552 ± 0.0034 | 0.7165 ± 0.0030 | 0.5897 ± 0.0475 | 1360.11 | 252.43 | 7.29 ± 1.64 | 16968.6 ± 3500.9 | 688.1 ± 47.8 | 19.2 ± 0.5% | 27.13 ± 1.12 |
+| P3: float32, rho=3 | 0.6612 ± 0.0004 | 0.7228 ± 0.0013 | 0.6289 ± 0.0490 | 1132.57 | 105.19 | 13.41 ± 0.22 | 8941.8 ± 149.2 | 535.7 ± 11.2 | 23.0 ± 0.2% | 27.59 ± 0.38 |
+| **P4: Adaptive** | **0.6608 ± 0.0029** | **0.7247 ± 0.0056** | **0.6404 ± 0.0191** | **823.73** | **100.01** | **13.30 ± 0.55** | **9019.8 ± 381.1** | **536.5 ± 6.7** | **22.9 ± 0.2%** | **26.72 ± 1.16** |
+
+
 ## Output Structure
 
 Each training session produces:
