@@ -385,7 +385,7 @@ def main() -> int:
         env_local = env.copy()
         env_local["FSL_CONFIG_PATH"] = str(run_config_path)
         env_local["SESSION_ID"] = main_session_id # 🆕 Force same session
-        env_local["SCENARIO_ID"] = scenario_id      # 🆕 Tell server which scenario
+        env_local["SCENARIO_ID"] = f"{scenario_id}_seed{seed}"  # seed-scoped dir for per-seed eval
         
         env_backend = env_local.copy()
         if backend == "docker":
@@ -458,6 +458,7 @@ def main() -> int:
                 session_id = _detect_session(before_bw, after_bw, before_res, after_res)
                 print(f"[MATRIX] detected session: {session_id}")
 
+                seeded_scenario_id = f"{scenario_id}_seed{seed}"
                 _run_command(
                     [
                         sys.executable,
@@ -468,9 +469,7 @@ def main() -> int:
                         "--session",
                         session_id,
                         "--scenario",
-                        scenario_id,
-                        "--eval-max-samples",
-                        "0",
+                        seeded_scenario_id,
                     ],
                     env=env_local,
                     dry_run=False,
@@ -478,7 +477,7 @@ def main() -> int:
 
                 eval_json = _find_eval_json(PROJECT_ROOT / "results", session_id)
                 eval_metrics = _read_eval_metrics(eval_json)
-                server_metrics = _read_server_metrics(PROJECT_ROOT / "results" / session_id, scenario_id)
+                server_metrics = _read_server_metrics(PROJECT_ROOT / "results" / session_id, seeded_scenario_id)
         except Exception as exc:  # noqa: BLE001
             status = "failed"
             error = str(exc)

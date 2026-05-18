@@ -58,26 +58,31 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 # --- LaTeX-compatible style -------------------------------------------------
 plt.rcParams.update({
-    "font.family":    "serif",
-    "font.serif":     ["Times New Roman", "DejaVu Serif"],
-    "font.size":      9,
-    "axes.labelsize": 9,
-    "xtick.labelsize":8,
-    "ytick.labelsize":8,
-    "legend.fontsize":8,
-    "axes.linewidth": 0.7,
-    "pdf.fonttype":   42,
-    "ps.fonttype":    42,
+    "font.family":     "serif",
+    "font.serif":      ["Times New Roman", "DejaVu Serif"],
+    "font.size":       9,
+    "axes.titlesize":  9,
+    "axes.labelsize":  9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "legend.fontsize": 8,
+    "lines.linewidth": 1.2,
+    "axes.linewidth":  0.7,
+    "pdf.fonttype":    42,
+    "ps.fonttype":     42,
 })
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+SESSION     = "2026-05-10_01-43-06"
+SEEDS       = [42, 52, 62]
 OUT_PDF = RESULTS_DIR / "graphics" / "fig3_efficiency_accuracy.pdf"
 OUT_PNG = RESULTS_DIR / "graphics" / "fig3_efficiency_accuracy.png"
 
@@ -98,8 +103,8 @@ NO_LAT_IDS = {"N01", "N02", "N03"}
 
 # Colorblind-safe palette (Wong 2011)
 GROUP_COLORS = {
-    "Low (~8 ms)":   "#009E73",   # green
-    "High (~50 ms)": "#D55E00",   # vermillion
+    "Low (~8 ms)":   "#45DAD1",   # teal
+    "High (~50 ms)": "#FFA940",   # orange
 }
 
 # Marker per compression mode
@@ -135,23 +140,43 @@ def load_data() -> tuple[pd.DataFrame, float]:
     """
     Returns (scatter_df, ceiling_auprc).
     scatter_df has one row per scenario with mean/std of auprc and payload.
-    ceiling_auprc is the mean AUPRC across no-latency scenarios (M01-M03).
+    ceiling_auprc is the mean AUPRC across no-latency scenarios (N01-N03).
     """
-    df = pd.read_csv(RESULTS_DIR / "matrix_summary.csv", dtype={"scenario_id": str})
+    import json, statistics as _st
+
+    all_rows = []
+    for scenario_id in list(SCENARIO_META) + list(NO_LAT_IDS):
+        for seed in SEEDS:
+            f = RESULTS_DIR / SESSION / f"{scenario_id}_seed{seed}_eval_report.json"
+            if not f.exists():
+                continue
+            d = json.loads(f.read_text())
+            auprc = d["weighted_overall"]["auprc"]
+            payload = _st.mean(
+                float(c.get("payload_bytes") or 0) for c in d["clients"]
+            )
+            meta = SCENARIO_META.get(scenario_id, (None, None, None))
+            all_rows.append({
+                "scenario_id":      scenario_id,
+                "seed":             seed,
+                "auprc_mean":       auprc,
+                "avg_payload_bytes": payload,
+                "latency_group":    meta[0],
+                "compression":      meta[1],
+            })
+
+    df = pd.DataFrame(all_rows)
 
     # No-latency ceiling
     ceiling = df[df["scenario_id"].isin(NO_LAT_IDS)]["auprc_mean"].mean()
 
-    # Scatter points
-    df = df[df["scenario_id"].isin(SCENARIO_META)]
-    df["latency_group"] = df["scenario_id"].map(lambda s: SCENARIO_META[s][0])
-    df["compression"]   = df["scenario_id"].map(lambda s: SCENARIO_META[s][1])
-
-    stats = df.groupby("scenario_id").agg(
-        latency_group=("latency_group", "first"),
-        compression=("compression",   "first"),
-        auprc_mean=("auprc_mean",     "mean"),
-        auprc_std=("auprc_mean",      "std"),
+    # Scatter points: aggregate per scenario across seeds
+    scatter = df[df["scenario_id"].isin(SCENARIO_META)].copy()
+    stats = scatter.groupby("scenario_id").agg(
+        latency_group=("latency_group",    "first"),
+        compression=("compression",        "first"),
+        auprc_mean=("auprc_mean",          "mean"),
+        auprc_std=("auprc_mean",           "std"),
         payload_mean=("avg_payload_bytes", "mean"),
         payload_std=("avg_payload_bytes",  "std"),
     ).reset_index()
@@ -162,74 +187,72 @@ def load_data() -> tuple[pd.DataFrame, float]:
 
 # --- Drawing ----------------------------------------------------------------
 
+COMP_ORDER = ["float32", "float16", "int8", "Adaptive"]
+# (latency_label, color, x_offset)
+LAT_SERIES = [
+    ("Low (~8 ms)",   "#45DAD1", -0.18),
+    ("High (~50 ms)", "#FFA940", +0.18),
+]
+
+
 def draw(stats: pd.DataFrame, ceiling: float) -> None:
     fig, ax = plt.subplots(figsize=(3.5, 2.8))
 
-    # No-latency AUPRC ceiling
-    ax.axhline(ceiling, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
-    ax.text(260, ceiling + 0.0004, "No-latency ceiling",
-            fontsize=7, color="#555555", ha="right", va="bottom")
-
-    for _, row in stats.iterrows():
-        sid   = row["scenario_id"]
-        color = GROUP_COLORS[row["latency_group"]]
-        marker = MARKERS[row["compression"]]
-        ms     = MARKER_SIZES[row["compression"]]
-
-        ax.errorbar(
-            row["payload_mean"], row["auprc_mean"],
-            xerr=row["payload_std"],
-            yerr=row["auprc_std"],
-            fmt=marker,
-            color=color,
-            markersize=np.sqrt(ms),
-            capsize=2,
-            elinewidth=0.7,
-            capthick=0.7,
-            zorder=3,
-        )
-
-        # Point label
-        dx, dy = LABEL_OFFSET.get(sid, (2, 0.0005))
-        ax.annotate(
-            row["compression"],
-            xy=(row["payload_mean"], row["auprc_mean"]),
-            xytext=(row["payload_mean"] + dx, row["auprc_mean"] + dy),
-            fontsize=6.5,
-            color=color,
-            va="center",
-        )
-
-    ax.set_xlabel("Mean Payload per Step (bytes)")
-    ax.set_ylabel("AUPRC")
-    ax.set_xlim(40, 290)
-    ymin = stats["auprc_mean"].min() - 0.005
-    ymax = max(stats["auprc_mean"].max(), ceiling) + 0.005
+    ymin = min(stats["auprc_mean"].min() - 0.006, ceiling - 0.003)
+    ymax = max(stats["auprc_mean"].max(), ceiling) + 0.004
     ax.set_ylim(ymin, ymax)
+
+    # Ceiling reference
+    ax.axhline(ceiling, color="#888888", linewidth=0.8, linestyle="--", zorder=1)
+    ax.text(len(COMP_ORDER) - 0.3, ceiling + 0.0003, "No-latency ceiling",
+            fontsize=7.5, color="#888888", ha="right", va="bottom")
+
+    tick_labels = []
+    for xi, comp in enumerate(COMP_ORDER):
+        # Build x-tick label with payload(s)
+        payloads = {}
+        for lat, color, offset in LAT_SERIES:
+            mask = (stats["compression"] == comp) & (stats["latency_group"] == lat)
+            if mask.any():
+                payloads[lat] = int(round(stats[mask]["payload_mean"].values[0]))
+        vals = list(set(payloads.values()))
+        if len(vals) == 1:
+            tick_labels.append(f"{comp}\n({vals[0]} B)")
+        else:
+            lo = payloads.get("Low (~8 ms)", "—")
+            hi = payloads.get("High (~50 ms)", "—")
+            tick_labels.append(f"{comp}\n(L {lo} B / H {hi} B)")
+
+        for lat, color, offset in LAT_SERIES:
+            mask = (stats["compression"] == comp) & (stats["latency_group"] == lat)
+            if not mask.any():
+                continue
+            row  = stats[mask].iloc[0]
+            y    = row["auprc_mean"]
+            yerr = row["auprc_std"]
+            xpos = xi + offset
+
+            ax.vlines(xpos, ymin, y, color=color, linewidth=2.0,
+                      alpha=0.5, zorder=2)
+            ax.errorbar(xpos, y, yerr=yerr, fmt="o", color=color,
+                        markersize=8, capsize=3,
+                        elinewidth=1.0, capthick=1.0, zorder=4)
+
+    ax.set_xticks(np.arange(len(COMP_ORDER)))
+    ax.set_xticklabels(tick_labels, fontsize=8)
+    ax.set_ylabel("AUPRC")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.3f}"))
-    ax.grid(linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.5, zorder=0)
+    ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 
-    # Legend: latency group (color) + compression mode (marker shape)
-    color_handles = [
-        mlines.Line2D([], [], color=c, marker="o", linestyle="none",
-                      markersize=5, label=lat)
-        for lat, c in GROUP_COLORS.items()
+    handles = [
+        mpatches.Patch(facecolor=c, label=lat)
+        for lat, c, _ in LAT_SERIES
     ]
-    shape_handles = [
-        mlines.Line2D([], [], color="#888888", marker=m, linestyle="none",
-                      markersize=5 if k != "Adaptive" else 8, label=k)
-        for k, m in MARKERS.items()
-    ]
-    leg1 = ax.legend(handles=color_handles, loc="lower right",
-                     title="Latency", frameon=True, framealpha=0.9,
-                     edgecolor="#cccccc", fontsize=7, title_fontsize=7,
-                     borderpad=0.4, labelspacing=0.2)
-    ax.add_artist(leg1)
-    ax.legend(handles=shape_handles, loc="upper left",
-              title="Compression", frameon=True, framealpha=0.9,
-              edgecolor="#cccccc", fontsize=7, title_fontsize=7,
-              borderpad=0.4, labelspacing=0.2)
+    ax.legend(handles=handles, title="Latency", frameon=True, framealpha=0.9,
+              edgecolor="#cccccc", fontsize=8, title_fontsize=8,
+              borderpad=0.4, labelspacing=0.25, loc="lower right")
 
     fig.tight_layout(pad=0.5)
     fig.savefig(OUT_PDF, format="pdf", bbox_inches="tight")

@@ -35,7 +35,7 @@ federated:
   # After quorum is reached, wait this many extra seconds for stragglers before aggregating.
   # Set to 0 to aggregate immediately upon quorum.
   grace_period_sec: 1
-  # Async FedAvg staleness tolerance: accept client updates up to this many rounds
+  # Bounded-staleness FedAvg tolerance: accept client updates up to this many rounds
   # behind the server's current round. 0 = strict synchronous FedAvg (default).
   # Set to max_rho (e.g. 3) for scenarios with heterogeneous rho across clients.
   max_staleness: 0
@@ -105,7 +105,7 @@ training:
   use_gpu: true # legacy switch (kept for backward compatibility)
   checkpoint_interval: 1  # Save a periodic checkpoint every N rounds
   early_stopping_patience: 15
-  eval_max_samples_per_sensor: 0
+  eval_max_samples_per_sensor: 500
 server:
   log_flush_interval: 1000
   max_workers: 25

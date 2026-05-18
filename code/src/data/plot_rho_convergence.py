@@ -76,8 +76,8 @@ plt.rcParams.update({
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-# All six scenarios live in the same matrix session
-SESSION = "2026-05-03_00-20-00"
+SESSION = "2026-05-10_01-43-06"
+SEEDS   = [42, 52, 62]
 OUT_PDF = RESULTS_DIR / "graphics" / "fig5_rho_convergence.pdf"
 OUT_PNG = RESULTS_DIR / "graphics" / "fig5_rho_convergence.png"
 
@@ -96,9 +96,9 @@ LATENCY_GROUPS = ["No latency", "Low (~8 ms)", "High (~50 ms)"]
 
 # Wong (2011) colorblind-safe palette, one colour per latency group
 GROUP_COLORS = {
-    "No latency":    "#0072B2",   # blue
-    "Low (~8 ms)":   "#009E73",   # green
-    "High (~50 ms)": "#D55E00",   # vermillion
+    "No latency":    "#40A9FF",   # blue
+    "Low (~8 ms)":   "#45DAD1",   # teal
+    "High (~50 ms)": "#FFA940",   # orange
 }
 
 
@@ -136,18 +136,19 @@ def load_scenario(scenario_id: str, rho: int) -> tuple[np.ndarray, np.ndarray, n
     mean   : np.ndarray  — mean AUPRC across seeds
     std    : np.ndarray  — std  AUPRC across seeds
     """
-    scenario_dir = RESULTS_DIR / SESSION / scenario_id
-    # Timestamped files = one per seed; the *_progress.csv is a merged copy, excluded
-    log_files = sorted(scenario_dir.glob("training_log_client1_2*.csv"))
-    if not log_files:
-        raise FileNotFoundError(f"No timestamped training logs in {scenario_dir}")
-
     seed_curves: list[pd.Series] = []
-    for f in log_files:
-        s = auprc_per_epoch(f)
-        # Convert local epoch → federation round
+    for seed in SEEDS:
+        seed_dir = RESULTS_DIR / SESSION / f"{scenario_id}_seed{seed}"
+        log_files = sorted(seed_dir.glob("training_log_client1_2*.csv"))
+        if not log_files:
+            continue
+        # Use the last timestamped file (most recent run for this seed)
+        s = auprc_per_epoch(log_files[-1])
         s.index = (s.index / rho).round().astype(int)
         seed_curves.append(s)
+
+    if not seed_curves:
+        raise FileNotFoundError(f"No training logs found for {scenario_id}")
 
     pivot = pd.concat(seed_curves, axis=1).dropna()   # intersect rounds
     rounds = pivot.index.values
@@ -155,7 +156,7 @@ def load_scenario(scenario_id: str, rho: int) -> tuple[np.ndarray, np.ndarray, n
     std    = pivot.std(axis=1).fillna(0).values
 
     max_r = int(rounds.max()) if len(rounds) else 0
-    print(f"  {scenario_id} (rho={rho}): {len(log_files)} seeds, "
+    print(f"  {scenario_id} (rho={rho}): {len(seed_curves)} seeds, "
           f"common rounds 1–{max_r}")
     return rounds, mean, std
 
@@ -199,13 +200,14 @@ def draw() -> None:
                             color=color, alpha=0.15, linewidth=0)
 
         ax.set_title(lat)
-        ax.set_xlabel("Federation Round")
-        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.45)
+        ax.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.5)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.legend(frameon=False)
+        ax.legend(frameon=True, framealpha=0.9, edgecolor="#cccccc",
+                  borderpad=0.4, labelspacing=0.25)
 
     axes[0].set_ylabel("Validation AUPRC")
 
+    fig.supxlabel("Federation Round", fontsize=9, y=0.01)
     fig.tight_layout(pad=0.6, w_pad=0.8)
     fig.savefig(OUT_PDF, format="pdf", bbox_inches="tight")
     fig.savefig(OUT_PNG, dpi=200, bbox_inches="tight")

@@ -53,30 +53,32 @@ from pathlib import Path
 
 # --- LaTeX-compatible style -------------------------------------------------
 plt.rcParams.update({
-    "font.family":    "serif",
-    "font.serif":     ["Times New Roman", "DejaVu Serif"],
-    "font.size":      9,
-    "axes.labelsize": 9,
+    "font.family":     "serif",
+    "font.serif":      ["Times New Roman", "DejaVu Serif"],
+    "font.size":       9,
+    "axes.titlesize":  9,
+    "axes.labelsize":  9,
     "xtick.labelsize": 8,
     "ytick.labelsize": 8,
-    "legend.fontsize": 7,
-    "axes.linewidth": 0.7,
-    "pdf.fonttype":   42,
-    "ps.fonttype":    42,
+    "legend.fontsize": 8,
+    "lines.linewidth": 1.2,
+    "axes.linewidth":  0.7,
+    "pdf.fonttype":    42,
+    "ps.fonttype":     42,
 })
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-SESSION     = "2026-05-03_00-20-00"
-SCENARIO    = "L09"
+SESSION     = "2026-05-10_01-43-06"
+SCENARIO    = "L09_seed42"
 OUT_PDF     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.pdf"
 OUT_PNG     = RESULTS_DIR / "graphics" / "figA_scheduler_timeline.png"
 
 # Clients to display and their latency profile descriptions
 CLIENTS = [
-    (1,  "Client 1 (~8.0 ms)"),
-    (5,  "Client 5 (~10.0 ms)"),
-    (11, "Client 11 (~14.0 ms)"),
+    (1,  "Client 1 (mostly float16)"),
+    (5,  "Client 5 (float16/int8)"),
+    (11, "Client 11 (mostly int8)"),
 ]
 
 # Scheduler thresholds (must match config.yaml → scheduler section)
@@ -86,12 +88,11 @@ EMA_ALPHA         = 0.2
 
 # Compression mode colours (Wong 2011) and ordering
 MODE_COLORS = {
-    "float32":  "#0072B2",   # blue
-    "float16":  "#009E73",   # green
-    "int8":     "#D55E00",   # vermillion
-    "topk_int8":"#CC79A7",   # pink
+    "float32": "#40A9FF",   # blue
+    "float16": "#45DAD1",   # teal
+    "int8":    "#FFA940",   # orange
 }
-MODE_ORDER = ["float32", "float16", "int8", "topk_int8"]
+MODE_ORDER = ["float32", "float16", "int8"]
 
 
 # --- Data loading -----------------------------------------------------------
@@ -103,6 +104,7 @@ def load_client(client_id: int) -> pd.DataFrame:
     """
     pattern = f"training_log_client{client_id}_2*.csv"
     files = sorted((RESULTS_DIR / SESSION / SCENARIO).glob(pattern))
+    files = [f for f in files if "_meta" not in f.name]
     if not files:
         raise FileNotFoundError(f"No log for client {client_id} in {SESSION}/{SCENARIO}")
     df = pd.read_csv(files[0])
@@ -126,12 +128,10 @@ def load_client(client_id: int) -> pd.DataFrame:
 
 def draw() -> None:
     n_clients = len(CLIENTS)
-    fig, axes = plt.subplots(n_clients, 1, figsize=(3.5, 2.6 * n_clients),
-                             sharex=False)
-    if n_clients == 1:
-        axes = [axes]
+    # Horizontal layout: 1 row × n_clients columns — matches fig5 width
+    fig, axes = plt.subplots(1, n_clients, figsize=(7.0, 2.4), sharey=False)
 
-    for ax, (cid, title) in zip(axes, CLIENTS):
+    for col, (ax, (cid, title)) in enumerate(zip(axes, CLIENTS)):
         try:
             df = load_client(cid)
         except FileNotFoundError as e:
@@ -144,54 +144,53 @@ def draw() -> None:
         ema   = df["EMA"].values
         modes = df["NextCompression"].values
 
-        # --- colour strip at the bottom (y < 0) ----------------------------
-        strip_h = ema.max() * 0.06   # height = 6% of y-range
-        for i, (s, mode) in enumerate(zip(steps, modes)):
+        # colour strip at the bottom
+        strip_h = max(ema.max(), INT8_THRESHOLD) * 0.07
+        for s, mode in zip(steps, modes):
             color = MODE_COLORS.get(str(mode), "#888888")
             ax.bar(s, strip_h, bottom=-strip_h, width=1.0,
                    color=color, align="center", linewidth=0, zorder=2)
 
-        # --- EMA latency line -----------------------------------------------
-        ax.plot(steps, ema, color="#444444", linewidth=0.9, zorder=3,
-                label="EMA latency")
+        # EMA latency line
+        ax.plot(steps, ema, color="#333333", linewidth=1.0, zorder=3)
 
-        # --- threshold lines ------------------------------------------------
+        # threshold lines
         ax.axhline(FLOAT16_THRESHOLD, color=MODE_COLORS["float16"],
-                   linewidth=0.8, linestyle="--", zorder=1,
-                   label=f"float16 thr. ({FLOAT16_THRESHOLD} ms)")
+                   linewidth=0.9, linestyle="--", zorder=1,
+                   label=f"float16 ({FLOAT16_THRESHOLD} ms)")
         ax.axhline(INT8_THRESHOLD, color=MODE_COLORS["int8"],
-                   linewidth=0.8, linestyle="--", zorder=1,
-                   label=f"int8 thr. ({INT8_THRESHOLD} ms)")
+                   linewidth=0.9, linestyle="--", zorder=1,
+                   label=f"int8 ({INT8_THRESHOLD} ms)")
 
         ax.set_title(title, fontsize=8)
-        ax.set_ylabel("EMA Latency (ms)")
+        ax.set_xlabel("Training Step")
         ax.set_xlim(steps[0] - 0.5, steps[-1] + 0.5)
-        ymax = max(ema.max(), INT8_THRESHOLD) * 1.15
+        ymax = max(ema.max(), INT8_THRESHOLD) * 1.18
         ax.set_ylim(-strip_h, ymax)
         ax.set_yticks([0, FLOAT16_THRESHOLD, INT8_THRESHOLD,
-                       int(round(ymax / 5) * 5)])
-        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.45, zorder=0)
+                       round(ymax / 5) * 5])
+        ax.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.5, zorder=0)
         ax.spines[["top", "right"]].set_visible(False)
 
-    axes[-1].set_xlabel("Training Step")
+        if col == 0:
+            ax.set_ylabel("EMA Latency (ms)")
 
-    # --- shared legend (modes + latency line) -------------------------------
+    # Legend on rightmost panel
     mode_patches = [
         mpatches.Patch(facecolor=MODE_COLORS[m], label=m)
         for m in MODE_ORDER
-        if m in MODE_COLORS
     ]
-    ema_line = plt.Line2D([0], [0], color="#444444", linewidth=0.9,
-                          label="EMA latency")
-    axes[0].legend(
-        handles=mode_patches + [ema_line],
+    ema_handle = plt.Line2D([0], [0], color="#333333", linewidth=1.0,
+                            label="EMA latency")
+    axes[-1].legend(
+        handles=mode_patches + [ema_handle],
         loc="upper right",
         frameon=True, framealpha=0.9, edgecolor="#cccccc",
-        fontsize=6.5, borderpad=0.4, labelspacing=0.2,
-        title="Mode (strip)", title_fontsize=6.5,
+        borderpad=0.4, labelspacing=0.25,
+        title="Mode (strip)", title_fontsize=7.5,
     )
 
-    fig.tight_layout(pad=0.5, h_pad=0.8)
+    fig.tight_layout(pad=0.5, w_pad=1.0)
     fig.savefig(OUT_PDF, format="pdf", bbox_inches="tight")
     fig.savefig(OUT_PNG, dpi=200, bbox_inches="tight")
     print(f"PDF → {OUT_PDF}")

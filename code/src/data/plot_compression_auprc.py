@@ -63,25 +63,24 @@ from pathlib import Path
 
 # --- LaTeX-compatible style -------------------------------------------------
 plt.rcParams.update({
-    "font.family":           "serif",
-    "font.serif":            ["Times New Roman", "DejaVu Serif"],
-    "font.size":             9,
-    "axes.titlesize":        10,
-    "axes.labelsize":        9,
-    "xtick.labelsize":       8,
-    "ytick.labelsize":       8,
-    "legend.fontsize":       8,
-    "legend.title_fontsize": 8,
-    "lines.linewidth":       1.0,
-    "axes.linewidth":        0.7,
-    "xtick.major.width":     0.7,
-    "ytick.major.width":     0.7,
-    "pdf.fonttype":          42,   # embed fonts as TrueType (Acrobat-safe)
-    "ps.fonttype":           42,
+    "font.family":     "serif",
+    "font.serif":      ["Times New Roman", "DejaVu Serif"],
+    "font.size":       9,
+    "axes.titlesize":  9,
+    "axes.labelsize":  9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "legend.fontsize": 8,
+    "lines.linewidth": 1.2,
+    "axes.linewidth":  0.7,
+    "pdf.fonttype":    42,
+    "ps.fonttype":     42,
 })
 
 # --- Paths ------------------------------------------------------------------
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+SESSION     = "2026-05-10_01-43-06"
+SEEDS       = [42, 52, 62]
 OUT_PDF = RESULTS_DIR / "graphics" / "fig2_compression_auprc.pdf"
 OUT_PNG = RESULTS_DIR / "graphics" / "fig2_compression_auprc.png"
 
@@ -108,21 +107,37 @@ COMPRESSION_ORDER = ["float32", "float16", "int8", "Adaptive"]
 
 # Colorblind-safe palette (Wong 2011)
 COLORS = {
-    "float32":  "#0072B2",   # blue
-    "float16":  "#009E73",   # green
-    "int8":     "#D55E00",   # vermillion
-    "Adaptive": "#CC79A7",   # pink
+    "float32":  "#40A9FF",   # blue
+    "float16":  "#45DAD1",   # teal
+    "int8":     "#FFA940",   # orange
+    "Adaptive": "#9F69E2",   # purple
 }
 
 
 # --- Data loading -----------------------------------------------------------
 
 def load_data() -> pd.DataFrame:
-    df = pd.read_csv(RESULTS_DIR / "matrix_summary.csv", dtype={"scenario_id": str})
-    df = df[df["scenario_id"].isin(SCENARIO_META)]
-    df["latency_group"] = df["scenario_id"].map(lambda s: SCENARIO_META[s][0])
-    df["compression"]   = df["scenario_id"].map(lambda s: SCENARIO_META[s][1])
-    return df
+    import json, statistics as _st
+    rows = []
+    for scenario_id, (lat, comp) in SCENARIO_META.items():
+        for seed in SEEDS:
+            f = RESULTS_DIR / SESSION / f"{scenario_id}_seed{seed}_eval_report.json"
+            if not f.exists():
+                continue
+            d = json.loads(f.read_text())
+            auprc = d["weighted_overall"]["auprc"]
+            payload = _st.mean(
+                float(c.get("payload_bytes") or 0) for c in d["clients"]
+            )
+            rows.append({
+                "scenario_id":      scenario_id,
+                "seed":             seed,
+                "auprc_mean":       auprc,
+                "avg_payload_bytes": payload,
+                "latency_group":    lat,
+                "compression":      comp,
+            })
+    return pd.DataFrame(rows)
 
 
 def compute_stats(df: pd.DataFrame) -> pd.DataFrame:
@@ -179,7 +194,7 @@ def _payload_label(comp: str, stats: pd.DataFrame) -> str:
 
 def draw(stats: pd.DataFrame) -> None:
     # Single-column width for a two-column paper
-    fig_w, fig_h = 3.5, 2.6
+    fig_w, fig_h = 3.5, 2.4
     bar_w     = 0.16
     group_gap = 0.85
 
@@ -230,7 +245,7 @@ def draw(stats: pd.DataFrame) -> None:
     ax.set_ylim(ymin, ymax)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.3f}"))
     ax.yaxis.set_minor_locator(plt.MultipleLocator(0.002))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.5, zorder=0)
+    ax.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.5, zorder=0)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 

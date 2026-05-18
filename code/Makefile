@@ -245,7 +245,7 @@ native-run-single:
 	@set -e; \
 	pids=""; \
 	trap 'kill $$pids 2>/dev/null || true' INT TERM EXIT; \
-	if [ -n "$(SCENARIO_ID)" ]; then \
+	if [ -n "$(SCENARIO_ID)" ] && [ -z "$$FSL_CONFIG_PATH" ]; then \
 		_fsl_cfg=$$($(PYTHON) -m src.shared.resolve_scenario_config "$(SCENARIO_ID)"); \
 		if [ -n "$$_fsl_cfg" ]; then \
 			export FSL_CONFIG_PATH="$$_fsl_cfg"; \

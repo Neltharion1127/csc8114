@@ -254,37 +254,127 @@
   pages   = {1284-1288},
   doi     = {10.1109/LCOMM.2020.2978824}
 }
-%latency是ms级别，就是支撑我们设置延迟数值的范围
-@article{mao2017survey,
-  title={A survey on mobile edge computing: The communication perspective},
-  author={Mao, Yuyi and You, Changsheng and Zhang, Jun and Huang, Kaibin and Letaief, Khaled B},
-  journal={IEEE communications surveys \& tutorials},
-  volume={19},
+
+@Article{network4010001,
+AUTHOR = {Almutairi, Hanin and Zhang, Ning},
+TITLE = {A Survey on Routing Solutions for Low-Power and Lossy Networks: Toward a Reliable Path-Finding Approach},
+JOURNAL = {Network},
+VOLUME = {4},
+YEAR = {2024},
+NUMBER = {1},
+PAGES = {1--32},
+URL = {https://www.mdpi.com/2673-8732/4/1/1},
+ISSN = {2673-8732},
+ABSTRACT = {Low-Power and Lossy Networks (LLNs) have grown rapidly in recent years owing to the increased adoption of Internet of Things (IoT) and Machine-to-Machine (M2M) applications across various industries, including smart homes, industrial automation, healthcare, and smart cities. Owing to the characteristics of LLNs, such as Lossy channels and limited power, generic routing solutions designed for non-LLNs may not be adequate in terms of delivery reliability and routing efficiency. Consequently, a routing protocol for LLNs (RPL) was designed. Several RPL objective functions have been proposed to enhance the routing reliability in LLNs. This paper analyses these solutions against performance and security requirements to identify their limitations. Firstly, it discusses the characteristics and security issues of LLN and their impact on packet delivery reliability and routing efficiency. Secondly, it provides a comprehensive analysis of routing solutions and identifies existing limitations. Thirdly, based on these limitations, this paper highlights the need for a reliable and efficient path-finding solution for LLNs.},
+DOI = {10.3390/network4010001}
+}
+
+@article{MARTINBAOS2022108282,
+title = {IoT based monitoring of air quality and traffic using regression analysis},
+journal = {Applied Soft Computing},
+volume = {115},
+pages = {108282},
+year = {2022},
+issn = {1568-4946},
+doi = {https://doi.org/10.1016/j.asoc.2021.108282},
+url = {https://www.sciencedirect.com/science/article/pii/S1568494621010917},
+author = {José Ángel Martín-Baos and Luis Rodriguez-Benitez and Ricardo García-Ródenas and Jun Liu},
+keywords = {Air Quality Index, Regression modelling, Video motion vectors, Embedded systems},
+abstract = {Dynamic traffic management (DTM) systems are used to reduce the negative externalities of traffic congestion, such as air pollution in urban areas. They require traffic and environmental monitoring infrastructures. In this paper we present a prototype of a low-cost Internet of Things (IoT) system for monitoring traffic flow and the Air Quality Index (AQI). The computation of the traffic flows is based on processing video in the compressed domain. Only using motion vectors as input, traffic flow is computed in real-time over an embedded architecture. An estimation of the AQI is supported by machine learning regression techniques, using different feature data obtained from the IoT device. These automatic learning techniques overcome the need for complex calibration and other limitations of embedded devices in making the needed measurements of the pollutant gases for the computation of the actual AQI. The experimentation with the data obtained from different cities representing different scenarios with a variety of climate and traffic conditions, allows validating the proposed architecture. As regressors, Linear Regression (LR), Gaussian Process Regression (GPR) and Random Forest (RF) are compared using the performance metrics R2, MSE, MAE and MRE resulting in a relevant improvement of the AQI estimations of our proposal.}
+}
+
+@article{di2025federated,
+  title={Federated Learning for Distributed Weather Forecasting: A Practical Approach on Real Multidimensional Georeferenced Data},
+  author={Di Vicino, Attilio and Fiorillo, Giuseppe and Galluccio, Luigi and Montella, Raffaele},
+  year={2025}
+}
+
+@article{zheng2023reducing,
+  title={Reducing communication for split learning by randomized top-k sparsification},
+  author={Zheng, Fei and Chen, Chaochao and Lyu, Lingjuan and Yao, Binhui},
+  journal={arXiv preprint arXiv:2305.18469},
+  year={2023}
+}
+
+@misc{thapa2022splitfedfederatedlearningmeets,
+      title={SplitFed: When Federated Learning Meets Split Learning}, 
+      author={Chandra Thapa and M. A. P. Chamikara and Seyit Camtepe and Lichao Sun},
+      year={2022},
+      eprint={2004.12088},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2004.12088}, 
+}
+
+@misc{shiranthika2024splitfedziplearnedcompressiondata,
+      title={SplitFedZip: Learned Compression for Data Transfer Reduction in Split-Federated Learning}, 
+      author={Chamani Shiranthika and Hadi Hadizadeh and Parvaneh Saeedi and Ivan V. Bajić},
+      year={2024},
+      eprint={2412.17150},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2412.17150}, 
+}
+
+@ARTICLE{10791300,
+  author={Zhang, Junhe and Ni, Wanli and Wang, Dongyu},
+  journal={IEEE Transactions on Vehicular Technology}, 
+  title={Federated Split Learning With Model Pruning and Gradient Quantization in Wireless Networks}, 
+  year={2025},
+  volume={74},
   number={4},
-  pages={2322--2358},
-  year={2017},
-  publisher={IEEE}
-}
-%人工注入latency是合理的
-@inproceedings{becker2022network,
-  title={Network emulation in large-scale virtual edge testbeds: A note of caution and the way forward},
-  author={Becker, Soeren and Pfandzelter, Tobias and Japke, Nils and Bermbach, David and Kao, Odej},
-  booktitle={2022 IEEE International Conference on Cloud Engineering (IC2E)},
-  pages={1--7},
-  year={2022},
-  organization={IEEE}
-}
-%仿真的可信度
-@article{carvalho2022can,
-  title={Can we trust edge computing simulations? an experimental assessment},
-  author={Carvalho, Gon{\c{c}}alo and Magalh{\~a}es, Filipe and Cabral, Bruno and Pereira, Vasco and Bernardino, Jorge},
-  journal={Computers},
-  volume={11},
-  number={6},
-  pages={90},
-  year={2022},
-  publisher={MDPI}
+  pages={6850-6855},
+  keywords={Training;Computational modeling;Servers;Convergence;Wireless networks;Quantization (signal);Load modeling;Vectors;Propagation losses;Data models;Federated split learning;model pruning;gradient quantization;dropout;convergence analysis},
+  doi={10.1109/TVT.2024.3515083}}
+
+@ARTICLE{11458714,
+  author={Lin, Zehang and Lin, Zheng and Yang, Miao and Huang, Jianhao and Zhang, Yuxin and Fang, Zihan and Du, Xia and Chen, Zhe and Zhu, Shunzhi and Ni, Wei},
+  journal={IEEE Transactions on Vehicular Technology}, 
+  title={SL-ACC: A Communication-Efficient Split Learning Framework with Adaptive Channel-wise Compression}, 
+  year={2026},
+  volume={},
+  number={},
+  pages={1-6},
+  keywords={Low earth orbit satellites;Artificial satellites;Communication systems;Internet;Internet of Things;Electronic mail;Product development;Data communication;Semantic communication;Vehicular ad hoc networks;Distributed learning;edge intelligence;split learning},
+  doi={10.1109/TVT.2026.3679518}}
+
+@misc{lin2026slfaccommunicationefficientsplitlearning,
+      title={SL-FAC: A Communication-Efficient Split Learning Framework with Frequency-Aware Compression}, 
+      author={Zehang Lin and Miao Yang and Haihan Zhu and Zheng Lin and Jianhao Huang and Jing Yang and Guangjin Pan and Dianxin Luan and Zihan Fang and Shunzhi Zhu and Wei Ni and John Thompson},
+      year={2026},
+      eprint={2604.07316},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2604.07316}, 
 }
 
 
+@misc{lin2025slacccommunicationefficientsplitlearning,
+      title={SL-ACC: A Communication-Efficient Split Learning Framework with Adaptive Channel-wise Compression}, 
+      author={Zehang Lin and Zheng Lin and Miao Yang and Jianhao Huang and Yuxin Zhang and Zihan Fang and Xia Du and Zhe Chen and Shunzhi Zhu and Wei Ni},
+      year={2025},
+      eprint={2508.12984},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2508.12984}, 
+}
 
+@misc{liang2025communicationandcomputationefficientsplitfederated,
+      title={Communication-and-Computation Efficient Split Federated Learning: Gradient Aggregation and Resource Management}, 
+      author={Yipeng Liang and Qimei Chen and Guangxu Zhu and Muhammad Kaleem Awan and Hao Jiang},
+      year={2025},
+      eprint={2501.01078},
+      archivePrefix={arXiv},
+      primaryClass={cs.DC},
+      url={https://arxiv.org/abs/2501.01078}, 
+}
+
+@misc{li2026splitcomcommunicationefficientsplitfederated,
+      title={SplitCom: Communication-efficient Split Federated Fine-tuning of LLMs via Temporal Compression}, 
+      author={Tao Li and Yulin Tang and Yiyang Song and Cong Wu and Xihui Liu and Pan Li and Xianhao Chen},
+      year={2026},
+      eprint={2602.10564},
+      archivePrefix={arXiv},
+      primaryClass={cs.NI},
+      url={https://arxiv.org/abs/2602.10564}, 
+}

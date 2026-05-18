@@ -16,7 +16,7 @@ experiment_matrix:
   #   None (~0ms):  WiFi/LAN edge deployment (profiler off)
   #   Low  (~8ms):  4G cellular MEC link
   #   High (~50ms): NB-IoT / wide-area IoT
-  # Scheduler thresholds: float16@4ms, int8@10ms, topk_int8@15ms
+  # Scheduler thresholds (EMA latency): float16@4ms, int8@10ms (3-tier: float32 / float16 / int8)
   # Strategy axes (clean ablation):
   #   S0: float32, rho=1, no scheduler  (baseline)
   #   S1: float16, rho=1, no scheduler  (compression only - tier 1)
@@ -177,7 +177,7 @@ experiment_matrix:
           rho: 1
 
     - id: "L10"
-      description: "Low latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, async FedAvg)"
+      description: "Low latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, bounded-staleness FedAvg, max_staleness=3)"
       overrides:
         profiler:
           enabled: true
@@ -204,7 +204,7 @@ experiment_matrix:
           enabled: true
           latency_generator:
             base_latency_ms: 50.0
-            # all clients 50-80ms → all exceed topk threshold (15ms), scheduler assigns topk/rho=4
+            # all clients 50-80ms → far exceed int8 threshold (10ms), scheduler assigns int8
             client_offsets_ms: [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 15.0, 18.0, 22.0, 26.0, 30.0]
             jitter_ms: 5.0
             burst_every_steps: 0
@@ -290,7 +290,7 @@ experiment_matrix:
           rho: 1
 
     - id: "H16"
-      description: "High latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, async FedAvg)"
+      description: "High latency | S5 joint adaptive scheduler (compression + rho, rho_step=1, bounded-staleness FedAvg, max_staleness=3)"
       overrides:
         profiler:
           enabled: true
@@ -311,7 +311,7 @@ experiment_matrix:
 
     # ── Mixed latency (heterogeneous clients) ───────────────────────────
     - id: "M17"
-      description: "Mixed latency | 4 no-lat + 4 low-lat + 3 high-lat | joint adaptive + async FedAvg"
+      description: "Mixed latency | 4 no-lat + 4 low-lat + 3 high-lat | joint adaptive + bounded-staleness FedAvg, max_staleness=3"
       overrides:
         profiler:
           enabled: true
