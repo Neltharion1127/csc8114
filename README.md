@@ -1,4 +1,4 @@
-# CSC8114 Group 9 — Joint Computation and Communication Optimisation in Federated Split Learning for IoT Rainfall Prediction
+# CSC8114 Group 9 — Adaptive Joint Compression and Synchronisation in Federated Split Learning for IoT Rainfall Prediction
 
 > A research prototype / experimental platform Federated Split Learning system with adaptive communication control for real-time IoT rainfall prediction.
 
@@ -8,35 +8,40 @@ In real-world IoT sensing networks, distributed weather stations continuously ge
 
 However, FSL introduces its own communication bottleneck — **per-step activation/gradient round trips** and **periodic model synchronisation** can dominate training time under constrained or unstable IoT networks. This project tackles this problem head-on.
 
+<p align="center">
+  <img src="assets/Pis.jpg" alt="Raspberry Pi federated split learning deployment" width="760">
+</p>
+
 ### What We Built
 
 A fully functional, end-to-end FSL training platform built on a **gRPC microservice architecture** with the following core components:
 
-- **Split LSTM Model** — A 2-layer LSTM encoder runs on each client to extract temporal weather features from a 24-hour sliding window (5 meteorological variables), producing a fixed-size 64-dim _smashed activation_. The server hosts a dual-head prediction module (rain/no-rain classifier + rainfall amount regressor) with LayerNorm, SiLU activations, and focal loss to handle severe class imbalance.
+- **Split LSTM Model** — A 2-layer LSTM encoder runs on each client to extract temporal weather features from a 48-hour sliding window (5 meteorological variables), producing a fixed-size 64-dim _smashed activation_. The server hosts a dual-head prediction module (rain/no-rain classifier + rainfall amount regressor) and uses focal loss plus positive-sample rebalancing to handle rainfall class imbalance.
 
 - **gRPC Communication Layer** — Four well-defined RPCs (`Register`, `Forward`, `Synchronize`, `NotifyCompletion`) orchestrate the full distributed training lifecycle, including client registration, split forward/backward passes, barrier-based FedAvg aggregation (with configurable quorum and timeout), and graceful shutdown.
 
 - **Adaptive Communication Scheduler** — A latency-aware, rule-based scheduler running on the server side that jointly controls two optimisation dimensions at runtime:
-  - **Spatial** — Activation compression mode (float32 → float16 → int8 → top-k sparsification), reducing per-step payload by up to **73%**.
-  - **Temporal** — Synchronisation interval ρ (1–20 local epochs between FedAvg rounds), reducing server aggregation frequency by up to **77%**.
+  - **Spatial** — Activation/gradient compression mode (float32 → float16 → int8), reducing per-step payload from 256 B to 68 B.
+  - **Temporal** — Synchronisation interval ρ, dynamically moving from 1 to 3 in the evaluated adaptive regimes while retaining a configured safety range of 1–20.
   
   Decisions are driven by EMA-smoothed client-reported latency, enabling the system to dynamically adapt to heterogeneous and non-stationary network conditions without manual tuning.
 
-- **Reproducible Experiment Matrix** — 17 carefully designed scenarios × 3 random seeds, systematically decoupling the effects of latency profiles (none / low / high / mixed), compression modes, synchronisation intervals, and adaptive vs. static policies. Scenarios are defined in `matrix.yaml` and run with a single `make matrix` command; `config.yaml` remains the clean single-run baseline.
+- **Reproducible Experiment Matrix** — 17 simulation scenarios × 3 random seeds, systematically decoupling the effects of latency profiles (none / low / high / mixed), compression modes, synchronisation intervals, and adaptive vs. static policies. A second four-scenario Raspberry Pi matrix validates the same ideas on physical edge devices over a real wide-area link.
 
 ### Key Results
 
-Measured across 17 scenarios × 3 seeds; baseline is N01 (float32, no latency, ρ=1, F1=0.520, AUPRC=0.649).
+Measured across the updated paper experiments. Simulation metrics use 17 scenarios × 3 seeds; Raspberry Pi metrics use 4 scenarios × 3 seeds.
 
 | Finding | Detail |
 | ------- | ------ |
-| INT8 compression (no latency) | **−73.4% payload** (256 B → 68 B), AUPRC 0.649 → 0.651 (stable) |
-| ρ = 3 sync interval (no latency) | AUPRC 0.649 → 0.661 (+0.012); fewer aggregation rounds, similar quality |
-| Adaptive under low latency (~8 ms) | **−63.9% payload** (256 B → 92 B), AUPRC 0.649 → 0.648 (stable) |
-| Adaptive under high latency (~50 ms) | **−73.4% payload** (256 B → 68 B), AUPRC 0.649 → 0.650 (stable) |
-| AUPRC stability | Ranges 0.648–0.661 across all 17 scenarios — quality robust to compression and latency |
+| Simulation AUPRC stability | AUPRC remains stable across all 17 scenarios (**0.6381–0.6484**), showing no measurable degradation from int8 compression or ρ=3 synchronisation. |
+| INT8 compression | Per-step activation payload falls from **256 B to 68 B** while AUPRC stays within seed-level variance of the float32 baseline. |
+| ρ = 3 synchronisation | Synchronisation traffic drops by about **53%** in simulation, from roughly 6.7 MB to 3.19 MB, while AUPRC remains stable. |
+| Joint adaptive simulation | H16 reaches the lowest simulation communication cost: **0.55 MB total activation payload** and **3.19 MB sync traffic**. |
+| Raspberry Pi deployment | P4 adaptive reduces activation payload by **87%** and synchronisation traffic by **54%** vs. P1, while keeping AUPRC within 0.011 of all Pi scenarios. |
+| Runtime stability on real hardware | P4 reduces runtime jitter from **±688 s** (P1) to **±10 s** on Raspberry Pi. |
 
-Compression reduces bandwidth by up to 73% with negligible AUPRC loss (<0.002). The adaptive scheduler automatically selects the appropriate compression tier (float16 under low latency, int8 under high latency) without manual tuning.
+The central paper result is that FSL communication cost can be reduced by an order of magnitude without sacrificing predictive performance when activation compression and synchronisation frequency are controlled jointly rather than independently.
 
 ---
 
@@ -46,7 +51,7 @@ Compression reduces bandwidth by up to 73% with negligible AUPRC loss (<0.002). 
 csc8114/
 ├── code/                        # FSL system implementation
 │   ├── config.yaml              # Runtime config — model, training, data, comms
-│   ├── matrix.yaml              # Experiment matrix — 17 scenarios & seeds (ablation only)
+│   ├── matrix.yaml              # Experiment matrix — 17 simulation scenarios & seeds
 │   ├── Makefile                 # Build / run / plot automation
 │   ├── proto/fsl.proto          # gRPC protocol (4 RPCs)
 │   ├── src/
@@ -57,8 +62,7 @@ csc8114/
 │   │   ├── shared/              # Compression, serialisation, config, runtime
 │   │   └── data/                # Data download, evaluation, plotting
 │   ├── dataset/
-│   │   ├── processed/           # 11 training sensor files (one per federated client)
-│   │   └── holdout/             # 1 holdout sensor (NCL_GATESHEAD — never seen during training)
+│   │   └── processed/           # 11 station files (one per federated client)
 │   ├── bestweights/             # Model checkpoints (per session)
 │   └── results/                 # Training logs, evaluation reports, plots
 │
@@ -92,10 +96,12 @@ uv sync
 make download-data
 ```
 
-Downloads Open-Meteo historical weather data (2023–2026) for 12 Newcastle stations:
+Downloads Open-Meteo/ERA5 historical weather data (2015-01-01 to 2026-03-31) for 11 Newcastle-area stations:
 
-- **11 training locations** → `dataset/processed/` (one file per federated client, north bank of the Tyne)
-- **1 holdout location** → `dataset/holdout/` (NCL_GATESHEAD — south bank, geographically isolated, never seen during training)
+- **11 federated client locations** → `dataset/processed/` (one station file per client)
+- Chronological split: train before 2024-01-01, validation during 2024, test from 2025-01-01 to 2026-03-31
+- Input: previous 48 hours of temperature, humidity, pressure, wind speed, and rain
+- Target: cumulative rainfall over the next 24 hours; rain label is positive when future 24-hour rainfall is at least 0.5 mm
 
 ### Training (Native — Recommended for development)
 
@@ -162,6 +168,7 @@ uv run python src/data/build_matrix_summary.py
 # Regenerate paper figures (output → results/graphics/)
 uv run python src/data/plot_compression_auprc.py      # Fig 2
 uv run python src/data/plot_efficiency_accuracy.py    # Fig 3
+uv run python src/data/plot_cross_platform.py         # Fig 4
 uv run python src/data/plot_rho_convergence.py        # Fig 5
 uv run python src/data/plot_scheduler_timeline.py     # Fig A
 uv run python src/data/plot_monthly_performance.py    # Fig B
@@ -208,7 +215,7 @@ Run `make help` for the full command list.
 
 | Component      | Location                   | Description                                                                 |
 | -------------- | -------------------------- | --------------------------------------------------------------------------- |
-| **ClientLSTM** | `src/models/split_lstm.py` | 2-layer LSTM encoder; input (batch, 24, 5) → smashed activation (batch, 64) |
+| **ClientLSTM** | `src/models/split_lstm.py` | 2-layer LSTM encoder; input (batch, 48, 5) → smashed activation (batch, 64) |
 | **ServerHead** | `src/models/split_lstm.py` | MLP backbone → dual head: rain classifier (logit) + rain regressor (amount) |
 
 ### gRPC Protocol (`proto/fsl.proto`)
@@ -222,14 +229,13 @@ Run `make help` for the full command list.
 
 ### Adaptive Scheduler (`src/server/scheduler.py`)
 
-Uses EMA-smoothed latency to escalate compression and synchronisation interval:
+Uses per-client EMA-smoothed latency to choose compression and synchronisation interval:
 
-| Latency (EMA) | Compression Mode  | ρ Increment |
-| ------------- | ----------------- | ----------- |
-| < 4 ms        | float32 (default) | +0          |
-| 4–10 ms       | float16           | +1          |
-| 10–15 ms      | int8              | +2          |
-| > 15 ms       | top-k             | +3          |
+| Latency (EMA) | Compression Mode  | Severity | Resulting ρ with base=1, step=1 |
+| ------------- | ----------------- | -------- | -------------------------------- |
+| < 4 ms        | float32           | 0        | 1                                |
+| 4–10 ms       | float16           | 1        | 2                                |
+| ≥ 10 ms       | int8              | 2        | 3                                |
 
 ### Compression Modes (`src/shared/compression.py`)
 
@@ -238,7 +244,6 @@ Uses EMA-smoothed latency to escalate compression and synchronisation interval:
 | float32 | Raw numpy                        | 256 B            |
 | float16 | Half-precision                   | 128 B            |
 | int8    | Scale (4B) + quantised           | 68 B             |
-| top-k   | Header + sparse indices + values | Depends on ratio |
 
 ---
 
@@ -252,7 +257,7 @@ Two config files, two responsibilities:
 | --------------- | ------------------------------------------------------------------- |
 | `model.*`       | LSTM hidden size, layers, sequence length, horizon                  |
 | `training.*`    | Learning rate, rounds, local steps, loss weights, focal loss params |
-| `compression.*` | Default mode, top-k ratio                                           |
+| `compression.*` | Default mode (`float32`, `float16`, or `int8`)                      |
 | `federated.*`   | Number of clients, base ρ                                           |
 | `scheduler.*`   | Latency thresholds, ρ bounds, EMA alpha                             |
 | `profiler.*`    | Synthetic latency generator (base, offsets, jitter, burst)          |
@@ -274,25 +279,36 @@ Each scenario in `matrix.yaml` deep-merges its `overrides` onto `config.yaml` to
 
 Defined in `matrix.yaml`. 17 scenarios total, run with 3 seeds each. Results land in `results/<session>/<scenario>/` and `bestweights/<session>/<scenario>/`.
 
-| ID  | Latency Profile   | Compression | ρ       | Scheduler      | AUPRC  | F1     | Payload |
-| --- | ----------------- | ----------- | ------- | -------------- | ------ | ------ | ------- |
-| N01 | No latency        | float32     | 1       | Off            | 0.6490 | 0.5199 | 256 B   |
-| N02 | No latency        | float16     | 1       | Off            | 0.6510 | 0.5266 | 128 B   |
-| N03 | No latency        | int8        | 1       | Off            | 0.6513 | 0.6089 | 68 B    |
-| N04 | No latency        | float32     | 3       | Off            | 0.6608 | 0.5729 | 256 B   |
-| L05 | Low (~8 ms)       | float32     | 1       | Off            | 0.6493 | 0.5267 | 256 B   |
-| L06 | Low (~8 ms)       | float16     | 1       | Off            | 0.6496 | 0.5187 | 128 B   |
-| L07 | Low (~8 ms)       | int8        | 1       | Off            | 0.6490 | 0.5331 | 68 B    |
-| L08 | Low (~8 ms)       | float32     | 3       | Off            | 0.6592 | 0.5544 | 256 B   |
-| L09 | Low (~8 ms)       | dynamic     | 1       | Adaptive       | 0.6482 | 0.5200 | 92 B    |
-| L10 | Low (~8 ms)       | dynamic     | dynamic | Adaptive + ρ   | 0.6577 | 0.5747 | 92 B    |
-| H11 | High (~50 ms)     | float32     | 1       | Off            | 0.6490 | 0.5580 | 256 B   |
-| H12 | High (~50 ms)     | float16     | 1       | Off            | 0.6483 | 0.5246 | 128 B   |
-| H13 | High (~50 ms)     | int8        | 1       | Off            | 0.6486 | 0.5078 | 68 B    |
-| H14 | High (~50 ms)     | float32     | 3       | Off            | 0.6554 | 0.5426 | 256 B   |
-| H15 | High (~50 ms)     | dynamic     | 1       | Adaptive       | 0.6497 | 0.6277 | 68 B    |
-| H16 | High (~50 ms)     | dynamic     | dynamic | Adaptive + ρ   | 0.6567 | 0.5525 | 68 B    |
-| M17 | Mixed (per-client)| dynamic     | dynamic | Adaptive + ρ   | 0.6571 | 0.6066 | 127 B   |
+| ID  | Latency Profile    | Compression | ρ       | Scheduler      | AUPRC              | F1     | Payload/step |
+| --- | ------------------ | ----------- | ------- | -------------- | ------------------ | ------ | ------------ |
+| N01 | No latency         | float32     | 1       | Off            | 0.6396 ± 0.0032    | 0.6023 | 256.0 B      |
+| N02 | No latency         | float16     | 1       | Off            | 0.6384 ± 0.0106    | 0.6052 | 128.0 B      |
+| N03 | No latency         | int8        | 1       | Off            | 0.6395 ± 0.0078    | 0.5688 | 68.0 B       |
+| N04 | No latency         | float32     | 3       | Off            | 0.6473 ± 0.0001    | 0.6075 | 256.0 B      |
+| L05 | Low (~8 ms)        | float32     | 1       | Off            | 0.6409 ± 0.0070    | 0.5293 | 256.0 B      |
+| L06 | Low (~8 ms)        | float16     | 1       | Off            | 0.6431 ± 0.0083    | 0.5831 | 128.0 B      |
+| L07 | Low (~8 ms)        | int8        | 1       | Off            | 0.6422 ± 0.0061    | 0.6129 | 68.0 B       |
+| L08 | Low (~8 ms)        | float32     | 3       | Off            | 0.6479 ± 0.0004    | 0.6185 | 256.0 B      |
+| L09 | Low (~8 ms)        | dynamic     | 1       | Adaptive       | 0.6415 ± 0.0060    | 0.6358 | 92.5 B       |
+| L10 | Low (~8 ms)        | dynamic     | dynamic | Adaptive + ρ   | 0.6474 ± 0.0004    | 0.5815 | 92.5 B       |
+| H11 | High (~50 ms)      | float32     | 1       | Off            | 0.6393 ± 0.0057    | 0.6085 | 256.0 B      |
+| H12 | High (~50 ms)      | float16     | 1       | Off            | 0.6421 ± 0.0053    | 0.6308 | 128.0 B      |
+| H13 | High (~50 ms)      | int8        | 1       | Off            | 0.6407 ± 0.0099    | 0.5560 | 68.0 B       |
+| H14 | High (~50 ms)      | float32     | 3       | Off            | 0.6484 ± 0.0004    | 0.6265 | 256.0 B      |
+| H15 | High (~50 ms)      | dynamic     | 1       | Adaptive       | 0.6381 ± 0.0072    | 0.5640 | 68.0 B       |
+| H16 | High (~50 ms)      | dynamic     | dynamic | Adaptive + ρ   | 0.6483 ± 0.0003    | 0.6222 | 68.0 B       |
+| M17 | Mixed (per-client) | dynamic     | dynamic | Adaptive + ρ   | 0.6476 ± 0.0007    | 0.6368 | 128.2 B      |
+
+### Raspberry Pi Deployment Matrix
+
+The paper also validates four representative strategies on 11 Raspberry Pi 4B clients connected to a cloud server over a real wide-area link. The profiler is disabled; measured RTT is approximately 21–24 ms, which places the adaptive scheduler in the int8 + ρ=3 regime.
+
+| ID | Strategy | Compression | ρ | AUPRC | Total Payload | Sync Traffic | Runtime |
+| -- | -------- | ----------- | - | ----- | ------------- | ------------ | ------- |
+| P1 | Baseline | float32 | 1 | 0.6381 ± 0.0052 | 47.36 ± 10.26 MB | 75.77 ± 16.42 MB | 3280.1 ± 688.0 s |
+| P2 | Compression only | float16 | 1 | 0.6434 ± 0.0053 | 23.93 ± 5.91 MB | 76.57 ± 18.92 MB | 3318.4 ± 814.3 s |
+| P3 | Sparse synchronisation | float32 | 3 | 0.6479 ± 0.0008 | 22.83 ± 0.00 MB | 35.06 ± 0.00 MB | 3331.4 ± 25.7 s |
+| P4 | Joint adaptive | dynamic | dynamic | 0.6482 ± 0.0014 | 6.07 ± 0.00 MB | 35.06 ± 0.00 MB | 3316.5 ± 10.3 s |
 
 ---
 
@@ -327,6 +343,12 @@ results/<session>/
   │   └── server_log_<session>.csv                # per-round aggregation
   ├── <scenario>_eval_report.csv/.json             # test metrics (source of truth)
   ├── graphics/                                   # paper figures (pdf + png)
+  │   ├── fig2_compression_auprc.pdf/.png
+  │   ├── fig3_efficiency_accuracy.pdf/.png
+  │   ├── fig4_cross_platform.pdf/.png
+  │   ├── fig5_rho_convergence.pdf/.png
+  │   ├── figA_scheduler_timeline.pdf/.png
+  │   └── figB_monthly_performance.pdf/.png
   └── matrix_summary.csv                          # one row per scenario, all key metrics
 ```
 
@@ -357,9 +379,7 @@ Diagrams are authored in [Mermaid](https://mermaid.js.org/) and exported via [me
 | Baoyi Liu     | Related Work & Writing               |
 | Guanghua Liu  | Related Work & Writing               |
 | Jiale Liu     | Introduction & Literature Review     |
-| Mingyuan Shao | Compression & Discussion             |
 | Wenjie Ding   | Methodology, System Design & Results |
 | Yi Sin Lin    | System Design & Implementation       |
-| Zhuolun Li    | Experiments & Conclusion             |
 
 School of Computing, Newcastle University

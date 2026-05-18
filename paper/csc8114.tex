@@ -15,7 +15,7 @@
 \usepackage{tabularx}
 \usepackage{makecell}
 % ---- Title & Authors ----
-\title{Joint Computation and Communication Optimisation in Federated Split Learning for IoT Rainfall Prediction}
+\title{Adaptive Joint Compression and Synchronisation in Federated Split Learning for IoT Rainfall Prediction}
 
 \author{\IEEEauthorblockN{Baoyi Liu, Guanghua Liu, Jiale Liu, Wenjie Ding, Yi Sin Lin}
 \IEEEauthorblockA{School of Computing, Newcastle University, Newcastle upon Tyne, United Kingdom \\
@@ -27,7 +27,7 @@ Email: \{c5016854, c5003419, c5053016, c5053577, c4032640\}@newcastle.ac.uk}}
 
 % ---- Abstract ----
 \begin{abstract}
-  placeholder
+Federated split learning (FSL) enables collaborative training across bandwidth-constrained IoT devices without sharing raw observations, but the repeated exchange of intermediate activations and gradients introduces a communication bottleneck. Existing work typically reduces either activation payload through compression or aggregation overhead through less frequent synchronisation, but rarely controls the two jointly under realistic network conditions. This paper presents an FSL framework for IoT rainfall prediction that jointly regulates activation compression (float32, float16, int8) and the synchronisation interval $\rho$ at runtime through a lightweight server-side scheduler driven by per-client EMA-smoothed latency. The system is evaluated on hourly ERA5 weather data from 11 stations using a 17-scenario simulation matrix spanning three latency profiles and six communication strategies, and is validated on a four-scenario Raspberry Pi deployment over a real wide-area link. AUPRC remains stable across all configurations (0.6381--0.6484 in simulation; within 0.011 on Raspberry Pi), confirming that neither aggressive quantisation nor sparser aggregation degrades predictive quality. The joint adaptive strategy strictly dominates static single-dimension alternatives, achieving an 87\% reduction in activation payload and a 54\% reduction in synchronisation traffic relative to the float32 baseline on Raspberry Pi, while reducing runtime jitter from $\pm$688~s to $\pm$10~s. The results indicate that communication cost in FSL can be reduced by an order of magnitude without sacrificing predictive performance when compression and synchronisation are controlled jointly rather than independently.
 \end{abstract}
 
 % ---- Keywords (optional) ----
@@ -44,35 +44,33 @@ Federated Split Learning, Internet of Things, Rainfall Prediction, Activation Co
 
 \subsection{Background}
 
-Internet of Things (IoT) sensing networks are increasingly used in smart-city infrastructure and environmental monitoring, where distributed sensors continuously collect time-series observations such as rainfall, temperature, and humidity~\cite{GUBBI20131645,6740844}. These geographically distributed data sources provide an important basis for data-driven urban rainfall prediction and environmental decision-making~\cite{CHAN2023100375,10.3389/frwa.2024.1378598}. However, conventional centralised machine learning requires raw sensor data to be frequently transmitted to cloud servers for model training, which raises privacy concerns and introduces substantial communication overhead under bandwidth-constrained and unstable IoT networks~\cite{pmlr-v54-mcmahan17a,2019arXiv191204977K}. Federated learning (FL) and federated split learning (FSL) have therefore emerged as distributed learning paradigms that reduce the need for raw data centralisation by enabling collaborative training across clients and servers~\cite{pmlr-v54-mcmahan17a,thapa2022splitfedfederatedlearningmeets,vepakomma2018splitlearninghealthdistributed}. Nevertheless, FSL introduces a new communication bottleneck because clients repeatedly transmit intermediate activations and receive gradients during training~\cite{vepakomma2018splitlearninghealthdistributed,thapa2022splitfedfederatedlearningmeets}.
+Internet of Things (IoT) sensing networks are widely used in smart-city and environmental monitoring applications, generating large volumes of time-series observations such as rainfall, temperature, and humidity~\cite{GUBBI20131645,6740844} that support data-driven rainfall prediction and environmental decision-making~\cite{CHAN2023100375,10.3389/frwa.2024.1378598}. However, conventional centralised machine learning requires frequent transmission of raw data to cloud servers, leading to privacy concerns and high communication overhead in bandwidth-constrained IoT environments~\cite{pmlr-v54-mcmahan17a,2019arXiv191204977K}. Federated learning (FL) and federated split learning (FSL) have therefore emerged as distributed learning paradigms that enable collaborative training without raw data sharing~\cite{pmlr-v54-mcmahan17a,thapa2022splitfedfederatedlearningmeets,vepakomma2018splitlearninghealthdistributed}. Nevertheless, FSL introduces a communication bottleneck because clients repeatedly transmit intermediate activations and receive gradients during training~\cite{vepakomma2018splitlearninghealthdistributed,thapa2022splitfedfederatedlearningmeets}.
 
 
 \subsection{Motivation and research gap}
 
-Communication overhead in FSL mainly arises from two coupled factors: the size of per-step activation payloads and the frequency of client-server synchronisation. In conventional FL, communication is dominated by periodic model parameter exchange, whereas FSL requires clients to repeatedly transmit intermediate activations and receive gradients during training~\cite{pmlr-v54-mcmahan17a,vepakomma2018splitlearninghealthdistributed,thapa2022splitfedfederatedlearningmeets}. Existing studies have mainly addressed these factors separately. Compression-oriented approaches, such as SplitFedZip and SL-ACC, reduce the transmitted smashed data through learned compression or adaptive channel-wise compression, but they do not jointly regulate the synchronisation interval at runtime~\cite{shiranthika2024splitfedziplearnedcompressiondata,11458714}. More closely related, Zhang et al.~\cite{10791300} study FSL with pruning, quantisation, and aggregation interval control in wireless networks; however, the aggregation interval is statically configured, and the evaluation is conducted in simulation. Therefore, there remains limited empirical evidence on whether activation compression and synchronisation frequency can be jointly adapted per step in a multi-node FSL system under heterogeneous latency conditions.
+Communication overhead in FSL is mainly determined by two coupled factors: the size of activation payloads and the frequency of client–server synchronisation. Reducing payload size through compression lowers bandwidth usage, but may degrade model fidelity. Similarly, reducing synchronisation frequency decreases communication cost, but can negatively affect convergence and prediction performance. These factors introduce an inherent trade-off between communication efficiency and predictive performance.
 
-\subsection{System Overview}
+However, existing approaches typically optimise these factors independently~\cite{shiranthika2024splitfedziplearnedcompressiondata,11458714}, without considering their interaction during training. As a result, there is still limited work that jointly regulates compression and synchronisation to balance this trade-off under realistic, heterogeneous network conditions. In particular, the effectiveness of such joint, adaptive strategies in multi-node FSL systems remains underexplored.
 
-To address this gap, we design and implement an end-to-end 11-node FSL system for IoT time-series prediction. The system is built around a per-step latency-aware adaptive scheduler, where each client reports its observed latency at every forward step. The server applies exponential moving average (EMA) smoothing to the reported latency and jointly determines the next activation compression tier, including float32, float16, and int8, together with the next synchronisation interval $\rho$. This runtime control mechanism does not require manual tuning or static configuration. In this work, latency is introduced through calibrated profiler-based simulation rather than real network deployment.
+
+\subsection{Overview of the Contribution}
+To address this gap, we propose an FSL framework for IoT time-series prediction. The system is designed to explore the trade-off between communication efficiency and model performance under different synchronisation intervals and compression strategies. In addition, we develop an adaptive mechanism that dynamically adjusts these parameters during training, enabling the system to respond to varying network conditions in practical distributed environments.
 
 
 \subsection{Empirical Findings}
 
-Across 17 system-level experimental scenarios, we observe that int8 compression reduces the activation payload from 256~B to 68~B, corresponding to a 73\% per-step bandwidth reduction, while $\rho$=3 synchronisation reduces sync traffic by $\sim$53\% per client. The joint adaptive strategy (H16) achieves the largest combined reduction: 0.55~MB total activation payload and 3.19~MB sync traffic, compared with 4.24~MB and 6.79~MB for the float32 $\rho$=1 baseline. Despite these savings, AUPRC remains stable across all scenarios (0.6381--0.6484), with any degradation from compression consistently below 0.002, confirming that communication efficiency and predictive quality can be jointly optimised.
+Experimental results across multiple system configurations demonstrate that activation compression and reduced synchronisation frequency can significantly lower communication overhead in federated split learning. In particular, more aggressive compression and less frequent synchronisation lead to substantial bandwidth savings. Importantly, these improvements do not compromise predictive performance, with classification metrics remaining stable across all evaluated scenarios. These findings indicate that communication efficiency can be significantly improved without sacrificing predictive performance.
 
 
 \subsection{Contributions}
 The main contributions of this work are summarised as follows:
 \begin{enumerate}
     \item A communication efficient federated split learning framework for rainfall prediction using distributed IoT weather data.
-    \item A joint computation communication optimisation strategy that combines activation compression with tunable synchronisation intervals to reduce payload and server aggregation workload.
-    \item An adaptive scheduling mechanism that dynamically adjusts communication parameters based on runtime network conditions such as latency and bandwidth.
-    \item A systematic experimental evaluation that analyses the trade-off among communication efficiency, system runtime (as a computation proxy), and prediction performance.
+    \item A joint compression--synchronisation optimisation strategy that combines activation compression with tunable synchronisation intervals to reduce payload and server aggregation workload.
+    \item An adaptive scheduling mechanism that dynamically adjusts communication parameters based on runtime network conditions such as latency.
+    \item A systematic experimental evaluation that analyses the trade-off among communication efficiency, end-to-end runtime, and prediction performance.
 \end{enumerate}
-
-\subsection{Paper Organisation}
-The remainder of this paper is organised as follows. Section II reviews related work. Section III presents the proposed system design. Section IV describes the experimental setup. Section V discusses the evaluation results. Finally, Section VI concludes the paper.
-
 
 
 \section{Related Work}
@@ -80,31 +78,32 @@ The remainder of this paper is organised as follows. Section II reviews related 
 This section reviews existing studies related to communication efficient distributed learning systems for IoT environments. Existing research can be broadly categorised into three directions: (1) communication efficient Federated Split Learning, (2) adaptive scheduling and system level optimisation, and (3) machine learning methods for rainfall prediction in resource constrained environments.
 
 \subsection{Communication-efficient Federated Split Learning}
-Communication efficiency is an important topic in distributed machine learning, especially in IoT and edge environments where bandwidth is limited. In traditional federated learning (FL), most communication cost comes from frequent exchange of model parameters or gradients between clients and the server. To reduce this cost, many studies have proposed compression-based methods, such as quantisation, sparsification, and adaptive compression strategies, as shown in \cite{pmlr-v54-mcmahan17a}. These methods work well in standard FL systems and can significantly reduce communication overhead.
+Communication efficiency is an important topic in distributed machine learning, especially in IoT and edge environments where bandwidth is limited.
 
-However, the communication process in Federated Split Learning (FSL) is quite different from FL. Instead of sharing full model updates, clients send intermediate activations (also called smashed data) during the forward pass and receive gradients during the backward pass, as introduced in \cite{vepakomma2018splitlearninghealthdistributed}. When the model becomes deeper, these activation tensors can become very large, which increases communication cost. Because of this difference, many compression methods designed for FL cannot be directly applied to FSL.
+In traditional federated learning (FL), communication mainly comes from repeated exchanges of model updates between clients and the server. FedAvg reduces this overhead by performing multiple local SGD epochs on each client before aggregation, thereby reducing the number of communication rounds~\cite{pmlr-v54-mcmahan17a}.
 
-Recently, some studies have tried to improve communication efficiency in FSL. For example, SL-FAC \cite{lin2026slfaccommunicationefficientsplitlearning} uses frequency decomposition and quantisation to compress activation data. SplitFedZip \cite{shiranthika2024splitfedziplearnedcompressiondata} introduces a learned compression method for SplitFed systems. SL-ACC \cite{lin2025slacccommunicationefficientsplitlearning} further improves this by using adaptive channel-wise compression. These methods show that compressing activations can reduce communication cost in FSL. However, most of these approaches only optimise how data is compressed, while the communication pattern itself remains fixed. Since compression settings are usually determined before training starts, these systems cannot respond well to runtime changes in latency or bandwidth.
+
+However, communication in Federated Split Learning (FSL) differs from traditional FL. Instead of exchanging full model updates, clients transmit intermediate activations, also called smashed data, and receive their gradients during backpropagation~\cite{vepakomma2018splitlearninghealthdistributed,thapa2022splitfedfederatedlearningmeets}. Since the communication cost depends on the cut layer, activation shape, and batch size, FL-oriented compression methods cannot always be directly applied to FSL.
+
+Recent studies have explored communication-efficient compression for SL and SplitFed systems. SplitFedZip introduces learned rate-distortion compression for features and gradients in SplitFed learning~\cite{shiranthika2024splitfedziplearnedcompressiondata}. SL-ACC applies adaptive channel-wise quantisation by estimating channel importance with entropy~\cite{11458714}, while SL-FAC uses frequency decomposition and frequency-based quantisation to preserve important spectral components~\cite{lin2026slfaccommunicationefficientsplitlearning}. These methods show that smashed-data compression can reduce communication overhead, but they mainly focus on compression itself rather than jointly controlling compression and synchronisation frequency during runtime.
 
 \subsection{Adaptive Scheduling and System Level Optimisation}
-In addition to compression and architectural design, another important research direction focuses on adaptive scheduling and system-level optimisation in distributed learning. These approaches aim to improve overall system performance by considering factors such as device capability, network latency, and resource availability during training \cite{liang2025communicationandcomputationefficientsplitfederated}, \cite{li2026splitcomcommunicationefficientsplitfederated}.
 
-Computation-oriented optimisation methods mainly try to reduce the workload on resource-limited client devices. Common techniques include model pruning, adaptive layer reduction, and lightweight network design, which are widely used in edge learning scenarios. For example, adaptive pruning methods can adjust model complexity based on device capability, helping to reduce computation cost \cite{liang2025communicationandcomputationefficientsplitfederated}. Lightweight models are also designed to balance accuracy and efficiency, especially in time-series tasks such as rainfall prediction.
+In addition to activation compression, another important direction is system-level communication control in SFL. Some studies reduce overall training cost by jointly considering model partitioning, communication resources, and computation resources. For example, Liang et al.~\cite{2026ITWC...25.1981L} propose a joint cutting-point selection, communication allocation, and computation allocation strategy to balance convergence, latency, privacy, and resource constraints. However, this line of work mainly focuses on resource management and split-point optimisation, while the frequent exchange of smashed activations and gradients can still dominate training cost when activations are high-dimensional.
 
-However, these methods mainly focus on reducing computation cost rather than communication overhead. Even when models are smaller, clients still need to communicate frequently with the server, which can lead to high overall communication cost in distributed systems \cite{pmlr-v54-mcmahan17a}, \cite{li2026splitcomcommunicationefficientsplitfederated}. In real IoT environments, problems such as network latency, unstable bandwidth, and device heterogeneity can further slow down training and reduce system reliability \cite{vepakomma2018splitlearninghealthdistributed}, \cite{liang2025communicationandcomputationefficientsplitfederated}.
+Another related direction is dynamic activation transmission control. SplitCom~\cite{li2026splitcomcommunicationefficientsplitfederated} exploits temporal redundancy in activations during split federated fine-tuning of LLMs and uses adaptive threshold control to decide whether new activations should be uploaded or reused from cache. This reduces activation transmission frequency, but it focuses on LLM fine-tuning rather than multi-node IoT time-series learning, and does not jointly adapt compression level and synchronisation interval.
 
-More recent studies have started to consider adaptive communication strategies. Zhang et al. \cite{liang2025communicationandcomputationefficientsplitfederated} jointly study gradient quantisation, model pruning, and aggregation interval, and provide theoretical analysis of convergence behaviour. Their results show that a small aggregation interval can improve model performance due to a regularisation effect. However, the aggregation interval is fixed during training and does not adapt to changing system conditions. In addition, their evaluation is mainly based on simulation rather than real IoT deployment.
+Zhang et al.~\cite{10791300} propose a lightweight FedSL scheme with client-side model pruning, gradient quantisation, activation dropout, and periodic aggregation. They derive a convergence upper bound characterising the joint effect of pruning rate, quantisation precision, aggregation interval, and split-layer selection. Their results show that more frequent aggregation (smaller $I$) improves convergence, as pruning and quantisation act as implicit regularisers whose effect is best realised at $I=1$. However, the aggregation interval is fixed before training and does not adapt to runtime system conditions, and their evaluation is mainly simulation-based.
 
-Another related work, SplitCom \cite{li2026splitcomcommunicationefficientsplitfederated}, reduces communication cost by exploiting temporal redundancy in activations and applying adaptive threshold-based control to decide when activations should be transmitted. While this method introduces dynamic control over communication frequency, it is designed for large model training scenarios and does not focus on multi-node IoT systems. It also does not jointly optimise compression level and synchronisation behaviour.
-Overall, existing methods either focus on computation optimisation or adjust only a single communication factor. There is still a lack of approaches that provide joint, runtime control of both compression and synchronisation mechanisms in practical FSL systems.
+Overall, existing studies either optimise resource allocation, reduce activation transmission frequency, or analyse fixed aggregation intervals. There is still limited work on joint runtime control of both activation compression and synchronisation interval in practical multi-node IoT FSL systems.
+
 \subsection{Machine Learning for Rainfall Prediction in IoT Environments}
-Machine learning has been widely used for rainfall prediction and environmental sensing, especially with the growing availability of IoT sensor data \cite{saeed2021rainfall}. Lightweight forecasting models are often used to balance accuracy and efficiency in resource-limited environments. These methods show that machine learning can provide useful prediction results for real-time monitoring systems. 
 
-However, rainfall prediction remains challenging due to class imbalance, temporal variation, and the difficulty of predicting extreme weather events. Many existing studies mainly focus on improving model accuracy, while paying less attention to real-world deployment constraints, such as communication cost, device heterogeneity, and distributed training conditions. In practical IoT systems, limited bandwidth and unstable network connections make system efficiency as important as prediction performance \cite{pmlr-v54-mcmahan17a}, \cite{liang2025communicationandcomputationefficientsplitfederated}.
+Machine learning has been widely used for rainfall prediction and environmental sensing, especially with the growing availability of IoT sensor data~\cite{saeed2021rainfall}. These methods show that data-driven models can provide useful prediction results for environmental monitoring systems.
 
-More importantly, although communication-efficient learning methods and rainfall prediction models have been studied separately, there is limited work that evaluates these techniques together in real IoT sensing scenarios. In particular, the effectiveness of joint communication control strategies has not been fully validated for rainfall prediction under realistic network conditions.
+However, rainfall prediction remains challenging due to class imbalance, temporal variation, and the difficulty of predicting extreme weather events. Many existing studies mainly focus on improving prediction accuracy, while paying less attention to deployment constraints such as communication cost, device heterogeneity, and distributed training conditions. In practical IoT systems, limited bandwidth and unstable network connections make system efficiency as important as prediction performance.
 
-To address this gap, we propose a communication-efficient Federated Split Learning (FSL) system designed for real-world IoT weather sensing. Unlike existing approaches that treat compression and synchronisation separately, our method combines activation compression with adjustable synchronisation control and latency-aware adaptation. Using Open-Meteo data collected from sensors around Newcastle upon Tyne, we show that joint spatio-temporal communication control can improve both system efficiency and deployment practicality under heterogeneous and unstable network conditions.
+Communication-efficient FSL and IoT rainfall prediction have so far been studied largely in isolation; this work addresses that gap by evaluating joint communication control strategies in an FSL framework applied to IoT rainfall prediction.
  
 \section{Methodology}
 \label{sec:Methodology}
@@ -112,7 +111,7 @@ To address this gap, we propose a communication-efficient Federated Split Learni
 \subsection{System Overview}
 \label{subsec:overview}
 
-The proposed FSL system comprises 11 edge clients and a central server communicating exclusively over gRPC. Four RPCs define the complete training lifecycle. Upon startup, each client issues a \textit{Register} call to obtain a unique identifier. Training then proceeds through two nested loops. In the inner loop, each forward step is driven by the \textit{Forward} RPC: the client transmits a compressed smashed activation together with the measured per-step latency to the server, which computes the prediction loss, performs the backward pass on the server head, and returns the cut-layer gradient together with scheduler directives for the next step. After every $\rho$ local steps, the outer loop fires via the \textit{Synchronize} RPC, which executes a FedAvg barrier aggregation across all participating clients and distributes the updated global weights. Upon completion, each client issues a \textit{NotifyCompletion} call to signal termination.
+The proposed FSL system comprises 11 edge clients and a central server communicating exclusively over gRPC. Four RPCs define the complete training lifecycle. Upon startup, each client issues a \textit{Register} call to obtain a unique identifier. Training then proceeds through two nested loops. In the inner loop, each forward step is driven by the \textit{Forward} RPC: the client transmits a compressed smashed activation together with the measured per-step latency to the server, which computes the prediction loss, performs the backward pass on the server head, and returns the cut-layer gradient together with scheduler directives for the next step. After every $\rho$ local steps, the outer loop fires via the \textit{Synchronize} RPC, which executes FedAvg aggregation across all participating clients and distributes the updated global weights. Upon completion, each client issues a \textit{NotifyCompletion} call to signal termination.
 
 A key architectural principle governs this design: all communication control logic resides exclusively on the server. Clients perform local forward and backward computation and report per-step latency measurements, but make no scheduling decisions. The adaptive scheduler on the server observes EMA-smoothed latency signals from all clients and embeds its directives---compression mode and updated $\rho$---directly in the \textit{Forward} RPC response. This server-centric model simplifies client implementation, avoids inter-client coordination overhead, and ensures that policy changes propagate consistently to all participants within a single communication round.
 
@@ -148,7 +147,12 @@ At the end of each local epoch, the client evaluates the condition
     (e + 1)\;\bmod\;\rho_{\text{current}} = 0,
     \label{eq:sync_trigger}
 \end{equation}
-where $e$ is the zero-indexed epoch counter. If the condition is satisfied, the client issues a \textit{Synchronize} RPC to initiate a FedAvg aggregation round. The server maintains a barrier and waits until all participating clients have submitted their local encoder weights. Aggregation follows standard FedAvg weighted by each client's number of completed local epochs, after which the server broadcasts the updated global weights and clients resume training. The two scheduler outputs are applied at different granularities. The compression mode takes effect immediately at the next forward step, while the updated $\rho$ only affects the synchronisation check at the next epoch boundary. If $\rho$ changes mid-epoch, the current epoch's synchronisation decision has already been fixed by the previous value, and the new interval takes effect from the following epoch onward. This asymmetry reflects the actual system behaviour: step-level communication can absorb immediate mode changes without coordination, whereas altering the aggregation schedule mid-epoch would disrupt the barrier consistency guarantee.
+where $e$ is the zero-indexed epoch counter. If the condition is satisfied, the client issues a \textit{Synchronize} RPC to initiate a FedAvg aggregation round. The server maintains a barrier and waits until a quorum of participating clients has submitted local encoder weights within a fixed timeout window. Aggregation follows local-epoch-weighted FedAvg, after which the server broadcasts the updated global weights and clients resume training. When $\rho$ is held constant across clients, all submissions arrive in the same server round and the protocol reduces to a strictly synchronous barrier. Once the scheduler enables joint adaptation, however, different clients may operate under different $\rho$ values simultaneously, so submissions can reference an earlier server round. To accommodate this, the server admits updates whose base round lags the current round by at most $S_{\max}$ rounds and weights each accepted update by
+\begin{equation}
+    w_i = \frac{e_i}{1 + s_i},
+    \label{eq:fedavg_weight}
+\end{equation}
+where $e_i$ is the client's number of completed local epochs and $s_i$ is its staleness; updates exceeding $S_{\max}$ are rejected. With $S_{\max}=0$ this reduces to standard local-epoch-weighted FedAvg, while $S_{\max}=3$ is used for adaptive scenarios to absorb up to three rounds of $\rho$-induced drift. The two scheduler outputs are applied at different granularities: the compression mode takes effect immediately at the next forward step, while the updated $\rho$ only affects the synchronisation check at the next epoch boundary. If $\rho$ changes mid-epoch, the current epoch's synchronisation decision has already been fixed by the previous value, and the new interval takes effect from the following epoch onward. This asymmetry reflects the actual system behaviour: step-level communication can absorb immediate mode changes without coordination, whereas altering the aggregation schedule mid-epoch would disrupt the barrier consistency guarantee.
 
 \subsection{Adaptive Scheduler}
 \label{subsec:scheduler}
@@ -256,11 +260,11 @@ Test       & 2025-01-01 to 2026-03-31 & 10,920 & 11.1\% \\
 \subsection{System Configuration}
 \label{subsec:system_configuration}
 
-All scenarios use the same model architecture and training hyperparameters so that performance differences can be attributed mainly to communication strategies. The model is trained for up to 50 federated rounds, and early stopping is applied with a patience of 15 rounds.
+All scenarios use the same model architecture and training hyperparameters so that performance differences can be attributed mainly to communication strategies. The model is trained for up to 50 federated rounds, with 10 local optimisation steps per client between consecutive synchronisation checks, and early stopping is applied with a patience of 15 rounds.
 
-The joint objective combines focal loss for rainfall occurrence classification and MSE loss for rainfall amount regression. The classification loss uses focal gamma $\gamma=2.0$, with focal alpha disabled. The classification and regression losses are weighted by 2.0 and 1.0, respectively. Training samples are rebalanced with \texttt{rain\_sample\_ratio} $=0.45$ to mitigate class imbalance.
+The joint objective combines focal loss for rainfall occurrence classification and MSE loss for rainfall amount regression. The classification loss uses focal $\gamma=2.0$ and disables the focal $\alpha$ re-weighting term. The classification and regression losses are weighted by 2.0 and 1.0, respectively. To mitigate the class imbalance, training samples are rebalanced so that 45\% of each batch corresponds to rainfall-positive instances.
 
-The system contains 11 clients, and \texttt{min\_clients\_per\_round} is set to 11. Therefore, aggregation only occurs after all clients have submitted their updates.
+The system contains 11 clients, and a quorum of all 11 is required per aggregation round. Therefore, aggregation only occurs after all clients have submitted their updates within the server-side barrier window (20~s timeout with a 1~s grace period for stragglers).
 
 \begin{table}[H]
 \centering
@@ -271,55 +275,57 @@ The system contains 11 clients, and \texttt{min\_clients\_per\_round} is set to 
 \toprule
 \textbf{Parameter} & \textbf{Value} \\
 \midrule
-\texttt{seq\_len}               & 48 \\
-\texttt{input\_size}            & 5 \\
-\texttt{hidden\_size}           & 64 \\
-\texttt{num\_rounds}            & 50 \\
-\texttt{local\_steps}           & 10 \\
-Learning rate                   & 0.0005 \\
-\texttt{target\_transform}      & \texttt{log1p} \\
-Rain threshold                  & 0.5 mm \\
-Rain probability threshold      & 0.5 \\
-\texttt{rain\_sample\_ratio}    & 0.45 \\
-Focal gamma                     & 2.0 \\
-Focal alpha                     & Disabled \\
-Early stopping patience         & 15 \\
-Number of clients               & 11 \\
+Input sequence length            & 48 hours \\
+Number of input features         & 5 \\
+LSTM hidden size                 & 64 \\
+Number of federated rounds       & 50 \\
+Local optimisation steps         & 10 \\
+Learning rate                    & 0.0005 \\
+Regression target transform      & $\log(1+x)$ \\
+Rain threshold                   & 0.5 mm \\
+Rain probability threshold       & 0.5 \\
+Rainfall-positive batch ratio    & 0.45 \\
+Focal loss $\gamma$              & 2.0 \\
+Focal loss $\alpha$              & Disabled \\
+Early stopping patience          & 15 rounds \\
+Number of clients                & 11 \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Network latency is emulated using a calibrated per-client latency profiler with heterogeneous client offsets and Gaussian jitter. The latency profiles are designed to represent controlled deployment conditions rather than real network measurements. No-latency scenarios disable the profiler. Low-latency scenarios represent MEC-style links, while high-latency scenarios represent wide-area IoT links. Raspberry Pi experiments do not use the profiler; they use real communication latency between the Raspberry Pi clients and the cloud server.
+For simulation scenarios, network latency is emulated using a calibrated per-client profiler that adds a deterministic per-client offset and Gaussian jitter on top of a configurable base latency. The latency profiles are designed to represent controlled deployment conditions rather than real network measurements; their nominal ranges are calibrated against the MEC survey of Mao et al.~\cite{8016573}, in which WiFi/LAN edge links operate near 0~ms, 4G cellular MEC links near 8~ms, and NB-IoT or wide-area IoT links near 50~ms. The no-latency profile disables the profiler entirely. The low-latency profile sets a base of 8~ms with per-client offsets of $\{0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0\}$~ms and a jitter standard deviation of 1~ms. The high-latency profile sets a base of 50~ms with per-client offsets of $\{0, 2, 4, 6, 8, 12, 15, 18, 22, 26, 30\}$~ms and a jitter standard deviation of 5~ms. The mixed-latency profile assigns 4 clients to 0~ms, 4 clients to 8~ms, and 3 clients to 50~ms simultaneously, with a jitter standard deviation of 2~ms. The Raspberry Pi deployment disables the profiler and relies on actual round-trip delay between Pi clients and the cloud server.
 
-The adaptive scheduler uses EMA-smoothed client-reported latency with \texttt{latency\_ema\_alpha} $=0.2$. The first latency threshold is 4 ms and the int8 latency threshold is 10 ms. Latency between 4 ms and 10 ms triggers float16 compression. Latency above 10 ms triggers int8 compression. The scheduler can also adjust $\rho$ between \texttt{min\_rho} $=1$ and \texttt{max\_rho} $=20$ with \texttt{rho\_step} $=1$.
+The adaptive scheduler uses EMA-smoothed client-reported latency with smoothing factor $\alpha = 0.2$. The float16 threshold is 4~ms and the int8 threshold is 10~ms: smoothed latency below 4~ms keeps float32, between 4~ms and 10~ms selects float16, and at or above 10~ms selects int8. The synchronisation interval $\rho$ is clipped to the range $[1, 20]$ with a step size of 1. Aggregation is strictly synchronous for static-strategy scenarios; for joint-adaptive scenarios where $\rho$ can diverge across clients, the server permits updates up to three rounds stale and discounts them by $1/(1 + s)$ during aggregation, where $s$ is the staleness of the submitting client.
 
 \begin{table}[H]
 \centering
-\caption{Compression modes and scheduler configuration.}
+\caption{Adaptive scheduler configuration.}
 \label{tab:compression_scheduler_config}
 \small
 \begin{tabularx}{\columnwidth}{Xc}
 \toprule
-\textbf{Item} & \textbf{Value} \\
+\textbf{Parameter} & \textbf{Value} \\
 \midrule
-Float32 payload          & 256 B \\
-Float16 payload          & 128 B \\
-Int8 payload             & 68 B \\
-Latency threshold        & 4 ms \\
-Int8 latency threshold   & 10 ms \\
-EMA alpha                & 0.2 \\
-$\rho$ range             & 1 to 20 \\
-$\rho$ step              & 1 \\
+EMA smoothing factor $\alpha$           & 0.2 \\
+Float16 latency threshold               & 4~ms \\
+Int8 latency threshold                  & 10~ms \\
+$\rho$ range                            & $[1, 20]$ \\
+$\rho$ step size                        & 1 \\
+Max staleness (static / joint adaptive) & 0 / 3 \\
+Barrier timeout                         & 20~s \\
+Straggler grace period                  & 1~s \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+The simulation experiments are conducted on a single Hetzner CPX52 cloud instance running Ubuntu 24.04.4 LTS, equipped with a 12-vCPU AMD EPYC-Genoa processor at 2.0~GHz and 22~GiB of RAM, where all clients and the server execute as separate processes on the same host. The Raspberry Pi deployment uses 11 Raspberry Pi 4B (4~GB RAM) devices as clients connected to a separate cloud server with 4~vCPUs and 8~GiB of RAM over a real wide-area link. All processes run on CPU only, communicating through gRPC.
 
 \subsection{Experiment Design}
 \label{subsec:experiment_design}
 
 The experimental design contains two parts: a simulation matrix and a Raspberry Pi deployment matrix. The simulation matrix is used for controlled ablation because latency can be injected by the profiler. This allows us to isolate the effects of compression and synchronisation under matched latency profiles. The Raspberry Pi matrix is used to verify whether the same communication ideas remain feasible on physical edge devices and to observe system behaviour under a real network environment, where latency is produced by actual communication between Raspberry Pi clients and the cloud server rather than by profiler injection.
 
-The native simulation matrix is organised along two axes: latency profile and communication strategy. The latency axis contains no latency, low latency, and high latency. The strategy axis contains static compression, static synchronisation interval control, adaptive compression, and joint adaptive control. This design allows compression and synchronisation effects to be isolated while keeping the latency profile matched.
+The simulation matrix is organised along two axes: latency profile and communication strategy. The latency axis contains no latency, low latency, and high latency. The strategy axis contains static compression, static synchronisation interval control, adaptive compression, and joint adaptive control. This design allows compression and synchronisation effects to be isolated while keeping the latency profile matched.
 
 \begin{table}[H]
 \centering
@@ -344,7 +350,7 @@ S5 & Auto    & Dynamic & On, compression + $\rho$ \\
 
 \begin{table}[H]
 \centering
-\caption{Native simulation scenario matrix.}
+\caption{Simulation scenario matrix.}
 \label{tab:native_simulation_matrix}
 \resizebox{\columnwidth}{!}{%
 \small
@@ -355,7 +361,7 @@ S5 & Auto    & Dynamic & On, compression + $\rho$ \\
 S0: float32 baseline      & N01 & L05 & H11 & --  \\
 S1: float16               & N02 & L06 & H12 & --  \\
 S2: int8                  & N03 & L07 & H13 & --  \\
-S3: $\rho=3$              & N04 & L08 & H14 & --  \\
+S3: $\rho{=}3$              & N04 & L08 & H14 & --  \\
 S4: adaptive compression  & --  & L09 & H15 & --  \\
 S5: joint adaptive        & --  & L10 & H16 & M17 \\
 \bottomrule
@@ -363,11 +369,11 @@ S5: joint adaptive        & --  & L10 & H16 & M17 \\
 }
 \end{table}
 
-The simulation follows three design principles. First, strategies are compared under the same latency profile wherever possible. This prevents latency effects from being mixed with compression or synchronisation effects. Second, no-latency scenarios provide clean ablation tests for float16 compression, int8 compression, and $\rho=3$. Third, low- and high-latency scenarios test whether the same strategies remain effective when communication delay is injected by the profiler. An additional scenario, M17, applies the joint adaptive strategy (S5) to a mixed latency profile in which 4 clients experience no latency, 4 clients experience $\sim$8~ms latency, and 3 clients experience $\sim$50~ms latency simultaneously. This profile represents a more realistic heterogeneous IoT deployment where devices on the same network operate under different link conditions, and tests whether the adaptive scheduler can respond appropriately when clients within the same round report widely divergent latencies.
+The simulation follows three design principles. First, strategies are compared under the same latency profile wherever possible. This prevents latency effects from being mixed with compression or synchronisation effects. Second, no-latency scenarios provide clean ablation tests for float16 compression, int8 compression, and $\rho{=}3$. Third, low- and high-latency scenarios test whether the same strategies remain effective when communication delay is injected by the profiler. An additional scenario, M17, applies the joint adaptive strategy (S5) to a mixed latency profile in which 4 clients experience no latency, 4 clients experience $\sim$8~ms latency, and 3 clients experience $\sim$50~ms latency simultaneously. This profile represents a more realistic heterogeneous IoT deployment where devices on the same network operate under different link conditions, and tests whether the adaptive scheduler can respond appropriately when clients within the same round report widely divergent latencies.
 
-The Raspberry Pi deployment uses the same FSL software stack but runs clients on physical Raspberry Pi devices and the server on a cloud VPS. Unlike the simulation, no latency profiler is used. The measured baseline round-trip time between clients and the server is approximately 21--24 ms, so the scheduler thresholds of 4 ms and 10 ms are selected to avoid reacting to normal baseline delay while still responding to real network degradation.
+The Raspberry Pi deployment uses the same FSL software stack but runs clients on physical Raspberry Pi devices and the server on a cloud VPS. Unlike the simulation, no latency profiler is used; the measured baseline round-trip time between clients and the server is approximately 21--24~ms. The scheduler thresholds of 4~ms and 10~ms are intentionally kept identical to the simulation rather than re-tuned for this baseline. Because the measured RTT consistently exceeds 10~ms, this configuration places the Pi deployment in the most aggressive operating point of the adaptive policy (int8 compression with $\rho{=}3$) for the entirety of training. The intention is to stress-test the upper bound of the scheduler: if the most aggressive scheduled state does not degrade predictive quality under real wide-area conditions, intermediate scheduler states observed in simulation are by extension safe to deploy.
 
-Each scenario is repeated with three random seeds: 42, 52, and 62. The main simulation matrix contains 17 scenarios, while the Raspberry Pi matrix contains four representative scenarios. The Pi scenarios correspond to the main strategy groups: P1 maps to the float32 baseline, P2 maps to float16 compression, P3 maps to fixed $\rho=3$ synchronisation control, and P4 maps to adaptive joint control.
+Each scenario is repeated with three random seeds: 42, 52, and 62. The main simulation matrix contains 17 scenarios, while the Raspberry Pi matrix contains four representative scenarios. The Pi scenarios correspond to the main strategy groups: P1 maps to the float32 baseline, P2 maps to float16 compression, P3 maps to fixed $\rho{=}3$ synchronisation control, and P4 maps to adaptive joint control.
 
 \begin{table}[H]
 \centering
@@ -393,17 +399,17 @@ P4 & Dynamic  & Dynamic & On, compression + $\rho$  & S5 joint adaptive \\
 
 We report metrics across three dimensions: prediction quality, communication efficiency, and system efficiency. This design reflects the goal of the experiment: to analyse the trade-off between predictive performance and system-level efficiency under different communication strategies.
 
-For prediction quality, the primary classification metric is AUPRC. AUPRC is threshold-free and is more suitable than a single-threshold F1 score when comparing scenarios where different compression modes may shift the model output distribution. We also report ROC-AUC as a secondary threshold-free classification metric. F1 score and accuracy are reported using the configured probability threshold of 0.5. For the regression task, we report mean squared error (MSE) and mean absolute error (MAE) after inverse transforming the log-transformed rainfall prediction.
+For prediction quality, the primary classification metric is AUPRC. AUPRC is threshold-free and is more suitable than a single-threshold F1 score when comparing scenarios where different compression modes may shift the model output distribution. We also report ROC-AUC as a secondary threshold-free metric, and F1 score and accuracy at the configured probability threshold of 0.5 for completeness. The rainfall-amount regression head is trained jointly to focus supervision on rare positive samples (Section~\ref{subsec:model}), but its predictions are not the target of the evaluation and regression error is therefore not reported.
 
-For communication efficiency, we measure the total activation payload transmitted across all clients and the synchronisation traffic sent from clients to the server. The activation payload captures the communication cost of smashed activations during split learning, while synchronisation traffic captures the cost of periodic FedAvg updates. We also report effective data throughput where available, which describes the bandwidth demand under each communication strategy.
+All F1 and accuracy values are computed at a single fixed probability threshold of 0.5, applied uniformly across every scenario and seed. We deliberately avoid per-scenario threshold tuning because different compression modes shift the server-head output distribution: applying a per-scenario optimal threshold would entangle the effect of the communication strategy with the effect of threshold optimisation. A common operating point gives a stricter, fairer cross-scenario comparison, at the cost of additional F1 variability under distribution shift. For this reason, threshold-free metrics (AUPRC and ROC-AUC) are treated as the primary indicators of predictive quality throughout this work.
 
-For system efficiency, we report training throughput and total runtime. Training throughput measures the number of samples processed per second, while total runtime measures the end-to-end duration of each experiment. We also report the average per-step round-trip latency between clients and the server. For Raspberry Pi deployment, CPU utilisation and peak memory usage are recorded on each device to assess whether the system remains feasible on constrained edge hardware.
+For communication efficiency, we measure the total activation payload transmitted across all clients and the synchronisation traffic sent from clients to the server. The activation payload captures the communication cost of smashed activations during split learning, while synchronisation traffic captures the cost of periodic FedAvg updates. We also report effective data throughput, which describes the per-client bandwidth demand under each communication strategy.
 
-Overall, the evaluation does not assume that communication optimisation always preserves predictive quality. Instead, AUPRC, F1 score, regression error, communication traffic, latency, throughput, runtime, CPU usage, and memory usage are interpreted together to analyse the accuracy--efficiency trade-off in federated split learning.
+For system efficiency, we report training throughput and total runtime. Training throughput measures the number of samples processed per second, while total runtime measures the end-to-end duration of each experiment. We also report the average per-step round-trip latency between clients and the server. For the Raspberry Pi deployment, CPU utilisation and peak memory usage are additionally recorded on each device to assess whether the system remains feasible on constrained edge hardware.
 
 \begin{table}[H]
 \centering
-\caption{Evaluation metrics and aggregation.}
+\caption{Evaluation metrics summarised by dimension.}
 \label{tab:evaluation_metrics}
 \resizebox{\columnwidth}{!}{%
 \small
@@ -411,18 +417,17 @@ Overall, the evaluation does not assume that communication optimisation always p
 \toprule
 \textbf{Dimension} & \textbf{Metric} & \textbf{Purpose} \\
 \midrule
-Prediction quality        & AUPRC                          & Primary threshold-free classification metric \\
-Prediction quality        & ROC-AUC                        & Secondary classification metric \\
-Prediction quality        & F1 / Accuracy                  & Threshold-dependent binary prediction quality \\
-Prediction quality        & MSE / MAE                      & Rainfall amount regression error \\
-Communication efficiency  & \texttt{total\_payload\_mb}    & Aggregate activation traffic \\
-Communication efficiency  & \texttt{sync\_bytes\_sent\_mb} & Synchronisation traffic \\
-Communication efficiency  & \texttt{data\_throughput\_kbps}& Effective bandwidth demand \\
-System efficiency         & \texttt{throughput\_sps}       & Training samples processed per second \\
-System efficiency         & \texttt{runtime\_s}            & Total training time \\
-System efficiency         & \texttt{latency\_ms}           & Per-step round-trip delay \\
-Hardware feasibility      & \texttt{mem\_peak\_mb}         & Peak edge-device memory usage \\
-Hardware feasibility      & \texttt{cpu\_percent}          & Edge-device CPU utilisation \\
+Prediction quality        & AUPRC                 & Primary threshold-free classification metric \\
+Prediction quality        & ROC-AUC               & Secondary threshold-free metric \\
+Prediction quality        & F1 / Accuracy         & Threshold-dependent binary prediction quality \\
+Communication efficiency  & Total activation payload (MB) & Aggregate smashed-activation traffic \\
+Communication efficiency  & Synchronisation traffic (MB)  & FedAvg weight-exchange volume \\
+Communication efficiency  & Data throughput (kbps)        & Effective per-client bandwidth demand \\
+System efficiency         & Training throughput (SPS)     & Samples processed per second \\
+System efficiency         & Runtime (s)                   & Total end-to-end training time \\
+System efficiency         & Latency (ms)                  & Per-step round-trip delay \\
+Hardware feasibility      & Peak memory (MB)              & Edge-device peak memory usage \\
+Hardware feasibility      & CPU utilisation (\%)          & Edge-device CPU utilisation \\
 \bottomrule
 \end{tabular}%
 }
@@ -440,7 +445,7 @@ The simulation matrix evaluates 17 scenarios across three injected latency profi
 \subsubsection{Prediction Quality}
 \label{subsubsec:sim_pred}
 
-AUPRC is stable across all 17 scenarios (0.6381--0.6484), confirming that neither compression mode nor synchronisation interval degrades predictive quality. The entire spread (0.010) is narrower than the seed-level standard deviation of several individual scenarios (e.g., N02: $\pm$0.011), so no strategy is statistically superior in AUPRC; the primary finding is robustness, not a ranking. $\rho$=3 scenarios (N04, L08, H14) show numerically higher AUPRC values, likely because less frequent global aggregation reduces interference with local gradient descent, allowing each client to reach a more stable local minimum before synchronisation. Joint adaptive scenarios (L10, H16) match their $\rho$=3 counterparts within seed variance while additionally reducing activation payload. F1 scores show greater variability (0.5293--0.6368), reflecting threshold sensitivity under class imbalance; L09 achieves the highest F1 (0.6358) in the low-latency group and H12 the highest (0.6308) in the high-latency group. Figure~\ref{fig:compression_auprc} confirms that compression mode has negligible impact on AUPRC: float16 and int8 remain within the float32 baseline across all latency conditions.
+AUPRC is stable across all 17 scenarios (0.6381--0.6484), confirming that neither compression mode nor synchronisation interval degrades predictive quality. The entire spread (0.010) is narrower than the seed-level standard deviation of several individual scenarios (e.g., N02: $\pm$0.011), so no strategy is statistically superior in AUPRC; the primary finding is robustness, not a ranking. $\rho{=}3$ scenarios (N04, L08, H14) show numerically higher AUPRC values, likely because less frequent global aggregation reduces interference with local gradient descent, allowing each client to reach a more stable local minimum before synchronisation. Joint adaptive scenarios (L10, H16) match their $\rho{=}3$ counterparts within seed variance while additionally reducing activation payload. F1 scores show greater variability (0.5293--0.6368), reflecting threshold sensitivity under class imbalance; L09 achieves the highest F1 (0.6358) in the low-latency group and H12 the highest (0.6308) in the high-latency group. Figure~\ref{fig:compression_auprc} confirms that compression mode has negligible impact on AUPRC: float16 and int8 remain within the float32 baseline across all latency conditions.
 
 \begin{table*}[ht]
 \centering
@@ -449,29 +454,29 @@ AUPRC is stable across all 17 scenarios (0.6381--0.6484), confirming that neithe
 \small
 \begin{tabularx}{\linewidth}{lXcccrrr}
 \toprule
-& & \multicolumn{3}{c}{\textbf{Prediction Quality}} & \multicolumn{3}{c}{\textbf{Communication Cost}} \\
+    & & \multicolumn{3}{c}{\textbf{Prediction Quality}} & \multicolumn{3}{c}{\textbf{Communication Cost}} \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}
 \textbf{Scenario} & \textbf{Strategy} & \textbf{AUPRC} & \textbf{ROC-AUC} & \textbf{F1} & \makecell[r]{\textbf{Payload}\\\textbf{(B/step)}} & \makecell[r]{\textbf{Total}\\\textbf{(MB)}} & \makecell[r]{\textbf{Sync}\\\textbf{(MB)}} \\
 \midrule
 \multicolumn{8}{l}{\textit{No latency}} \\
-N01 & float32, $\rho$=1 (baseline)   & 0.6396 $\pm$ 0.0032 & 0.7101 & 0.6023 & 256.0 & 4.21 & 6.74 \\
-N02 & float16, $\rho$=1              & 0.6384 $\pm$ 0.0106 & 0.7098 & 0.6052 & 128.0 & 2.19 & 7.02 \\
-\textbf{N03} & \textbf{int8, $\rho$=1} & 0.6395 $\pm$ 0.0078 & 0.7104 & 0.5688 & \textbf{68.0} & \textbf{1.15} & 6.95 \\
-\textbf{N04} & \textbf{float32, $\rho$=3} & \textbf{0.6473} $\pm$ 0.0001 & \textbf{0.7166} & 0.6075 & 256.0 & 2.08 & \textbf{3.19} \\
+N01 & float32, $\rho{=}1$ (baseline)   & 0.6396 $\pm$ 0.0032 & 0.7101 & 0.6023 & 256.0 & 4.21 & 6.74 \\
+N02 & float16, $\rho{=}1$              & 0.6384 $\pm$ 0.0106 & 0.7098 & 0.6052 & 128.0 & 2.19 & 7.02 \\
+\textbf{N03} & \textbf{int8, $\rho{=}1$} & 0.6395 $\pm$ 0.0078 & 0.7104 & 0.5688 & \textbf{68.0} & \textbf{1.15} & 6.95 \\
+\textbf{N04} & \textbf{float32, $\rho{=}3$} & \textbf{0.6473} $\pm$ 0.0001 & \textbf{0.7166} & 0.6075 & 256.0 & 2.08 & \textbf{3.19} \\
 \midrule
 \multicolumn{8}{l}{\textit{Low latency ($\sim$8 ms)}} \\
-L05 & float32, $\rho$=1 (baseline)   & 0.6409 $\pm$ 0.0070 & 0.7124 & 0.5293 & 256.0 & 4.49 & 7.19 \\
-L06 & float16, $\rho$=1              & 0.6431 $\pm$ 0.0083 & 0.7155 & 0.5831 & 128.0 & 2.16 & 6.92 \\
-L07 & int8, $\rho$=1                 & 0.6422 $\pm$ 0.0061 & 0.7137 & 0.6129 &  68.0 & 1.15 & 6.90 \\
-L08 & float32, $\rho$=3              & 0.6479 $\pm$ 0.0004 & 0.7191 & 0.6185 & 256.0 & 2.08 & 3.19 \\
+L05 & float32, $\rho{=}1$ (baseline)   & 0.6409 $\pm$ 0.0070 & 0.7124 & 0.5293 & 256.0 & 4.49 & 7.19 \\
+L06 & float16, $\rho{=}1$              & 0.6431 $\pm$ 0.0083 & 0.7155 & 0.5831 & 128.0 & 2.16 & 6.92 \\
+L07 & int8, $\rho{=}1$                 & 0.6422 $\pm$ 0.0061 & 0.7137 & 0.6129 &  68.0 & 1.15 & 6.90 \\
+L08 & float32, $\rho{=}3$              & 0.6479 $\pm$ 0.0004 & 0.7191 & 0.6185 & 256.0 & 2.08 & 3.19 \\
 L09 & adaptive compression           & 0.6415 $\pm$ 0.0060 & 0.7131 & \textbf{0.6358} &  92.5 & 1.55 & 6.86 \\
 \textbf{L10} & \textbf{joint adaptive} & \textbf{0.6474} $\pm$ 0.0004 & \textbf{0.7163} & 0.5815 & \textbf{92.5} & \textbf{0.92} & \textbf{3.79} \\
 \midrule
 \multicolumn{8}{l}{\textit{High latency ($\sim$50 ms)}} \\
-H11 & float32, $\rho$=1 (baseline)   & 0.6393 $\pm$ 0.0057 & 0.7106 & 0.6085 & 256.0 & 4.24 & 6.79 \\
-H12 & float16, $\rho$=1              & 0.6421 $\pm$ 0.0053 & 0.7131 & \textbf{0.6308} & 128.0 & 2.16 & 6.91 \\
-H13 & int8, $\rho$=1                 & 0.6407 $\pm$ 0.0099 & 0.7145 & 0.5560 &  68.0 & 1.12 & 6.75 \\
-H14 & float32, $\rho$=3              & 0.6484 $\pm$ 0.0004 & 0.7194 & 0.6265 & 256.0 & 2.08 & 3.19 \\
+H11 & float32, $\rho{=}1$ (baseline)   & 0.6393 $\pm$ 0.0057 & 0.7106 & 0.6085 & 256.0 & 4.24 & 6.79 \\
+H12 & float16, $\rho{=}1$              & 0.6421 $\pm$ 0.0053 & 0.7131 & \textbf{0.6308} & 128.0 & 2.16 & 6.91 \\
+H13 & int8, $\rho{=}1$                 & 0.6407 $\pm$ 0.0099 & 0.7145 & 0.5560 &  68.0 & 1.12 & 6.75 \\
+H14 & float32, $\rho{=}3$              & 0.6484 $\pm$ 0.0004 & 0.7194 & 0.6265 & 256.0 & 2.08 & 3.19 \\
 H15 & adaptive compression           & 0.6381 $\pm$ 0.0072 & 0.7098 & 0.5640 &  68.0 & 1.11 & 6.66 \\
 \textbf{H16} & \textbf{joint adaptive} & \textbf{0.6483} $\pm$ 0.0003 & \textbf{0.7195} & 0.6222 & \textbf{68.0} & \textbf{0.55} & \textbf{3.19} \\
 \midrule
@@ -491,7 +496,7 @@ M17 & joint adaptive (mixed)         & 0.6476 $\pm$ 0.0007 & 0.7179 & 0.6368 & 1
 \subsubsection{Communication Efficiency}
 \label{subsubsec:sim_comm}
 
-Within each latency group, int8 scenarios achieve the lowest per-step payload (68~B) and the lowest total activation traffic. $\rho$=3 scenarios reduce synchronisation traffic by $\sim$53\% (from $\sim$6.7~MB to 3.19~MB) relative to the $\rho$=1 baseline within the same group. Joint adaptive (L10, H16) uniquely combines both: H16 reaches 0.55~MB total payload and 3.19~MB sync, the lowest of all simulation scenarios. Adaptive-compression-only scenarios (L09, H15) reduce payload but cannot reduce sync traffic, confirming that synchronisation interval control is required for full bandwidth savings. Figure~\ref{fig:efficiency_accuracy} shows that joint adaptive scenarios (H16, L10) achieve the lowest per-step payload of all latency-exposed strategies while keeping AUPRC within seed-level variance of the no-latency ceiling---the lowest bandwidth cost with no measurable accuracy penalty.
+Within each latency group, int8 scenarios achieve the lowest per-step payload (68~B) and the lowest total activation traffic. $\rho{=}3$ scenarios reduce synchronisation traffic by $\sim$53\% (from $\sim$6.7~MB to 3.19~MB) relative to the $\rho{=}1$ baseline within the same group. Joint adaptive (L10, H16) uniquely combines both: H16 reaches 0.55~MB total payload and 3.19~MB sync, the lowest of all simulation scenarios. Adaptive-compression-only scenarios (L09, H15) reduce payload but cannot reduce sync traffic, confirming that synchronisation interval control is required for full bandwidth savings. Figure~\ref{fig:efficiency_accuracy} shows that joint adaptive scenarios (H16, L10) achieve the lowest per-step payload of all latency-exposed strategies while keeping AUPRC within seed-level variance of the no-latency ceiling---the lowest bandwidth cost with no measurable accuracy penalty.
 
 \begin{figure}[!t]
   \centering
@@ -500,16 +505,16 @@ Within each latency group, int8 scenarios achieve the lowest per-step payload (6
   \label{fig:efficiency_accuracy}
 \end{figure}
 
-\subsubsection{System Efficiency}
+\subsubsection{Convergence and Scheduler Behaviour}
 
-Scenarios with $\rho$=3 (N04, L08, H14, H16) complete training in approximately 499--504~s, roughly 18--22\% faster than their $\rho$=1 counterparts (609--643~s). Fewer synchronisation rounds allow early stopping to trigger sooner, shortening total runtime without requiring additional computation. Joint adaptive scenarios show more varied runtimes: L10 (582~s) and M17 (610~s) are longer than L08 and H16 respectively, as the adaptive compression and $\rho$ schedule takes additional steps to converge. These runtime differences are absent on Raspberry Pi, where network latency dominates---a distinction discussed further in Section~\ref{subsec:comparison}.
+Wall-clock runtime in the simulation is dominated by the speed of the host CPU rather than by realistic network behaviour and is therefore not reported here; the more representative runtime evidence is obtained from the Raspberry Pi deployment in Section~\ref{subsec:pi_results}. To assess system-efficiency effects within simulation, we instead examine the number of federated rounds required to reach the AUPRC plateau and the run-time behaviour of the scheduler itself.
 
-Figure~\ref{fig:rho_convergence} shows validation AUPRC per federation round across the three latency conditions. Both strategies converge to the same peak AUPRC, but $\rho$=3 plateaus in roughly half the rounds before early stopping triggers. We attribute this to reduced \emph{aggregation interference}: with $\rho$=1, global averaging occurs after every local step and can disrupt in-progress gradient descent, whereas $\rho$=3 allows each client to refine its local representation over three steps before synchronisation, leading to a more stable descent path and an earlier plateau.
+Figure~\ref{fig:rho_convergence} shows validation AUPRC per federation round across the three latency conditions. Both strategies converge to a similar peak AUPRC, but $\rho{=}3$ plateaus in roughly half the rounds before early stopping triggers. We attribute this to reduced \emph{aggregation interference}: with $\rho{=}1$, global averaging occurs after every local step and can disrupt in-progress gradient descent, whereas $\rho{=}3$ allows each client to refine its local representation over three steps before synchronisation, leading to a more stable descent path and an earlier plateau. Fewer synchronisation rounds therefore translate directly into shorter total training under any deployment whose runtime is dominated by communication and aggregation.
 
 \begin{figure*}[!t]
   \centering
   \includegraphics[width=\linewidth]{diagrams/fig5_rho_convergence}
-  \caption{Validation AUPRC per federation round for $\rho$=1 (solid) and $\rho$=3 (dashed), $\pm$1 std across 3 seeds.}
+  \caption{Validation AUPRC per federation round for $\rho{=}1$ (solid) and $\rho{=}3$ (dashed), $\pm$1 std across 3 seeds.}
   \label{fig:rho_convergence}
 \end{figure*}
 
@@ -525,35 +530,64 @@ Figure~\ref{fig:scheduler_timeline} illustrates the adaptive scheduler's real-ti
 \subsection{Raspberry Pi Deployment Results}
 \label{subsec:pi_results}
 
-Four representative scenarios (P1--P4) were deployed on physical Raspberry Pi 4 devices connected to a cloud server via real wide-area links ($\sim$21--24~ms baseline RTT). Unlike the simulation, latency is not injected by a profiler but arises from actual client--server communication.
+Four representative scenarios (P1--P4) were deployed on physical Raspberry Pi 4B clients connected to a cloud server via real wide-area links ($\sim$21--24~ms baseline RTT). Unlike the simulation, latency is not injected by a profiler but arises from actual client--server communication. As described in Section~\ref{subsec:experiment_design}, the unchanged scheduler thresholds (4~/~10~ms) place P4 in the int8\,+\,$\rho{=}3$ regime throughout training: empirical logs confirm that clients consistently maintain $\rho{=}3$ and int8 compression, allowing this scenario to validate the most aggressive scheduled operating point under real network conditions.
+
+\begin{table*}[htbp]
+\caption{Raspberry Pi Deployment Results: Performance, Resource, and Communication Metrics (Mean $\pm$ Std, 3 Seeds)}
+\label{tab:pi_results_detail}
+\centering
+\begin{small}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{P1 (Baseline)} & \textbf{P2 (Float16)} & \textbf{P3 ($\rho{=}3$)} & \textbf{P4 (Adaptive)} \\
+\midrule
+\textbf{AUPRC} $\uparrow$ & 0.6381 $\pm$ 0.0052 & 0.6434 $\pm$ 0.0053 & 0.6479 $\pm$ 0.0008 & \textbf{0.6482 $\pm$ 0.0014} \\
+ROC-AUC $\uparrow$ & 0.7085 $\pm$ 0.0036 & 0.7151 $\pm$ 0.0058 & 0.7193 $\pm$ 0.0019 & 0.7199 $\pm$ 0.0041 \\
+Accuracy (\%) & 64.51 $\pm$ 1.71 & 65.89 $\pm$ 0.86 & 66.40 $\pm$ 0.35 & 66.02 $\pm$ 0.37 \\
+F1-Score & 0.5844 $\pm$ 0.0801 & 0.6179 $\pm$ 0.0336 & 0.6243 $\pm$ 0.0232 & 0.6150 $\pm$ 0.0370 \\
+\midrule
+CPU Usage (\%) & 18.40 $\pm$ 0.10 & 18.37 $\pm$ 0.06 & 22.83 $\pm$ 0.06 & 22.87 $\pm$ 0.06 \\
+Runtime (s) & 3280.1 $\pm$ 688.0 & 3318.4 $\pm$ 814.3 & 3331.4 $\pm$ 25.7 & 3316.5 $\pm$ 10.3 \\
+Latency (ms) & 26.86 $\pm$ 0.93 & 26.89 $\pm$ 0.73 & 26.94 $\pm$ 0.92 & 27.27 $\pm$ 0.26 \\
+Throughput sps & 1.72 $\pm$ 0.35 & 1.72 $\pm$ 0.37 &1.65 $\pm$0.01 & 1.66 $\pm$ 0.01 \\
+Peak Mem (MB) & 444.9 $\pm$ 7.70 & 438.7 $\pm$ 4.39 & 428.0 $\pm$ 0.17 & 427.6 $\pm$ 0.07 \\
+\midrule
+Data Throughput kbps & 14.77 $\pm$ 0.10 & 7.38 $\pm$ 0.04 & 7.02 $\pm$ 0.05 & \textbf{1.87 $\pm$ 0.01} \\
+Sync Traffic (MB) & 75.77 $\pm$ 16.42 & 76.57 $\pm$ 18.92 & 35.06 $\pm$ 0.00 & 35.06 $\pm$ 0.00 \\
+\textbf{Total Payload (MB)} $\downarrow$ & 47.36 $\pm$ 10.26 & 23.93 $\pm$ 5.91 & 22.83 $\pm$ 0.00 & \textbf{6.07 $\pm$ 0.00} \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{table*}
 
 \subsubsection{Prediction Quality}
-All Pi scenarios maintain comparable AUPRC (0.638--0.648). P4 achieves the highest AUPRC (0.648) and ROC-AUC (0.720), while P3 achieves the highest F1 (0.624). P1 shows the lowest F1 (0.584) despite competitive AUPRC, consistent with the threshold sensitivity of F1 under class imbalance. AUPRC differences across all four scenarios remain within 0.011, within normal seed variance.
+All Pi scenarios maintain comparable AUPRC (0.638--0.648). P4 achieves the highest AUPRC (0.648) and ROC-AUC (0.720), while P3 achieves the highest F1 (0.624). P1 yields both the lowest AUPRC (0.638) and the lowest F1 (0.584); the F1 gap is the more pronounced of the two, reflecting the additional threshold sensitivity of F1 under class imbalance. AUPRC differences across all four scenarios remain within 0.011, within normal seed variance.
 
 \subsubsection{Communication Efficiency}
-P4 achieves the lowest total payload (0.55~MB per client, $-$87\% vs P1) and the lowest sync traffic (3.19~MB, $-$54\% vs P1), outperforming both compression-only P2 (2.18~MB payload, $-$49\%) and sync-reduction-only P3 (3.19~MB sync, $-$54\%). Notably, P2 \emph{increases} sync traffic ($+$1\%) because it still synchronises at every step, confirming that compression alone is insufficient without synchronisation interval control.
+P4 achieves the highest aggregate communication efficiency, reducing the \textbf{total system payload to 6.07~MB} (averaging 0.55~MB per client, a 87\% reduction vs.~P1) and the \textbf{total synchronisation traffic to 35.06~MB} (averaging 3.19~MB per client, a 54\% reduction vs.~P1). P4 strictly outperforms both the compression-only strategy P2 (23.93~MB total payload, $-$49\%) and the sparse-synchronisation baseline P3 (35.06~MB total sync traffic, $-$54\%). P2's synchronisation traffic (76.57~MB) is essentially unchanged from the P1 baseline (75.77~MB): both strategies use $\rho{=}1$ and synchronise after every local epoch, so they exchange the same number of weight updates per round, and the 1\% delta is well within the seed-level standard deviation of $\sim$17~MB observed for both scenarios. These results demonstrate that joint adaptive control is strictly superior to static single-dimension strategies, providing compounding bandwidth savings.
 
-\begin{table*}[ht]
+\begin{table*}[t]
 \centering
 \caption{Raspberry Pi deployment results with simulation cross-reference (AUPRC: mean $\pm$ std, 3 seeds; other metrics: seed means).}
 \label{tab:pi_combined}
 \small
-\begin{tabularx}{\linewidth}{Xrrrrrrrrrr}
+\addtolength{\tabcolsep}{-2pt}
+\begin{tabularx}{\linewidth}{Xccccccc ccc} 
 \toprule
-& \multicolumn{2}{c}{\textbf{Prediction Quality}} & \multicolumn{3}{c}{\textbf{Communication}} & \multicolumn{5}{c}{\textbf{System Efficiency}} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-6}\cmidrule(lr){7-11}
-\textbf{Scenario} & \makecell[r]{\textbf{AUPRC}\\\textbf{(Pi)}} & \makecell[r]{\textbf{AUPRC}\\\textbf{(Sim)}} & \makecell[r]{\textbf{Payload}\\\textbf{(MB)}} & \makecell[r]{\textbf{Sync}\\\textbf{(MB)}} & \makecell[r]{\textbf{Reduction}} & \makecell[r]{\textbf{Tput}\\\textbf{(sps)}} & \makecell[r]{\textbf{Runtime}\\\textbf{Pi (s)}} & \makecell[r]{\textbf{Runtime}\\\textbf{Sim (s)}} & \makecell[r]{\textbf{Mem}\\\textbf{(MB)}} & \makecell[r]{\textbf{Lat}\\\textbf{(ms)}} \\
+& \multicolumn{2}{c}{\textbf{Prediction Quality}} & \multicolumn{4}{c}{\textbf{Communication}} & \multicolumn{4}{c}{\textbf{System Efficiency}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-7}\cmidrule(lr){8-11}
+\textbf{Scenario} & \makecell{\textbf{AUPRC}\\\textbf{(Pi)}} & \makecell{\textbf{AUPRC}\\\textbf{(Sim)}} & \makecell{\textbf{Payload}\\\textbf{(MB)}} & \makecell{\textbf{Sync}\\\textbf{(MB)}} & \makecell{\textbf{Data Tput}\\\textbf{(kbps)}} & \makecell{\textbf{Reduc.}} & \makecell{\textbf{Tput}\\\textbf{SPS}} & \makecell{\textbf{Runtime}\\\textbf{Pi (s)}} & \makecell{\textbf{Sim}\\\textbf{(s)}} & \makecell{\textbf{Lat}\\\textbf{(ms)}} \\
 \midrule
-P1: float32, $\rho$=1 (Baseline) & 0.6381 $\pm$ 0.0052 & 0.6396 & 4.31 & 6.89 & --      & 0.16 & 3{,}280 $\pm$ 688 &  609 & 445 & 26.93 \\
-P2: float16, $\rho$=1            & 0.6434 $\pm$ 0.0053 & 0.6384 & 2.18 & 6.96 & $-$49\% & 0.17 & 3{,}318 $\pm$ 814 &  624 & 439 & 26.96 \\
-P3: float32, $\rho$=3            & 0.6479 $\pm$ 0.0008 & 0.6473 & 2.08 & 3.19 & $-$52\% & 0.17 & 3{,}331 $\pm$ 26  &  499 & 428 & 26.97 \\
-\textbf{P4: Adaptive}            & \textbf{0.6482} $\pm$ 0.0014 & \textbf{0.6483} & \textbf{0.55} & \textbf{3.19} & \textbf{$-$87\%} & \textbf{0.20} & 3{,}317 $\pm$ 10 & \textbf{504} & \textbf{428} & 27.08 \\
+P1: float32, $\rho{=}1$ & 0.6381  & 0.6396 & 47.36 & 75.77 & 14.77 & -- & 1.72 & 3{,}280 & 609 & 26.93 \\
+P2: float16, $\rho{=}1$ & 0.6434 & 0.6384 & 23.93 & 76.57 & 7.38 & $-$49\% & 1.72 & 3{,}318 & 624 & 26.89 \\
+P3: float32, $\rho{=}3$ & 0.6479 & 0.6473 & 22.83 & 35.06 & 7.02 & $-$52\% & 1.65 & 3{,}331 & 499 & 26.94 \\
+\textbf{P4: Adaptive} & \textbf{0.6482} & \textbf{0.6483} & \textbf{6.07} & \textbf{35.06} & \textbf{1.87} & \textbf{$-$87\%} & \textbf{1.66} & 3{,}317 & \textbf{504} & 27.27 \\
 \bottomrule
 \end{tabularx}
 \end{table*}
 
 \subsubsection{System Efficiency}
-Mean throughput and runtime are similar across all four scenarios (0.16--0.20~sps; 3,280--3,331~s), indicating that reduced synchronisation overhead in P3/P4 is offset by longer local computation steps under the same total training budget. The key differentiator is \emph{runtime stability}: P3 and P4 achieve runtime standard deviations of $\pm$26~s and $\pm$10~s respectively, versus $\pm$688~s and $\pm$814~s for P1 and P2. This confirms that adaptive synchronisation eliminates the runtime jitter introduced by variable network conditions on real wide-area links. Peak memory is slightly reduced for P3/P4 (428~MB vs 445~MB for P1, $-$3.8\%), consistent with reduced buffering requirements during less frequent synchronisation.
+Mean system throughput and runtime are comparable across all scenarios (1.66--1.72~SPS; 3,280--3,331~s), indicating that the reduction in synchronisation overhead in P3/P4 is balanced by the computational demands of adaptation and compression. However, the key differentiator is \textbf{runtime stability}: P3 and P4 achieve significantly lower runtime standard deviations ($\pm$26~s and $\pm$10~s) compared to the high jitter observed in P1 and P2 ($\pm$688~s and $\pm$814~s). This confirms that the adaptive scheduler effectively filters network-induced variance, providing predictable training timelines. Additionally, peak memory is slightly reduced for P3/P4 (428~MB vs. 445~MB for P1, $-$3.8\%), consistent with reduced buffering requirements during less frequent synchronisation rounds.
 
 
 \subsection{Simulation vs.\ Raspberry Pi: Cross-platform Comparison}
@@ -570,13 +604,18 @@ Figure~\ref{fig:cross_platform} visualises the AUPRC comparison directly. Rankin
   \label{fig:cross_platform}
 \end{figure}
 
-The cross-platform comparison reveals several consistent trends. \textbf{Prediction quality} is highly stable: AUPRC differences between Pi and simulation are within 0.007, well within seed-level variance, confirming that the model is robust across environments. \textbf{Relative strategy rankings} are preserved: $\rho$=3 and joint adaptive consistently achieve higher AUPRC than $\rho$=1 baselines on both platforms. \textbf{Communication savings} follow the same pattern: joint adaptive achieves the best combined payload and sync reduction on both platforms.
+The cross-platform comparison reveals several consistent trends. \textbf{Prediction quality} is highly stable: AUPRC differences between Pi and simulation are within 0.007, well within seed-level variance, confirming that the model is robust across environments. \textbf{Relative strategy rankings} are preserved: $\rho{=}3$ and joint adaptive consistently achieve higher AUPRC than $\rho{=}1$ baselines on both platforms. \textbf{Communication savings} follow the same pattern: joint adaptive achieves the best combined payload and sync reduction on both platforms.
 
-The main platform-dependent differences are \textbf{absolute runtime} and \textbf{runtime stability}. Pi mean runtimes are approximately 5$\times$ longer than simulation (e.g., 3,280~s vs 609~s for the float32 baseline), reflecting network serialisation latency and I/O overhead on constrained hardware. Throughput is correspondingly lower on Pi (0.16--0.20~sps) than in simulation (0.9--1.0~sps). Unlike the simulation, $\rho$=3 and joint adaptive do not reduce mean runtime on Pi (3,317--3,331~s vs 3,280~s), as reduced synchronisation overhead is offset by longer local computation steps. However, the critical benefit on real hardware is \emph{runtime stability}: P3 and P4 achieve runtime standard deviations of $\pm$21~s and $\pm$8~s respectively, compared with $\pm$562~s and $\pm$665~s for P1 and P2. Overall, the simulation correctly predicts AUPRC rankings and communication savings, while the Pi results additionally demonstrate that adaptive synchronisation eliminates runtime variability under real wide-area network conditions.
+The main platform-dependent differences are \textbf{absolute runtime} and \textbf{runtime stability}. Pi mean runtimes are approximately 5$\times$ longer than simulation (e.g., 3,280~s vs 609~s for the float32 baseline), reflecting network serialisation latency and I/O overhead on constrained hardware. Throughput is correspondingly lower on Pi (0.16--0.20~sps) than in simulation (0.9--1.0~sps). Unlike the simulation, $\rho{=}3$ and joint adaptive do not reduce mean runtime on Pi (3,317--3,331~s vs 3,280~s), as reduced synchronisation overhead is offset by longer local computation steps. However, the critical benefit on real hardware is \emph{runtime stability}: P3 and P4 achieve runtime standard deviations of $\pm$21~s and $\pm$8~s respectively, compared with $\pm$562~s and $\pm$665~s for P1 and P2. Overall, the simulation correctly predicts AUPRC rankings and communication savings, while the Pi results additionally demonstrate that adaptive synchronisation eliminates runtime variability under real wide-area network conditions.
 
-\section{Discussion}
-\label{sec:Discussion}
-placeholder
+\section{Conclusion}
+\label{sec:Conclusion}
+
+This work investigated the trade-off between communication efficiency and predictive performance in federated split learning for IoT rainfall prediction. We proposed an FSL framework that jointly regulates activation compression and the synchronisation interval $\rho$ through a lightweight server-side scheduler driven by per-client EMA-smoothed latency. The 11-client system was evaluated on Newcastle ERA5-based hourly data through a 17-scenario simulation matrix spanning three latency profiles and six communication strategies, and validated on a four-scenario Raspberry Pi deployment over a real wide-area link.
+
+The empirical results support three main conclusions. First, AUPRC is stable across all evaluated compression modes and synchronisation intervals (0.6381--0.6484 in simulation; within 0.011 on Raspberry Pi), confirming that neither int8 quantisation nor $\rho{=}3$ degrades predictive quality in this setting. Second, joint adaptive control strictly dominates static single-dimension strategies: scenario H16 reaches the lowest total activation payload (0.55~MB) and sync traffic (3.19~MB) among all simulation scenarios, and on Raspberry Pi the joint adaptive scenario (P4) achieves an 87\% payload reduction and a 54\% synchronisation reduction relative to the float32 baseline. Third, less frequent synchronisation acts as an implicit regulariser that allows training to plateau earlier and---under real wide-area conditions---substantially stabilises end-to-end runtime ($\pm$10~s for P4 versus $\pm$688~s for P1), even when mean runtime is unchanged. Together, these findings show that communication cost in FSL can be reduced by an order of magnitude without sacrificing predictive performance, provided that compression and synchronisation are controlled jointly rather than independently.
+
+Several limitations point to future work. The current scheduler relies on a manually tuned three-level threshold rule; replacing it with a learning-based or control-theoretic policy would allow adaptation beyond the predefined regimes and could exploit additional system signals such as bandwidth and queue depth. The present evaluation also assumes full client participation, requiring all participating clients to complete each aggregation round before training resumes; client dropout, intermittent connectivity, and stragglers are not modelled. In real IoT deployments these conditions are common, and extending the framework with dropout-tolerant aggregation (e.g., partial participation, asynchronous synchronisation, or timeout-based barriers) is necessary before the system can be considered deployment-ready. Larger and more heterogeneous deployments---beyond the 11-client scale and the single rainfall task examined here---are needed to test how the joint adaptive mechanism generalises to other IoT time-series workloads and to network conditions with more pronounced asymmetry or intermittency. Finally, extending the framework with dynamic cut-layer selection would couple split-point optimisation to runtime communication control, which we leave as a direction for subsequent study.
 
 
 % ---- References ----
@@ -586,44 +625,5 @@ placeholder
 % Bibliography files are located in the paper/ directory
 \bibliography{IEEEabrv,refs}
 
-
-\appendices
-\section{Team Contribution Table}
-
-\begin{table}[H]
-\centering
-\footnotesize
-\setlength{\tabcolsep}{2.5pt}
-\renewcommand{\arraystretch}{1.05}
-\begin{tabular}{|p{1.45cm}|p{1.60cm}|p{4.80cm}|}
-\hline
-\textbf{Team Member} & \textbf{Role} & \textbf{Contribution} \\
-\hline
-
-Guanghua Liu & Related Work \& Writing &
-Reviewed literature on FSL and communication efficiency; co-authored the Related Work section and parts of the experimental setup; coordinated team progress and supported the integration of different sections into the final report.\\
-\hline
-
-Baoyi Liu & Related Work \& Writing &
-Reviewed rainfall prediction and distributed learning studies; contributed to Related Work and experimental setup writing. \\
-\hline
-
-Yi Sin Lin & System Design \& Implementation &
-Contributed to system design, data preprocessing, and core implementation of the distributed training pipeline. \\
-\hline
-
-
-Jiale Liu & Introduction \& Literature Review &
-Drafted the Introduction and supported literature organisation for the problem motivation and research gap. \\
-\hline
-
-
-Wenjie Ding & Methodology \& Results &
-Led end to end system design and implementation; authored Methodology and Results/Analysis, including experiment design and trade-off interpretation. \\
-\hline
-
-
-\end{tabular}
-\end{table}
 
 \end{document}
