@@ -120,7 +120,7 @@ data_download:
     - Pressure
     - Wind Speed
     - Rain
-  # Spatial bounding box for Newcastle: [min_lon, min_lat, max_lon, max_lat]
+  # Spatial bounding box for city: [min_lon, min_lat, max_lon, max_lat]
   # bbox: [-1.71, 54.95, -1.54, 55.03]
   # Data download window settings
   raw_out_dir: dataset

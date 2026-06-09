@@ -96,7 +96,7 @@ uv sync
 make download-data
 ```
 
-Downloads Open-Meteo/ERA5 historical weather data (2015-01-01 to 2026-03-31) for 11 Newcastle-area stations:
+Downloads Open-Meteo/ERA5 historical weather data (2015-01-01 to 2026-03-31) for 11 stations:
 
 - **11 federated client locations** → `dataset/processed/` (one station file per client)
 - Chronological split: train before 2024-01-01, validation during 2024, test from 2025-01-01 to 2026-03-31
@@ -367,19 +367,3 @@ pdflatex csc8114.tex
 ```
 
 > Run `pdflatex` three times to resolve all cross-references and citations.
-
-Diagrams are authored in [Mermaid](https://mermaid.js.org/) and exported via [mermaid.live](https://mermaid.live/). Always edit and export from the website for consistency.
-
----
-
-## Team
-
-| Member        | Role                                 |
-| ------------- | ------------------------------------ |
-| Baoyi Liu     | Related Work & Writing               |
-| Guanghua Liu  | Related Work & Writing               |
-| Jiale Liu     | Introduction & Literature Review     |
-| Wenjie Ding   | Methodology, System Design & Results |
-| Yi Sin Lin    | System Design & Implementation       |
-
-School of Computing, Newcastle University
